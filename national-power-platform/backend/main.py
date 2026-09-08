@@ -11,7 +11,10 @@ from pydantic import BaseModel
 import numpy as np
 import pandas as pd
 import pandapower as pp
-from pandapower.converter import from_ppc
+try:
+    from pandapower.converter.pypower.from_ppc import from_ppc
+except ImportError:
+    from pandapower.converter.pypower import from_ppc
 from nigeria_grid import get_nigeria_330kv
 
 app = FastAPI(title="National Power System Simulation API")
@@ -74,7 +77,8 @@ def parse_matpower_m_file(content: str) -> dict:
     text = "\n".join(clean_lines)
 
     # Extract baseMVA
-    base_mva_match = re.search(r'(?:mpc\.)?baseMVA\s*=\s*([0-9.]+)', text, re.IGNORECASE)
+    base_mva_match = re.search(
+        r'(?:mpc\.)?baseMVA\s*=\s*([0-9.]+)', text, re.IGNORECASE)
     base_mva = float(base_mva_match.group(1)) if base_mva_match else 100.0
 
     def extract_matrix(name: str) -> np.ndarray:
@@ -128,7 +132,8 @@ async def upload_matpower_case(file: UploadFile = File(...)):
     global active_custom_net, active_model_name
 
     if not file.filename.endswith(".m"):
-        raise HTTPException(status_code=400, detail="Only MATPOWER (.m) files are supported.")
+        raise HTTPException(
+            status_code=400, detail="Only MATPOWER (.m) files are supported.")
 
     try:
         raw_bytes = await file.read()
@@ -142,26 +147,31 @@ async def upload_matpower_case(file: UploadFile = File(...)):
 
         # Ensure bus_geodata exists for visual diagram mapping
         if not hasattr(net, "bus_geodata") or net.bus_geodata is None:
-            net.bus_geodata = pd.DataFrame(columns=["x", "y"], index=net.bus.index)
+            net.bus_geodata = pd.DataFrame(
+                columns=["x", "y"], index=net.bus.index)
 
         if net.bus_geodata.empty or net.bus_geodata["x"].isnull().all():
             num_buses = len(net.bus)
             cx, cy, radius = 280.0, 220.0, 150.0
             for i, b_idx in enumerate(net.bus.index):
                 angle = 2 * math.pi * i / max(1, num_buses)
-                net.bus_geodata.loc[b_idx, "x"] = round(cx + radius * math.cos(angle), 1)
-                net.bus_geodata.loc[b_idx, "y"] = round(cy + radius * math.sin(angle), 1)
+                net.bus_geodata.loc[b_idx, "x"] = round(
+                    cx + radius * math.cos(angle), 1)
+                net.bus_geodata.loc[b_idx, "y"] = round(
+                    cy + radius * math.sin(angle), 1)
 
         # Islanding detection
         connected = set(net.line.from_bus).union(set(net.line.to_bus))
         if hasattr(net, "trafo") and len(net.trafo) > 0:
-            connected = connected.union(set(net.trafo.hv_bus)).union(set(net.trafo.lv_bus))
+            connected = connected.union(
+                set(net.trafo.hv_bus)).union(set(net.trafo.lv_bus))
         isolated = [int(b) for b in net.bus.index if b not in connected]
 
         # Initial Newton-Raphson check
         test_net = copy.deepcopy(net)
         try:
-            pp.runpp(test_net, algorithm="nr", max_iteration=30, tolerance_mva=1e-3, numba=False)
+            pp.runpp(test_net, algorithm="nr", max_iteration=30,
+                     tolerance_mva=1e-3, numba=False)
             converged = bool(test_net.converged)
         except Exception:
             converged = False
@@ -188,7 +198,8 @@ async def upload_matpower_case(file: UploadFile = File(...)):
             }
         }
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Failed to parse MATPOWER case: {str(e)}")
+        raise HTTPException(
+            status_code=422, detail=f"Failed to parse MATPOWER case: {str(e)}")
 
 
 @app.post("/api/grid/reset")
@@ -216,7 +227,8 @@ def run_power_flow(req: SimulationRequest):
                 net.line.at[line_id, "in_service"] = False
 
         try:
-            pp.runpp(net, algorithm="nr", max_iteration=35, tolerance_mva=1e-3, numba=False)
+            pp.runpp(net, algorithm="nr", max_iteration=35,
+                     tolerance_mva=1e-3, numba=False)
             converged = bool(net.converged)
         except Exception:
             converged = False
@@ -229,7 +241,8 @@ def run_power_flow(req: SimulationRequest):
                 "lines": []
             }
 
-        has_geo = hasattr(net, "bus_geodata") and net.bus_geodata is not None and not net.bus_geodata.empty
+        has_geo = hasattr(
+            net, "bus_geodata") and net.bus_geodata is not None and not net.bus_geodata.empty
 
         buses = []
         for idx, row in net.bus.iterrows():
@@ -243,10 +256,14 @@ def run_power_flow(req: SimulationRequest):
                 except Exception:
                     pass
 
-            vm_pu = float(net.res_bus.at[idx, "vm_pu"]) if "vm_pu" in net.res_bus.columns else 1.0
-            va_deg = float(net.res_bus.at[idx, "va_degree"]) if "va_degree" in net.res_bus.columns else 0.0
-            p_mw = float(net.res_bus.at[idx, "p_mw"]) if "p_mw" in net.res_bus.columns else 0.0
-            q_mvar = float(net.res_bus.at[idx, "q_mvar"]) if "q_mvar" in net.res_bus.columns else 0.0
+            vm_pu = float(net.res_bus.at[idx, "vm_pu"]
+                          ) if "vm_pu" in net.res_bus.columns else 1.0
+            va_deg = float(
+                net.res_bus.at[idx, "va_degree"]) if "va_degree" in net.res_bus.columns else 0.0
+            p_mw = float(net.res_bus.at[idx, "p_mw"]
+                         ) if "p_mw" in net.res_bus.columns else 0.0
+            q_mvar = float(
+                net.res_bus.at[idx, "q_mvar"]) if "q_mvar" in net.res_bus.columns else 0.0
 
             buses.append({
                 "id": int(idx),
@@ -263,9 +280,12 @@ def run_power_flow(req: SimulationRequest):
         lines = []
         for idx, row in net.line.iterrows():
             is_in = bool(row["in_service"])
-            loading = round(clean_float(net.res_line.at[idx, "loading_percent"], 0.0), 1) if is_in else 0.0
-            flow = round(clean_float(net.res_line.at[idx, "p_from_mw"], 0.0), 1) if is_in else 0.0
-            ploss = round(clean_float(net.res_line.at[idx, "pl_mw"], 0.0), 2) if is_in else 0.0
+            loading = round(clean_float(
+                net.res_line.at[idx, "loading_percent"], 0.0), 1) if is_in else 0.0
+            flow = round(clean_float(
+                net.res_line.at[idx, "p_from_mw"], 0.0), 1) if is_in else 0.0
+            ploss = round(clean_float(
+                net.res_line.at[idx, "pl_mw"], 0.0), 2) if is_in else 0.0
 
             lines.append({
                 "id": int(idx),
@@ -278,12 +298,16 @@ def run_power_flow(req: SimulationRequest):
                 "losses_mw": ploss
             })
 
-        gen_sum = float(net.res_gen.p_mw.sum()) if len(net.res_gen) > 0 else 0.0
-        ext_sum = float(net.res_ext_grid.p_mw.sum()) if len(net.res_ext_grid) > 0 else 0.0
+        gen_sum = float(net.res_gen.p_mw.sum()) if len(
+            net.res_gen) > 0 else 0.0
+        ext_sum = float(net.res_ext_grid.p_mw.sum()) if len(
+            net.res_ext_grid) > 0 else 0.0
         total_gen = round(clean_float(gen_sum + ext_sum, 0.0), 1)
 
-        total_load = round(clean_float(net.res_load.p_mw.sum() if len(net.res_load) > 0 else 0.0), 1)
-        total_losses = round(clean_float(net.res_line.pl_mw.sum() if len(net.res_line) > 0 else 0.0), 1)
+        total_load = round(clean_float(net.res_load.p_mw.sum()
+                           if len(net.res_load) > 0 else 0.0), 1)
+        total_losses = round(clean_float(
+            net.res_line.pl_mw.sum() if len(net.res_line) > 0 else 0.0), 1)
 
         imbalance = total_gen - total_load - total_losses
         frequency = round(50.0 + (imbalance / 3500.0), 2)
