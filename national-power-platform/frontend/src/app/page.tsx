@@ -6,12 +6,14 @@ import {
   Home,
   Grid,
   TrendingUp,
+  DollarSign,
   UploadCloud,
   BarChart3,
   FileText,
   ShieldCheck,
   Play,
   Sliders,
+  LogIn,
   AlertTriangle,
   CheckCircle2,
   RefreshCw,
@@ -19,6 +21,7 @@ import {
   FileCode,
   Menu,
   X,
+  Trash2,
 } from 'lucide-react';
 
 interface BusData {
@@ -75,6 +78,19 @@ interface UploadValidation {
   };
 }
 
+interface GridModelMeta {
+  id: string;
+  name: string;
+  uploaded_at: string;
+  buses: number;
+  branches: number;
+  total_installed_mw: number;
+  total_demand_mw: number;
+  converged: boolean;
+  is_default: boolean;
+  is_active: boolean;
+}
+
 interface GeneratorDispatch {
   id: number;
   name: string;
@@ -128,7 +144,8 @@ export default function PowerPlatformDashboard() {
   const [divergedNotice, setDivergedNotice] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Upload State
+  // Model Registry & Upload State
+  const [modelList, setModelList] = useState<GridModelMeta[]>([]);
   const [uploadResult, setUploadResult] = useState<UploadValidation | null>(null);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -142,12 +159,24 @@ export default function PowerPlatformDashboard() {
   const navItems = [
     { id: 'Home', label: 'Home', icon: Home },
     { id: 'Grid Models', label: 'Grid Models', icon: Grid },
-    { id: 'Market Simulations', label: 'Market Simulations', icon: BarChart3 },
+    { id: 'Market Simulations', label: 'Market Simulations', icon: DollarSign },
     { id: 'Data Upload', label: 'Data Upload/Down-', icon: UploadCloud },
     { id: 'Visualization', label: 'Visualization Tools', icon: TrendingUp },
     { id: 'Reports', label: 'Reports & Publicati-', icon: FileText },
     { id: 'Admin Panel', label: 'Task Force/Admin Panel', icon: ShieldCheck },
   ];
+
+  const fetchModels = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/models`);
+      if (res.ok) {
+        const data = await res.json();
+        setModelList(data);
+      }
+    } catch {
+      // Ignore network hiccup
+    }
+  };
 
   const runSimulation = async (multiplier = loadMultiplier, outages = trippedLines) => {
     setLoading(true);
@@ -217,6 +246,7 @@ export default function PowerPlatformDashboard() {
   useEffect(() => {
     runSimulation(1.0, []);
     runMarketSimulation();
+    fetchModels();
   }, []);
 
   const toggleLine = (lineId: number) => {
@@ -252,11 +282,42 @@ export default function PowerPlatformDashboard() {
       setTrippedLines([]);
       setLoadMultiplier(1.0);
       setSelectedBus(null);
+      await fetchModels();
       await runSimulation(1.0, []);
+      await runMarketSimulation();
     } catch (err: any) {
       setUploadError(err.message || 'Failed to parse MATPOWER case');
     } finally {
       setUploadLoading(false);
+    }
+  };
+
+  const handleActivateModel = async (modelId: string) => {
+    setLoading(true);
+    try {
+      await fetch(`${API_BASE_URL}/api/models/${modelId}/activate`, { method: 'POST' });
+      setTrippedLines([]);
+      setLoadMultiplier(1.0);
+      setSelectedBus(null);
+      await fetchModels();
+      await runSimulation(1.0, []);
+      await runMarketSimulation();
+    } catch {
+      setDivergedNotice('Failed to activate selected model.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteModel = async (modelId: string) => {
+    if (!confirm('Are you sure you want to remove this case model from repository?')) return;
+    try {
+      await fetch(`${API_BASE_URL}/api/models/${modelId}`, { method: 'DELETE' });
+      await fetchModels();
+      await runSimulation(1.0, []);
+      await runMarketSimulation();
+    } catch {
+      alert('Could not remove model.');
     }
   };
 
@@ -270,6 +331,7 @@ export default function PowerPlatformDashboard() {
       setLoadMultiplier(1.0);
       setSelectedBus(null);
       setDivergedNotice(null);
+      await fetchModels();
       await runSimulation(1.0, []);
       await runMarketSimulation();
     } catch {
@@ -287,36 +349,35 @@ export default function PowerPlatformDashboard() {
   };
 
   return (
-    <div className="flex h-screen w-full flex-col bg-[#eef2f6] font-sans text-slate-800 antialiased overflow-hidden">
-      {/* Top Header - Faithful to Figure 6 */}
-      <header className="flex h-16 w-full items-center justify-between border-b border-slate-300 bg-[#e2e8f0] px-4 md:px-6 z-20 select-none shadow-xs">
+    <div className="flex h-screen w-full flex-col bg-slate-900 font-sans text-slate-100 antialiased overflow-hidden">
+      {/* Header */}
+      <header className="flex h-16 w-full items-center justify-between border-b border-slate-800 bg-slate-950 px-4 md:px-6 z-20 select-none shadow-md">
         <div className="flex items-center gap-3">
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-1.5 rounded text-slate-600 hover:text-slate-900 hover:bg-slate-300 transition"
+            className="md:hidden p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
             aria-label="Toggle menu"
           >
             {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
 
-          {/* Purple proposal logo badge */}
-          <div className="flex h-9 w-9 items-center justify-center rounded-md bg-[#3b2d54] text-white shadow-xs shrink-0">
-            <Zap className="h-5 w-5 fill-white text-white" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 shrink-0">
+            <Zap className="h-5 w-5 fill-current" />
           </div>
 
           <div className="leading-tight">
-            <h1 className="text-xs sm:text-sm font-bold tracking-tight text-slate-800 uppercase">
+            <h1 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-100">
               National Power System Modelling
             </h1>
-            <p className="text-xs sm:text-sm font-bold tracking-tight text-slate-800 uppercase">
+            <p className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-400">
               and Simulation Platform (Nigeria)
             </p>
           </div>
         </div>
 
-        {/* Clean rectangular Login button */}
-        <button className="rounded border border-slate-400/80 bg-[#f8fafc] px-5 py-1 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-white hover:border-slate-500 transition">
-          Login
+        <button className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/80 px-4 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-700 hover:text-white">
+          <LogIn className="h-3.5 w-3.5" />
+          <span>Login</span>
         </button>
       </header>
 
@@ -325,21 +386,21 @@ export default function PowerPlatformDashboard() {
         {/* Mobile Navigation Drawer */}
         {mobileMenuOpen && (
           <div
-            className="fixed inset-0 z-30 bg-black/40 backdrop-blur-xs md:hidden"
+            className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden"
             onClick={() => setMobileMenuOpen(false)}
           >
             <aside
-              className="w-64 h-full bg-[#f8fafc] border-r border-slate-300 p-4 flex flex-col justify-between"
+              className="w-64 h-full bg-slate-950 border-r border-slate-800 p-4 flex flex-col justify-between"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Navigation</span>
-                  <button onClick={() => setMobileMenuOpen(false)} className="text-slate-600 hover:text-slate-900">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Navigation</span>
+                  <button onClick={() => setMobileMenuOpen(false)} className="text-slate-400 hover:text-white">
                     <X className="h-5 w-5" />
                   </button>
                 </div>
-                <nav className="space-y-1">
+                <nav className="space-y-1.5">
                   {navItems.map((tab) => {
                     const Icon = tab.icon;
                     const isActive = activeTab === tab.id;
@@ -350,13 +411,13 @@ export default function PowerPlatformDashboard() {
                           setActiveTab(tab.id);
                           setMobileMenuOpen(false);
                         }}
-                        className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-xs font-medium transition ${
+                        className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
                           isActive
-                            ? 'bg-slate-300/80 text-slate-900 font-semibold'
-                            : 'text-slate-600 hover:bg-slate-200 hover:text-slate-900'
+                            ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/30'
+                            : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
                         }`}
                       >
-                        <Icon className="h-4 w-4 shrink-0 text-slate-600" />
+                        <Icon className="h-4 w-4 shrink-0" />
                         <span className="truncate">{tab.label}</span>
                       </button>
                     );
@@ -364,13 +425,13 @@ export default function PowerPlatformDashboard() {
                 </nav>
               </div>
 
-              <div className="pt-3 border-t border-slate-200">
+              <div className="pt-3 border-t border-slate-800">
                 <button
                   onClick={handleResetBaseline}
                   disabled={loading}
-                  className="w-full flex items-center justify-center gap-1.5 rounded border border-slate-300 bg-white py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 transition disabled:opacity-50"
+                  className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 py-2 text-xs font-medium text-slate-300 transition hover:text-white disabled:opacity-50"
                 >
-                  <RotateCcw className="h-3.5 w-3.5 text-slate-500" />
+                  <RotateCcw className="h-3.5 w-3.5 text-emerald-400" />
                   <span>Reset Grid</span>
                 </button>
               </div>
@@ -378,9 +439,9 @@ export default function PowerPlatformDashboard() {
           </div>
         )}
 
-        {/* Desktop Sidebar - Faithful to Figure 6 */}
-        <aside className="hidden md:flex w-56 border-r border-slate-300 bg-[#f1f5f9] p-3 flex-col justify-between shrink-0 select-none">
-          <nav className="space-y-1 pt-1">
+        {/* Desktop Sidebar */}
+        <aside className="hidden md:flex w-60 border-r border-slate-800 bg-slate-950 p-3.5 flex-col justify-between shrink-0 select-none">
+          <nav className="space-y-1.5">
             {navItems.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -388,101 +449,89 @@ export default function PowerPlatformDashboard() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-xs transition ${
+                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-xs font-medium transition ${
                     isActive
-                      ? 'bg-slate-300/90 text-slate-900 font-bold shadow-2xs'
-                      : 'text-slate-600 hover:bg-slate-200/70 hover:text-slate-900 font-medium'
+                      ? 'bg-emerald-600 text-white font-semibold shadow-lg shadow-emerald-900/30'
+                      : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
                   }`}
                 >
-                  <Icon className="h-3.5 w-3.5 shrink-0 text-slate-600" />
+                  <Icon className="h-4 w-4 shrink-0" />
                   <span className="truncate">{tab.label}</span>
                 </button>
               );
             })}
           </nav>
 
-          {/* Clean Reset Button (no solver or pandapower label) */}
-          <div className="pt-3 border-t border-slate-200/90">
+          <div className="pt-3 border-t border-slate-800">
             <button
               onClick={handleResetBaseline}
               disabled={loading}
-              className="w-full flex items-center justify-center gap-1.5 rounded border border-slate-300 bg-white py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 transition disabled:opacity-50"
+              className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 py-2 text-xs font-medium text-slate-300 transition hover:text-white disabled:opacity-50"
             >
-              <RotateCcw className="h-3.5 w-3.5 text-slate-500" />
+              <RotateCcw className="h-3.5 w-3.5 text-emerald-400" />
               <span>Reset Grid</span>
             </button>
           </div>
         </aside>
 
-        {/* Main Content Area */}
-        <main className="flex-1 overflow-y-auto bg-[#f8fafc] p-6 sm:p-8">
-          {/* TAB 1: HOME - Faithful 2x2 Grid from Figure 6 */}
+        {/* Main Workspace */}
+        <main className="flex-1 overflow-y-auto bg-slate-900 p-6 sm:p-8">
+          {/* TAB 1: HOME */}
           {activeTab === 'Home' && (
-            <div className="h-full flex items-center justify-center max-w-4xl mx-auto">
-              <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
-                {/* 1. Grid Stability Models */}
-                <div
-                  onClick={() => setActiveTab('Grid Models')}
-                  className="group cursor-pointer rounded-xl border border-slate-300 bg-white p-10 sm:p-12 flex flex-col items-center justify-center shadow-2xs hover:shadow-md hover:border-slate-400 transition min-h-[220px]"
-                >
-                  <div className="mb-6 flex h-16 w-16 items-center justify-center text-slate-600 group-hover:text-slate-900 transition">
-                    <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-14 h-14">
-                      <line x1="8" y1="56" x2="8" y2="8" />
-                      <line x1="8" y1="56" x2="56" y2="56" />
-                      <polyline points="14 42 26 28 36 36 50 18" />
-                      <polyline points="42 18 50 18 50 26" />
-                    </svg>
-                  </div>
-                  <h3 className="text-xs sm:text-sm font-bold tracking-wider text-slate-700 text-center uppercase group-hover:text-slate-900 leading-snug">
-                    Grid Stability<br />Models
-                  </h3>
-                </div>
+            <div className="space-y-6 max-w-5xl mx-auto">
+              <div>
+                <h2 className="text-xl font-bold text-slate-100">Simulation Workspace</h2>
+                <p className="text-xs sm:text-sm text-slate-400">Select a primary module below to perform dynamic studies, economic dispatch, or upload network parameters.</p>
+              </div>
 
-                {/* 2. Market Simulation Models */}
-                <div
-                  onClick={() => setActiveTab('Market Simulations')}
-                  className="group cursor-pointer rounded-xl border border-slate-300 bg-white p-10 sm:p-12 flex flex-col items-center justify-center shadow-2xs hover:shadow-md hover:border-slate-400 transition min-h-[220px]"
-                >
-                  <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-slate-500 text-white font-serif text-3xl font-bold shadow-2xs group-hover:bg-slate-700 transition">
-                    $
-                  </div>
-                  <h3 className="text-xs sm:text-sm font-bold tracking-wider text-slate-700 text-center uppercase group-hover:text-slate-900 leading-snug">
-                    Market Simulation<br />Models
-                  </h3>
-                </div>
-
-                {/* 3. Data Upload & Validation */}
-                <div
-                  onClick={() => setActiveTab('Data Upload')}
-                  className="group cursor-pointer rounded-xl border border-slate-300 bg-white p-10 sm:p-12 flex flex-col items-center justify-center shadow-2xs hover:shadow-md hover:border-slate-400 transition min-h-[220px]"
-                >
-                  <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-500 text-white shadow-2xs group-hover:bg-slate-700 transition">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-8 h-8">
-                      <path d="M12 17V3" />
-                      <path d="m6 9 6-6 6 6" />
-                    </svg>
-                  </div>
-                  <h3 className="text-xs sm:text-sm font-bold tracking-wider text-slate-700 text-center uppercase group-hover:text-slate-900 leading-snug">
-                    Data Upload<br />& Validation
-                  </h3>
-                </div>
-
-                {/* 4. Reports & Visualization */}
-                <div
-                  onClick={() => setActiveTab('Reports')}
-                  className="group cursor-pointer rounded-xl border border-slate-300 bg-white p-10 sm:p-12 flex flex-col items-center justify-center shadow-2xs hover:shadow-md hover:border-slate-400 transition min-h-[220px]"
-                >
-                  <div className="mb-6 flex h-16 w-16 items-center justify-center text-slate-600 group-hover:text-slate-900 transition">
-                    <svg viewBox="0 0 64 64" fill="currentColor" className="w-12 h-12">
-                      <rect x="12" y="34" width="8" height="22" rx="1" />
-                      <rect x="28" y="22" width="8" height="34" rx="1" />
-                      <rect x="44" y="10" width="8" height="46" rx="1" />
-                    </svg>
-                  </div>
-                  <h3 className="text-xs sm:text-sm font-bold tracking-wider text-slate-700 text-center uppercase group-hover:text-slate-900 leading-snug">
-                    Reports &<br />Visualization
-                  </h3>
-                </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {[
+                  {
+                    title: 'GRID STABILITY MODELS',
+                    desc: 'Newton-Raphson power flow, N-1 contingency studies, and transient frequency response.',
+                    icon: TrendingUp,
+                    color: 'from-blue-500/20 to-cyan-500/10 border-blue-500/30 text-blue-400',
+                    action: () => setActiveTab('Grid Models'),
+                  },
+                  {
+                    title: 'MARKET SIMULATION MODELS',
+                    desc: 'Merit order dispatch, locational marginal pricing (LMP), and hydro-thermal generation optimization.',
+                    icon: DollarSign,
+                    color: 'from-emerald-500/20 to-teal-500/10 border-emerald-500/30 text-emerald-400',
+                    action: () => setActiveTab('Market Simulations'),
+                  },
+                  {
+                    title: 'DATA UPLOAD & VALIDATION',
+                    desc: 'SCADA telemetry ingestion, IEEE MATPOWER parser, and automated topology error checking.',
+                    icon: UploadCloud,
+                    color: 'from-purple-500/20 to-indigo-500/10 border-purple-500/30 text-purple-400',
+                    action: () => setActiveTab('Data Upload'),
+                  },
+                  {
+                    title: 'REPORTS & VISUALIZATION',
+                    desc: 'Single-line diagrams, voltage profile heatmaps, transmission congestion, and PDF audit exports.',
+                    icon: BarChart3,
+                    color: 'from-amber-500/20 to-orange-500/10 border-amber-500/30 text-amber-400',
+                    action: () => setActiveTab('Visualization'),
+                  },
+                ].map((card) => {
+                  const Icon = card.icon;
+                  return (
+                    <div
+                      key={card.title}
+                      onClick={card.action}
+                      className={`group cursor-pointer rounded-xl border bg-gradient-to-br p-8 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-xl ${card.color}`}
+                    >
+                      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-slate-950/60 border border-slate-800 shadow-inner group-hover:scale-110 transition-transform">
+                        <Icon className="h-7 w-7 stroke-[1.75]" />
+                      </div>
+                      <h3 className="text-base font-bold tracking-wider text-slate-100 group-hover:text-white">
+                        {card.title}
+                      </h3>
+                      <p className="mt-2 text-xs text-slate-400 leading-relaxed">{card.desc}</p>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -491,22 +540,24 @@ export default function PowerPlatformDashboard() {
           {activeTab === 'Grid Models' && (
             <div className="space-y-6 max-w-6xl mx-auto">
               {divergedNotice && (
-                <div className="flex items-center gap-2 rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700">
-                  <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
+                <div className="flex items-center gap-2 rounded-lg border border-rose-500/40 bg-rose-950/30 p-3 text-xs text-rose-300">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-rose-400" />
                   <span>{divergedNotice}</span>
                 </div>
               )}
 
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-800 uppercase tracking-tight">Static Power Flow & Contingency</h2>
-                  <p className="text-xs text-slate-500">AC Newton-Raphson load flow analysis for N-1 contingency verification.</p>
+                  <h2 className="text-lg md:text-xl font-bold text-slate-100">Static Power Flow & Contingency</h2>
+                  <p className="text-xs text-slate-400">
+                    Active Grid Model: <span className="text-emerald-400 font-mono font-bold">{results?.model_name || 'Nigeria 330kV'}</span>
+                  </p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2.5">
-                  <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded border border-slate-300 text-xs">
-                    <Sliders className="h-3.5 w-3.5 text-slate-500" />
-                    <span className="text-slate-600">Load:</span>
+                  <div className="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 text-xs">
+                    <Sliders className="h-3.5 w-3.5 text-slate-400" />
+                    <span className="text-slate-400 hidden sm:inline">Load:</span>
                     <input
                       type="range"
                       min="0.7"
@@ -518,15 +569,15 @@ export default function PowerPlatformDashboard() {
                         setLoadMultiplier(val);
                         runSimulation(val, trippedLines);
                       }}
-                      className="w-16 accent-slate-700 cursor-pointer"
+                      className="w-16 sm:w-20 accent-emerald-500 cursor-pointer"
                     />
-                    <span className="font-mono font-bold text-slate-800">{(loadMultiplier * 100).toFixed(0)}%</span>
+                    <span className="font-mono font-bold text-emerald-400">{(loadMultiplier * 100).toFixed(0)}%</span>
                   </div>
 
                   <button
                     onClick={() => runSimulation()}
                     disabled={loading}
-                    className="flex items-center gap-1.5 rounded border border-slate-400 bg-slate-800 px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-slate-700 transition disabled:opacity-50"
+                    className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white transition hover:bg-emerald-500 active:scale-95 disabled:opacity-50"
                   >
                     {loading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
                     <span>Solve</span>
@@ -535,23 +586,23 @@ export default function PowerPlatformDashboard() {
                   <button
                     onClick={handleResetBaseline}
                     disabled={loading}
-                    className="flex items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 transition disabled:opacity-50"
+                    className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 transition disabled:opacity-50"
                   >
-                    <RotateCcw className="h-3.5 w-3.5 text-slate-500" />
+                    <RotateCcw className="h-3.5 w-3.5 text-emerald-400" />
                     <span>Reset</span>
                   </button>
                 </div>
               </div>
 
-              {/* Substation Bus Voltages */}
-              <div className="rounded-xl border border-slate-300 bg-white overflow-hidden shadow-2xs">
-                <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 flex justify-between items-center text-xs">
-                  <h3 className="font-bold text-slate-700">Substation Bus Voltage Profiles</h3>
-                  <span className="text-slate-500">Statutory Band: 0.95 – 1.05 p.u.</span>
+              {/* Substation Bus Voltages Table */}
+              <div className="rounded-xl border border-slate-800 bg-slate-950 overflow-hidden shadow-sm">
+                <div className="border-b border-slate-800 bg-slate-900/60 px-4 py-3 flex justify-between items-center text-xs">
+                  <h3 className="font-bold text-slate-200">Substation Bus Voltage Profiles</h3>
+                  <span className="text-slate-400 hidden sm:inline">Statutory Band: 0.95 – 1.05 p.u.</span>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[550px]">
-                    <thead className="bg-slate-100 text-slate-600 border-b border-slate-200">
+                    <thead className="bg-slate-900 text-slate-400 border-b border-slate-800">
                       <tr>
                         <th className="p-3">Bus</th>
                         <th className="p-3">Substation</th>
@@ -563,17 +614,17 @@ export default function PowerPlatformDashboard() {
                         <th className="p-3">State</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-200 text-slate-700">
+                    <tbody className="divide-y divide-slate-800 text-slate-300">
                       {results?.buses?.map((bus) => {
                         const isUnder = bus.v_pu < 0.95;
                         const isOver = bus.v_pu > 1.05;
                         return (
-                          <tr key={bus.id} className="hover:bg-slate-50">
-                            <td className="p-3 font-mono text-slate-500">#{bus.id}</td>
-                            <td className="p-3 font-semibold text-slate-800">{bus.name}</td>
-                            <td className="p-3 text-slate-500">{bus.zone}</td>
+                          <tr key={bus.id} className="hover:bg-slate-900/40">
+                            <td className="p-3 font-mono font-bold text-slate-500">#{bus.id}</td>
+                            <td className="p-3 font-semibold text-slate-100">{bus.name}</td>
+                            <td className="p-3 text-slate-400">{bus.zone}</td>
                             <td className="p-3 font-mono font-bold">
-                              <span className={isUnder ? 'text-rose-600' : isOver ? 'text-amber-600' : 'text-emerald-600'}>
+                              <span className={isUnder ? 'text-rose-400' : isOver ? 'text-amber-400' : 'text-emerald-400'}>
                                 {bus.v_pu.toFixed(3)} pu
                               </span>
                             </td>
@@ -582,11 +633,11 @@ export default function PowerPlatformDashboard() {
                             <td className="p-3 font-mono">{bus.q_mvar}</td>
                             <td className="p-3">
                               {isUnder ? (
-                                <span className="flex items-center gap-1 text-rose-600 font-semibold text-[11px]">
+                                <span className="flex items-center gap-1 text-rose-400 font-semibold text-[11px]">
                                   <AlertTriangle className="h-3 w-3" /> Low
                                 </span>
                               ) : (
-                                <span className="flex items-center gap-1 text-emerald-600 font-semibold text-[11px]">
+                                <span className="flex items-center gap-1 text-emerald-400 font-semibold text-[11px]">
                                   <CheckCircle2 className="h-3 w-3" /> Normal
                                 </span>
                               )}
@@ -600,9 +651,9 @@ export default function PowerPlatformDashboard() {
               </div>
 
               {/* Line Breaker Controls */}
-              <div className="rounded-xl border border-slate-300 bg-white p-5 shadow-2xs">
-                <h3 className="text-sm font-bold text-slate-800 mb-1">N-1 Line Contingency & Breaker Controls</h3>
-                <p className="text-xs text-slate-500 mb-4">Click "Trip" to open a breaker and observe power redistribution across adjacent corridors.</p>
+              <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 sm:p-5">
+                <h3 className="text-sm font-bold text-slate-200 mb-1">N-1 Line Contingency & Breaker Controls</h3>
+                <p className="text-xs text-slate-400 mb-4">Click "Trip" to open a breaker and observe power redistribution across adjacent corridors.</p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
                   {results?.lines?.map((line) => {
@@ -612,29 +663,29 @@ export default function PowerPlatformDashboard() {
                         key={line.id}
                         className={`rounded-lg border p-3 flex flex-col justify-between transition ${
                           isTripped
-                            ? 'border-rose-300 bg-rose-50'
+                            ? 'border-rose-900/50 bg-rose-950/20'
                             : line.loading_percent > 85
-                            ? 'border-amber-300 bg-amber-50'
-                            : 'border-slate-200 bg-slate-50'
+                            ? 'border-amber-500/50 bg-amber-950/20'
+                            : 'border-slate-800 bg-slate-900'
                         }`}
                       >
                         <div className="flex items-center justify-between mb-2">
-                          <span className="font-bold text-slate-800 truncate">{line.name}</span>
+                          <span className="font-bold text-slate-200 truncate">{line.name}</span>
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            !isTripped ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' : 'bg-rose-100 text-rose-700 border border-rose-300'
+                            !isTripped ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-rose-950 text-rose-400 border border-rose-800'
                           }`}>
                             {!isTripped ? 'Online' : 'Tripped'}
                           </span>
                         </div>
 
-                        <div className="space-y-1 font-mono text-[11px] text-slate-600 mb-3">
+                        <div className="space-y-1 font-mono text-[11px] text-slate-400 mb-3">
                           <div className="flex justify-between">
                             <span>Flow:</span>
-                            <span className="text-slate-800 font-semibold">{line.flow_mw} MW</span>
+                            <span className="text-slate-200 font-bold">{line.flow_mw} MW</span>
                           </div>
                           <div className="flex justify-between">
                             <span>Loading:</span>
-                            <span className={line.loading_percent > 85 ? 'text-amber-700 font-bold' : ''}>
+                            <span className={line.loading_percent > 85 ? 'text-amber-400 font-bold' : ''}>
                               {line.loading_percent}%
                             </span>
                           </div>
@@ -642,10 +693,10 @@ export default function PowerPlatformDashboard() {
 
                         <button
                           onClick={() => toggleLine(line.id)}
-                          className={`w-full py-1.5 rounded text-[11px] font-semibold transition ${
+                          className={`w-full py-1.5 rounded text-[11px] font-bold transition ${
                             !isTripped
-                              ? 'bg-rose-100 text-rose-700 border border-rose-300 hover:bg-rose-200'
-                              : 'bg-emerald-100 text-emerald-700 border border-emerald-300 hover:bg-emerald-200'
+                              ? 'bg-rose-600/20 border border-rose-500/40 text-rose-300 hover:bg-rose-600 hover:text-white'
+                              : 'bg-emerald-600/20 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-600 hover:text-white'
                           }`}
                         >
                           {!isTripped ? 'Trip Breaker (N-1)' : 'Reclose Line'}
@@ -663,14 +714,14 @@ export default function PowerPlatformDashboard() {
             <div className="space-y-6 max-w-6xl mx-auto">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-800 uppercase tracking-tight">Wholesale Electricity Market & Economic Dispatch</h2>
-                  <p className="text-xs text-slate-500">Merit-order generation scheduling and Locational Marginal Pricing (LMP).</p>
+                  <h2 className="text-lg md:text-xl font-bold text-slate-100">Wholesale Electricity Market & Economic Dispatch</h2>
+                  <p className="text-xs text-slate-400">Merit-order generation scheduling and Locational Marginal Pricing (LMP).</p>
                 </div>
 
                 <button
                   onClick={runMarketSimulation}
                   disabled={marketLoading}
-                  className="flex items-center gap-1.5 rounded border border-slate-400 bg-slate-800 px-4 py-2 text-xs font-semibold text-white shadow-2xs hover:bg-slate-700 transition disabled:opacity-50 w-fit"
+                  className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500 active:scale-95 disabled:opacity-50 w-fit"
                 >
                   {marketLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
                   <span>{marketLoading ? 'Solving...' : 'Run Economic Dispatch'}</span>
@@ -678,10 +729,10 @@ export default function PowerPlatformDashboard() {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <div className="p-4 rounded-xl border border-slate-300 bg-white flex flex-col justify-between shadow-2xs">
+                <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-950 flex flex-col justify-between">
                   <div className="flex justify-between items-center mb-2">
-                    <span className="text-xs font-semibold text-slate-700">Gas Fuel Price Index</span>
-                    <span className="text-xs font-mono font-bold text-slate-900">{(gasPriceFactor * 100).toFixed(0)}%</span>
+                    <span className="text-xs font-semibold text-slate-300">Gas Fuel Price Index</span>
+                    <span className="text-xs font-mono font-bold text-emerald-400">{(gasPriceFactor * 100).toFixed(0)}%</span>
                   </div>
                   <input
                     type="range"
@@ -690,15 +741,15 @@ export default function PowerPlatformDashboard() {
                     step="0.1"
                     value={gasPriceFactor}
                     onChange={(e) => setGasPriceFactor(parseFloat(e.target.value))}
-                    className="w-full accent-slate-700 cursor-pointer"
+                    className="w-full accent-emerald-500 cursor-pointer"
                   />
-                  <span className="text-[10px] text-slate-400 mt-1.5">Simulate natural gas pipeline tariff fluctuations</span>
+                  <span className="text-[10px] text-slate-500 mt-1.5">Simulate natural gas pipeline tariff fluctuations</span>
                 </div>
 
-                <div className="p-4 rounded-xl border border-slate-300 bg-white flex flex-col justify-between shadow-2xs">
+                <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-950 flex flex-col justify-between">
                   <div className="flex justify-between items-center mb-2">
-                    <span className="text-xs font-semibold text-slate-700">Hydro Inflow Season</span>
-                    <span className="text-xs font-mono font-bold text-slate-900">{hydroAvailability >= 0.9 ? 'Wet (Peak)' : 'Dry (Lean)'}</span>
+                    <span className="text-xs font-semibold text-slate-300">Hydro Inflow Season</span>
+                    <span className="text-xs font-mono font-bold text-cyan-400">{hydroAvailability >= 0.9 ? 'Wet (Peak)' : 'Dry (Lean)'}</span>
                   </div>
                   <input
                     type="range"
@@ -707,36 +758,36 @@ export default function PowerPlatformDashboard() {
                     step="0.1"
                     value={hydroAvailability}
                     onChange={(e) => setHydroAvailability(parseFloat(e.target.value))}
-                    className="w-full accent-slate-700 cursor-pointer"
+                    className="w-full accent-cyan-500 cursor-pointer"
                   />
-                  <span className="text-[10px] text-slate-400 mt-1.5">Kainji, Jebba & Shiroro reservoir water head levels</span>
+                  <span className="text-[10px] text-slate-500 mt-1.5">Kainji, Jebba & Shiroro reservoir water head levels</span>
                 </div>
 
-                <div className="p-4 rounded-xl border border-slate-300 bg-white flex flex-col justify-between sm:col-span-2 lg:col-span-1 shadow-2xs">
-                  <span className="text-xs font-semibold text-slate-700 mb-1">System Clearing Price</span>
+                <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-950 flex flex-col justify-between sm:col-span-2 lg:col-span-1">
+                  <span className="text-xs font-semibold text-slate-300 mb-1">System Clearing Price</span>
                   <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-mono font-bold text-slate-900">
+                    <span className="text-2xl font-mono font-bold text-emerald-400">
                       ₦{marketResults?.market_clearing_price_ngn?.toLocaleString() || '--'}
                     </span>
-                    <span className="text-xs text-slate-500">/ MWh</span>
+                    <span className="text-xs text-slate-400">/ MWh</span>
                   </div>
-                  <span className="text-[10px] text-slate-400 mt-1">Marginal unit setting wholesale spot settlement</span>
+                  <span className="text-[10px] text-slate-500 mt-1">Marginal unit setting wholesale spot settlement</span>
                 </div>
               </div>
 
-              {/* Merit Order Stack */}
-              <div className="rounded-xl border border-slate-300 bg-white overflow-hidden shadow-2xs">
-                <div className="border-b border-slate-200 bg-slate-50 px-5 py-3 flex justify-between items-center text-xs">
-                  <h3 className="font-bold text-slate-700">Merit Order Generation Dispatch Stack</h3>
+              {/* Merit Order Table */}
+              <div className="rounded-xl border border-slate-800 bg-slate-950 overflow-hidden shadow-sm">
+                <div className="border-b border-slate-800 bg-slate-900/60 px-5 py-3 flex justify-between items-center text-xs">
+                  <h3 className="font-bold text-slate-200">Merit Order Generation Dispatch Stack</h3>
                   <div className="flex items-center gap-3 text-xs">
-                    <span className="font-medium text-slate-700">Hydro: {marketResults?.hydro_share_percent || 0}%</span>
-                    <span className="font-medium text-slate-700">Thermal: {marketResults?.thermal_share_percent || 0}%</span>
+                    <span className="text-cyan-400">Hydro: {marketResults?.hydro_share_percent || 0}%</span>
+                    <span className="text-amber-400">Thermal: {marketResults?.thermal_share_percent || 0}%</span>
                   </div>
                 </div>
 
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs min-w-[650px]">
-                    <thead className="bg-slate-100 text-slate-600 border-b border-slate-200">
+                    <thead className="bg-slate-900 text-slate-400 border-b border-slate-800">
                       <tr>
                         <th className="p-3">Rank</th>
                         <th className="p-3">Generating Station</th>
@@ -748,21 +799,25 @@ export default function PowerPlatformDashboard() {
                         <th className="p-3">Hourly Total (₦)</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-200 text-slate-700">
+                    <tbody className="divide-y divide-slate-800 text-slate-300">
                       {marketResults?.merit_order?.map((gen, idx) => (
-                        <tr key={gen.name} className="hover:bg-slate-50">
-                          <td className="p-3 font-mono text-slate-500">#{idx + 1}</td>
-                          <td className="p-3 font-semibold text-slate-800">{gen.name}</td>
+                        <tr key={gen.name} className="hover:bg-slate-900/40">
+                          <td className="p-3 font-mono font-bold text-slate-500">#{idx + 1}</td>
+                          <td className="p-3 font-semibold text-slate-100">{gen.name}</td>
                           <td className="p-3">
-                            <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-300">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              gen.type === 'Hydro'
+                                ? 'bg-cyan-950 text-cyan-400 border border-cyan-800'
+                                : 'bg-amber-950 text-amber-400 border border-amber-800'
+                            }`}>
                               {gen.type}
                             </span>
                           </td>
-                          <td className="p-3 font-mono font-bold text-slate-800">₦{gen.marginal_cost.toLocaleString()}</td>
-                          <td className="p-3 font-mono font-semibold">{gen.dispatched_mw} MW</td>
-                          <td className="p-3 font-mono text-slate-500">{gen.max_mw} MW</td>
+                          <td className="p-3 font-mono font-bold text-emerald-400">₦{gen.marginal_cost.toLocaleString()}</td>
+                          <td className="p-3 font-mono font-bold text-slate-100">{gen.dispatched_mw} MW</td>
+                          <td className="p-3 font-mono text-slate-400">{gen.max_mw} MW</td>
                           <td className="p-3 font-mono">{gen.capacity_utilization}%</td>
-                          <td className="p-3 font-mono text-slate-800">₦{gen.hourly_cost_ngn.toLocaleString()}</td>
+                          <td className="p-3 font-mono text-slate-200">₦{gen.hourly_cost_ngn.toLocaleString()}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -772,36 +827,29 @@ export default function PowerPlatformDashboard() {
             </div>
           )}
 
-          {/* TAB 4: DATA UPLOAD & VALIDATION */}
+          {/* TAB 4: DATA UPLOAD & CASE LIBRARY */}
           {activeTab === 'Data Upload' && (
             <div className="space-y-6 max-w-5xl mx-auto">
               {uploadError && (
-                <div className="flex items-center gap-2 rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700">
-                  <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
+                <div className="flex items-center gap-2 rounded-lg border border-rose-500/40 bg-rose-950/30 p-3 text-xs text-rose-300">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-rose-400" />
                   <span>Upload Notice: {uploadError}</span>
                 </div>
               )}
 
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-800 uppercase tracking-tight">Grid Model Ingestion & Validation</h2>
-                  <p className="text-xs text-slate-500">Ingest MATPOWER (.m) case files into the active simulation session.</p>
+                  <h2 className="text-lg md:text-xl font-bold text-slate-100">Grid Model Ingestion & Case Library</h2>
+                  <p className="text-xs md:text-sm text-slate-400">Upload, manage, and switch active MATPOWER (.m) simulation models.</p>
                 </div>
-                <button
-                  onClick={handleResetBaseline}
-                  disabled={loading}
-                  className="flex items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition w-fit shadow-2xs"
-                >
-                  <RotateCcw className="h-3.5 w-3.5 text-slate-500" />
-                  <span>Reset to Baseline</span>
-                </button>
               </div>
 
-              <div className="rounded-xl border border-slate-300 bg-white p-6 sm:p-8 space-y-6 shadow-2xs">
-                <div className="border-2 border-dashed border-slate-300 hover:border-slate-500 rounded-xl p-8 text-center transition flex flex-col items-center justify-center bg-slate-50">
-                  <UploadCloud className="h-10 w-10 text-slate-400 mb-3" />
-                  <p className="text-xs sm:text-sm font-semibold text-slate-700">Select or drop a MATPOWER case file (.m)</p>
-                  <p className="text-[11px] text-slate-400 mt-1">Supports standard IEEE cases or TCN custom models</p>
+              {/* Upload Dropzone */}
+              <div className="rounded-xl border border-slate-800 bg-slate-950 p-6 space-y-6">
+                <div className="border-2 border-dashed border-slate-700 hover:border-emerald-500 rounded-xl p-8 text-center transition flex flex-col items-center justify-center bg-slate-900/40">
+                  <UploadCloud className="h-10 w-10 sm:h-12 sm:w-12 text-slate-400 mb-3" />
+                  <p className="text-xs sm:text-sm font-semibold text-slate-200">Select or drop a MATPOWER case file (.m)</p>
+                  <p className="text-[11px] text-slate-500 mt-1">Supports standard IEEE cases or TCN custom models</p>
 
                   <input
                     type="file"
@@ -812,50 +860,98 @@ export default function PowerPlatformDashboard() {
                   />
                   <label
                     htmlFor="fileUploadInput"
-                    className={`mt-4 cursor-pointer rounded border border-slate-400 bg-slate-800 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700 transition ${
+                    className={`mt-4 cursor-pointer rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500 ${
                       uploadLoading ? 'opacity-50 pointer-events-none' : ''
                     }`}
                   >
                     {uploadLoading ? 'Parsing Case...' : 'Browse .m File'}
                   </label>
                 </div>
+              </div>
 
-                {uploadResult && (
-                  <div className="rounded-xl border border-slate-300 bg-slate-50 p-5 space-y-4">
-                    <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-                      <div className="flex items-center gap-2 truncate">
-                        <FileCode className="h-4 w-4 text-slate-600 shrink-0" />
-                        <span className="font-bold text-slate-800 text-xs sm:text-sm truncate">{uploadResult.filename}</span>
-                      </div>
-                      <span className={`px-2 py-0.5 rounded text-[11px] font-semibold shrink-0 ${
-                        uploadResult.converged
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                          : 'bg-rose-100 text-rose-800 border border-rose-300'
-                      }`}>
-                        {uploadResult.converged ? 'AC Solved' : 'Diverged'}
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                      <div className="p-3 rounded border border-slate-300 bg-white">
-                        <span className="text-slate-500">Buses</span>
-                        <p className="text-base sm:text-lg font-mono font-bold text-slate-800 mt-1">{uploadResult.metrics.buses}</p>
-                      </div>
-                      <div className="p-3 rounded border border-slate-300 bg-white">
-                        <span className="text-slate-500">Branches</span>
-                        <p className="text-base sm:text-lg font-mono font-bold text-slate-800 mt-1">{uploadResult.metrics.branches}</p>
-                      </div>
-                      <div className="p-3 rounded border border-slate-300 bg-white">
-                        <span className="text-slate-500">Generation</span>
-                        <p className="text-base sm:text-lg font-mono font-bold text-slate-800 mt-1">{uploadResult.metrics.total_installed_mw} MW</p>
-                      </div>
-                      <div className="p-3 rounded border border-slate-300 bg-white">
-                        <span className="text-slate-500">Demand</span>
-                        <p className="text-base sm:text-lg font-mono font-bold text-slate-800 mt-1">{uploadResult.metrics.total_demand_mw} MW</p>
-                      </div>
-                    </div>
+              {/* Model Repository Table */}
+              <div className="rounded-xl border border-slate-800 bg-slate-950 overflow-hidden shadow-sm">
+                <div className="border-b border-slate-800 bg-slate-900/60 px-5 py-3.5 flex justify-between items-center text-xs">
+                  <div>
+                    <h3 className="font-bold text-slate-200">Model Repository</h3>
+                    <p className="text-[11px] text-slate-400">All registered network topologies available for simulation.</p>
                   </div>
-                )}
+                  <span className="font-mono text-emerald-400 text-xs">{modelList.length} Model{modelList.length !== 1 ? 's' : ''} Loaded</span>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs min-w-[650px]">
+                    <thead className="bg-slate-900 text-slate-400 border-b border-slate-800 font-mono">
+                      <tr>
+                        <th className="p-3">Active</th>
+                        <th className="p-3">Model Name</th>
+                        <th className="p-3">Uploaded</th>
+                        <th className="p-3">Buses</th>
+                        <th className="p-3">Branches</th>
+                        <th className="p-3">Capacity</th>
+                        <th className="p-3">Demand</th>
+                        <th className="p-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800 text-slate-300">
+                      {modelList.map((model) => (
+                        <tr key={model.id} className={`hover:bg-slate-900/40 transition ${model.is_active ? 'bg-emerald-950/15' : ''}`}>
+                          <td className="p-3">
+                            <span className="flex items-center">
+                              {model.is_active ? (
+                                <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400" title="Active Model"></span>
+                              ) : (
+                                <span className="h-2.5 w-2.5 rounded-full bg-slate-700" title="Inactive"></span>
+                              )}
+                            </span>
+                          </td>
+                          <td className="p-3 font-semibold text-slate-100">
+                            <div className="flex items-center gap-2">
+                              <FileCode className="h-4 w-4 text-emerald-400 shrink-0" />
+                              <span className="truncate max-w-[200px]">{model.name}</span>
+                              {model.is_default && (
+                                <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[9px] font-bold text-slate-400 border border-slate-700">
+                                  Default
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-3 font-mono text-slate-400 text-[11px]">{model.uploaded_at}</td>
+                          <td className="p-3 font-mono">{model.buses}</td>
+                          <td className="p-3 font-mono">{model.branches}</td>
+                          <td className="p-3 font-mono text-cyan-400">{model.total_installed_mw} MW</td>
+                          <td className="p-3 font-mono text-amber-400">{model.total_demand_mw} MW</td>
+                          <td className="p-3 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              {!model.is_active ? (
+                                <button
+                                  onClick={() => handleActivateModel(model.id)}
+                                  className="rounded border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-slate-200 hover:bg-emerald-600 hover:border-emerald-500 hover:text-white transition"
+                                >
+                                  Activate
+                                </button>
+                              ) : (
+                                <span className="rounded bg-emerald-950 px-2 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-800">
+                                  Current
+                                </span>
+                              )}
+
+                              {!model.is_default && (
+                                <button
+                                  onClick={() => handleDeleteModel(model.id)}
+                                  className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/30 transition"
+                                  title="Delete Model"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
@@ -864,30 +960,40 @@ export default function PowerPlatformDashboard() {
           {activeTab === 'Visualization' && (
             <div className="space-y-6 max-w-6xl mx-auto">
               {divergedNotice && (
-                <div className="flex items-center gap-2 rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700">
-                  <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
+                <div className="flex items-center gap-2 rounded-lg border border-rose-500/40 bg-rose-950/30 p-3 text-xs text-rose-300">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-rose-400" />
                   <span>{divergedNotice}</span>
                 </div>
               )}
 
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-800 uppercase tracking-tight">Interactive Single-Line Diagram</h2>
-                  <p className="text-xs text-slate-500">Click corridors to trip breakers or select substation nodes for live telemetry.</p>
+                  <h2 className="text-lg md:text-xl font-bold text-slate-100">Interactive Single-Line Diagram</h2>
+                  <p className="text-xs text-slate-400">Click corridors to trip breakers or select substation nodes for live telemetry.</p>
                 </div>
                 <button
                   onClick={handleResetBaseline}
                   disabled={loading}
-                  className="flex items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition w-fit shadow-2xs"
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 w-fit"
                 >
-                  <RotateCcw className="h-3.5 w-3.5 text-slate-500" />
+                  <RotateCcw className="h-3.5 w-3.5 text-emerald-400" />
                   <span>Reset Grid</span>
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-2 rounded-xl border border-slate-300 bg-white p-4 relative overflow-hidden flex flex-col items-center justify-center shadow-2xs">
-                  <svg viewBox="100 40 440 420" className="w-full h-[360px] sm:h-[440px] select-none">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
+                <div className="lg:col-span-2 rounded-xl border border-slate-800 bg-slate-950 p-3 md:p-4 relative overflow-hidden flex flex-col items-center justify-center">
+                  <svg viewBox="100 40 440 420" className="w-full h-[320px] sm:h-[400px] md:h-[460px] select-none">
+                    <defs>
+                      <filter id="node-glow" x="-20%" y="-20%" width="140%" height="140%">
+                        <feGaussianBlur stdDeviation="3" result="glow" />
+                        <feMerge>
+                          <feMergeNode in="glow" />
+                          <feMergeNode in="SourceGraphic" />
+                        </feMerge>
+                      </filter>
+                    </defs>
+
                     {results?.lines.map((line) => {
                       const fromBus = results.buses.find((b) => b.id === line.from_bus);
                       const toBus = results.buses.find((b) => b.id === line.to_bus);
@@ -904,16 +1010,16 @@ export default function PowerPlatformDashboard() {
                             y1={cFrom.y}
                             x2={cTo.x}
                             y2={cTo.y}
-                            stroke={isTripped ? '#e11d48' : line.loading_percent > 85 ? '#d97706' : '#334155'}
-                            strokeWidth={isTripped ? 2 : 2.5}
-                            strokeDasharray={isTripped ? '5 5' : 'none'}
-                            className="transition-colors hover:stroke-slate-900"
+                            stroke={isTripped ? '#e11d48' : line.loading_percent > 85 ? '#f59e0b' : '#059669'}
+                            strokeWidth={isTripped ? 2 : 3}
+                            strokeDasharray={isTripped ? '6 6' : 'none'}
+                            className="transition-colors hover:stroke-white"
                           />
                           {!isTripped && (
                             <text
                               x={(cFrom.x + cTo.x) / 2}
-                              y={(cFrom.y + cTo.y) / 2 - 5}
-                              fill="#64748b"
+                              y={(cFrom.y + cTo.y) / 2 - 6}
+                              fill="#94a3b8"
                               fontSize="8"
                               textAnchor="middle"
                               className="font-mono font-semibold select-none"
@@ -929,7 +1035,7 @@ export default function PowerPlatformDashboard() {
                       const isSelected = selectedBus?.id === bus.id;
                       const isUnder = bus.v_pu < 0.95;
                       const isOver = bus.v_pu > 1.05;
-                      const nodeColor = isUnder ? '#e11d48' : isOver ? '#d97706' : '#0f766e';
+                      const nodeColor = isUnder ? '#f43f5e' : isOver ? '#fbbf24' : '#10b981';
                       const coords = getCoordinates(bus);
 
                       return (
@@ -940,16 +1046,17 @@ export default function PowerPlatformDashboard() {
                           className="cursor-pointer group"
                         >
                           <circle
-                            r={isSelected ? 10 : 7}
+                            r={isSelected ? 11 : 7}
                             fill={nodeColor}
-                            stroke="#ffffff"
+                            stroke="#0f172a"
                             strokeWidth="2"
+                            filter={isSelected ? 'url(#node-glow)' : undefined}
                             className="transition-all group-hover:scale-125"
                           />
                           <text
-                            x={11}
-                            y={3.5}
-                            fill="#1e293b"
+                            x={12}
+                            y={4}
+                            fill="#f8fafc"
                             fontSize="9"
                             fontFamily="monospace"
                             fontWeight="bold"
@@ -962,45 +1069,49 @@ export default function PowerPlatformDashboard() {
                   </svg>
                 </div>
 
-                <div className="rounded-xl border border-slate-300 bg-white p-5 flex flex-col justify-between shadow-2xs">
+                {/* Substation Inspector */}
+                <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 sm:p-5 flex flex-col justify-between">
                   <div>
-                    <h3 className="text-sm font-bold text-slate-800 mb-3 uppercase tracking-tight">Substation Inspector</h3>
+                    <h3 className="text-sm font-bold text-slate-200 mb-3 flex items-center gap-2">
+                      <Zap className="h-4 w-4 text-emerald-400" /> Substation Inspector
+                    </h3>
                     {selectedBus ? (
                       <div className="space-y-3 text-xs">
-                        <div className="p-3 rounded border border-slate-200 bg-slate-50">
-                          <span className="text-slate-500 block text-[10px] uppercase">Substation</span>
-                          <span className="font-bold text-slate-800 text-sm">{selectedBus.name}</span>
-                          <span className="block text-[11px] text-slate-500 mt-0.5">{selectedBus.zone} Zone</span>
+                        <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
+                          <span className="text-slate-400 block text-[10px] uppercase">Substation</span>
+                          <span className="font-bold text-slate-100 text-sm">{selectedBus.name}</span>
+                          <span className="block text-[11px] text-slate-400 mt-0.5">{selectedBus.zone} Zone</span>
                         </div>
                         <div className="grid grid-cols-2 gap-2 font-mono">
-                          <div className="p-2.5 rounded border border-slate-200 bg-slate-50">
-                            <span className="text-slate-500 block text-[10px]">Voltage (|V|)</span>
-                            <span className={`font-bold ${selectedBus.v_pu < 0.95 ? 'text-rose-600' : 'text-slate-800'}`}>
+                          <div className="p-2.5 rounded bg-slate-900 border border-slate-800">
+                            <span className="text-slate-400 block text-[10px]">Voltage (|V|)</span>
+                            <span className={`font-bold ${selectedBus.v_pu < 0.95 ? 'text-rose-400' : 'text-emerald-400'}`}>
                               {selectedBus.v_pu} pu
                             </span>
                           </div>
-                          <div className="p-2.5 rounded border border-slate-200 bg-slate-50">
-                            <span className="text-slate-500 block text-[10px]">Angle</span>
-                            <span className="font-bold text-slate-800">{selectedBus.va_deg}°</span>
+                          <div className="p-2.5 rounded bg-slate-900 border border-slate-800">
+                            <span className="text-slate-400 block text-[10px]">Phase Angle</span>
+                            <span className="font-bold text-slate-200">{selectedBus.va_deg}°</span>
                           </div>
-                          <div className="p-2.5 rounded border border-slate-200 bg-slate-50">
-                            <span className="text-slate-500 block text-[10px]">Active</span>
-                            <span className="font-bold text-slate-800">{selectedBus.p_mw} MW</span>
+                          <div className="p-2.5 rounded bg-slate-900 border border-slate-800">
+                            <span className="text-slate-400 block text-[10px]">Active</span>
+                            <span className="font-bold text-cyan-400">{selectedBus.p_mw} MW</span>
                           </div>
-                          <div className="p-2.5 rounded border border-slate-200 bg-slate-50">
-                            <span className="text-slate-500 block text-[10px]">Reactive</span>
-                            <span className="font-bold text-slate-800">{selectedBus.q_mvar} MVAR</span>
+                          <div className="p-2.5 rounded bg-slate-900 border border-slate-800">
+                            <span className="text-slate-400 block text-[10px]">Reactive</span>
+                            <span className="font-bold text-amber-400">{selectedBus.q_mvar} MVAR</span>
                           </div>
                         </div>
                       </div>
                     ) : (
-                      <div className="h-40 flex items-center justify-center text-center text-xs text-slate-400 border border-dashed border-slate-300 rounded-lg p-4">
-                        Click on any node in the diagram to inspect telemetry.
+                      <div className="h-40 sm:h-48 flex items-center justify-center text-center text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
+                        Click on any node in the Single-Line Diagram to inspect live bus telemetry.
                       </div>
                     )}
                   </div>
-                  <div className="mt-4 pt-3 border-t border-slate-200 text-[11px] text-slate-500">
-                    Click line corridors to simulate breaker trip (N-1).
+                  <div className="mt-4 pt-3 border-t border-slate-800 text-[10px] text-slate-400 flex justify-between">
+                    <span>Click corridors to trip (N-1)</span>
+                    <span className="text-emerald-400">● Live 330kV Map</span>
                   </div>
                 </div>
               </div>
@@ -1012,8 +1123,8 @@ export default function PowerPlatformDashboard() {
             <div className="space-y-6 max-w-6xl mx-auto">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-800 uppercase tracking-tight">National Grid Contingency Audit Report</h2>
-                  <p className="text-xs text-slate-500">Grid Code compliance audit (0.95 ≤ |V| ≤ 1.05 p.u., loading ≤ 85%).</p>
+                  <h2 className="text-lg md:text-xl font-bold text-slate-100">National Grid Contingency Audit Report</h2>
+                  <p className="text-xs text-slate-400">Grid Code compliance audit (0.95 ≤ |V| ≤ 1.05 p.u., loading ≤ 85%).</p>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -1021,72 +1132,72 @@ export default function PowerPlatformDashboard() {
                     href={`${API_BASE_URL}/api/reports/export-csv`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 rounded border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-2xs"
+                    className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-700"
                   >
-                    <FileText className="h-3.5 w-3.5 text-slate-500" />
+                    <FileText className="h-3.5 w-3.5 text-emerald-400" />
                     <span>Download CSV</span>
                   </a>
 
                   <button
                     onClick={() => window.print()}
-                    className="flex items-center gap-1.5 rounded border border-slate-400 bg-slate-800 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 transition shadow-2xs"
+                    className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-emerald-500"
                   >
                     <BarChart3 className="h-3.5 w-3.5" />
-                    <span>Print Document</span>
+                    <span>Print Audit Document</span>
                   </button>
                 </div>
               </div>
 
               {/* Summary Audit Scorecard */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                <div className="p-4 rounded-xl border border-slate-300 bg-white shadow-2xs">
-                  <span className="text-slate-500 block mb-1">Total System Infeed</span>
-                  <span className="text-xl font-mono font-bold text-slate-800">
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950">
+                  <span className="text-slate-400 block mb-1">Total System Infeed</span>
+                  <span className="text-xl font-mono font-bold text-emerald-400">
                     {results?.total_gen_mw ? `${results.total_gen_mw.toLocaleString()} MW` : '--'}
                   </span>
                 </div>
 
-                <div className="p-4 rounded-xl border border-slate-300 bg-white shadow-2xs">
-                  <span className="text-slate-500 block mb-1">Total System Losses</span>
-                  <span className="text-xl font-mono font-bold text-slate-800">
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950">
+                  <span className="text-slate-400 block mb-1">Total System Losses</span>
+                  <span className="text-xl font-mono font-bold text-rose-400">
                     {results?.total_losses_mw ? `${results.total_losses_mw} MW` : '--'}
                   </span>
                 </div>
 
-                <div className="p-4 rounded-xl border border-slate-300 bg-white shadow-2xs">
-                  <span className="text-slate-500 block mb-1">Voltage Violations</span>
-                  <span className="text-xl font-mono font-bold text-slate-800">
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950">
+                  <span className="text-slate-400 block mb-1">Voltage Violations</span>
+                  <span className="text-xl font-mono font-bold text-amber-400">
                     {results?.buses ? results.buses.filter((b) => b.v_pu < 0.95 || b.v_pu > 1.05).length : 0} Nodes
                   </span>
                 </div>
 
-                <div className="p-4 rounded-xl border border-slate-300 bg-white shadow-2xs">
-                  <span className="text-slate-500 block mb-1">Critical Lines (&gt;80%)</span>
-                  <span className="text-xl font-mono font-bold text-slate-800">
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950">
+                  <span className="text-slate-400 block mb-1">Critical Lines (&gt;80%)</span>
+                  <span className="text-xl font-mono font-bold text-cyan-400">
                     {results?.lines ? results.lines.filter((l) => l.loading_percent > 80).length : 0} Corridors
                   </span>
                 </div>
               </div>
 
               {/* Itemized Violation Ledger */}
-              <div className="rounded-xl border border-slate-300 bg-white overflow-hidden shadow-2xs">
-                <div className="border-b border-slate-200 bg-slate-50 px-5 py-3 flex justify-between items-center text-xs">
-                  <h3 className="font-bold text-slate-700">Grid Code Violation & Contingency Ledger</h3>
+              <div className="rounded-xl border border-slate-800 bg-slate-950 overflow-hidden shadow-sm">
+                <div className="border-b border-slate-800 bg-slate-900/60 px-5 py-3 flex justify-between items-center text-xs">
+                  <h3 className="font-bold text-slate-200">Grid Code Violation & Contingency Ledger</h3>
                 </div>
 
-                <div className="divide-y divide-slate-200 text-xs">
+                <div className="divide-y divide-slate-800 text-xs">
                   {results?.buses
                     ?.filter((b) => b.v_pu < 0.95)
                     .map((bus) => (
-                      <div key={bus.id} className="p-3.5 flex items-center justify-between bg-rose-50/50">
+                      <div key={bus.id} className="p-3.5 flex items-center justify-between bg-rose-950/20 hover:bg-rose-950/30">
                         <div className="flex items-center gap-3">
-                          <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+                          <AlertTriangle className="h-4 w-4 text-rose-400 shrink-0" />
                           <div>
-                            <span className="font-bold text-slate-800">{bus.name} ({bus.zone} Zone)</span>
-                            <span className="block text-[11px] text-rose-700">Under-voltage detected: {bus.v_pu} p.u.</span>
+                            <span className="font-bold text-slate-200">{bus.name} ({bus.zone} Zone)</span>
+                            <span className="block text-[11px] text-rose-300">Under-voltage detected: {bus.v_pu} p.u.</span>
                           </div>
                         </div>
-                        <span className="font-mono text-rose-700 font-bold px-2 py-0.5 rounded bg-rose-100 border border-rose-200 text-[11px]">
+                        <span className="font-mono text-rose-400 font-bold px-2 py-1 rounded bg-rose-950 border border-rose-800 text-[11px]">
                           V-LOW
                         </span>
                       </div>
@@ -1095,26 +1206,43 @@ export default function PowerPlatformDashboard() {
                   {results?.lines
                     ?.filter((l) => l.loading_percent > 80 && l.in_service)
                     .map((line) => (
-                      <div key={line.id} className="p-3.5 flex items-center justify-between bg-amber-50/50">
+                      <div key={line.id} className="p-3.5 flex items-center justify-between bg-amber-950/20 hover:bg-amber-950/30">
                         <div className="flex items-center gap-3">
-                          <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                          <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
                           <div>
-                            <span className="font-bold text-slate-800">{line.name}</span>
-                            <span className="block text-[11px] text-amber-700">Loading reached {line.loading_percent}% ({line.flow_mw} MW)</span>
+                            <span className="font-bold text-slate-200">{line.name}</span>
+                            <span className="block text-[11px] text-amber-300">Loading reached {line.loading_percent}% ({line.flow_mw} MW)</span>
                           </div>
                         </div>
-                        <span className="font-mono text-amber-700 font-bold px-2 py-0.5 rounded bg-amber-100 border border-amber-200 text-[11px]">
+                        <span className="font-mono text-amber-400 font-bold px-2 py-1 rounded bg-amber-950 border border-amber-800 text-[11px]">
                           OVERLOAD
+                        </span>
+                      </div>
+                    ))}
+
+                  {results?.lines
+                    ?.filter((l) => !l.in_service)
+                    .map((line) => (
+                      <div key={line.id} className="p-3.5 flex items-center justify-between bg-slate-900/60">
+                        <div className="flex items-center gap-3">
+                          <RotateCcw className="h-4 w-4 text-slate-400 shrink-0" />
+                          <div>
+                            <span className="font-bold text-slate-300">{line.name}</span>
+                            <span className="block text-[11px] text-slate-500">Breaker opened: N-1 outage applied to corridor</span>
+                          </div>
+                        </div>
+                        <span className="font-mono text-slate-400 font-bold px-2 py-1 rounded bg-slate-800 border border-slate-700 text-[11px]">
+                          N-1 OUTAGE
                         </span>
                       </div>
                     ))}
 
                   {results?.buses?.every((b) => b.v_pu >= 0.95 && b.v_pu <= 1.05) &&
                     results?.lines?.every((l) => l.loading_percent <= 80 && l.in_service) && (
-                      <div className="p-6 text-center text-slate-500 flex flex-col items-center justify-center">
-                        <CheckCircle2 className="h-8 w-8 text-emerald-600 mb-2" />
-                        <span className="font-semibold text-slate-800">Full Grid Code Compliance</span>
-                        <span className="text-[11px] text-slate-500 mt-0.5">All substation voltages and branch loadings fall within standard operating limits.</span>
+                      <div className="p-6 text-center text-slate-400 flex flex-col items-center justify-center">
+                        <CheckCircle2 className="h-8 w-8 text-emerald-400 mb-2" />
+                        <span className="font-semibold text-slate-200">Full Grid Code Compliance</span>
+                        <span className="text-[11px] text-slate-500 mt-0.5">All substation voltages and line loadings fall within operational boundaries.</span>
                       </div>
                     )}
                 </div>
@@ -1125,38 +1253,42 @@ export default function PowerPlatformDashboard() {
           {/* TAB 7: TASK FORCE & OPERATOR ADMIN PANEL */}
           {activeTab === 'Admin Panel' && (
             <div className="space-y-6 max-w-6xl mx-auto">
-              <div>
-                <h2 className="text-lg font-bold text-slate-800 uppercase tracking-tight">National Grid Task Force & Administration</h2>
-                <p className="text-xs text-slate-500">Statutory NERC Grid Code operational criteria and system security margins.</p>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg md:text-xl font-bold text-slate-100">National Grid Task Force & Administration</h2>
+                  <p className="text-xs text-slate-400">Statutory NERC Grid Code criteria and system security margins.</p>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="rounded-xl border border-slate-300 bg-white p-5 space-y-4 shadow-2xs">
-                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-tight border-b border-slate-200 pb-2">
-                    NERC Grid Code Criteria
-                  </h3>
+                <div className="rounded-xl border border-slate-800 bg-slate-950 p-5 space-y-4">
+                  <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+                    <ShieldCheck className="h-5 w-5 text-emerald-400" />
+                    <h3 className="text-sm font-bold text-slate-200">NERC Grid Code Criteria</h3>
+                  </div>
+
                   <div className="space-y-3 text-xs">
-                    <div className="flex justify-between border-b border-slate-100 pb-2">
-                      <span className="text-slate-600">Nominal Frequency</span>
-                      <span className="font-mono font-bold text-slate-800">50.00 Hz (±0.5%)</span>
+                    <div className="flex justify-between border-b border-slate-900 pb-2">
+                      <span className="text-slate-400">Nominal Grid Frequency</span>
+                      <span className="font-mono font-bold text-slate-100">50.00 Hz (±0.5%)</span>
                     </div>
-                    <div className="flex justify-between border-b border-slate-100 pb-2">
-                      <span className="text-slate-600">Statutory Voltage Band</span>
-                      <span className="font-mono font-bold text-slate-800">0.95 – 1.05 p.u.</span>
+
+                    <div className="flex justify-between border-b border-slate-900 pb-2">
+                      <span className="text-slate-400">Statutory Voltage Limits</span>
+                      <span className="font-mono font-bold text-slate-100">0.95 – 1.05 p.u.</span>
                     </div>
+
                     <div className="flex justify-between">
-                      <span className="text-slate-600">Thermal Alarm Limit</span>
-                      <span className="font-mono font-bold text-slate-800">85.0% Loading</span>
+                      <span className="text-slate-400">Line Thermal Alarm Threshold</span>
+                      <span className="font-mono font-bold text-amber-400">85.0% Loading</span>
                     </div>
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-slate-300 bg-white p-5 space-y-4 shadow-2xs">
-                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-tight border-b border-slate-200 pb-2">
-                    System Authority
-                  </h3>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Operated under the National Research Fund (NRF) Power Systems Research Initiative for the Nigerian bulk electricity transmission network.
+                <div className="rounded-xl border border-slate-800 bg-slate-950 p-5 space-y-3">
+                  <h3 className="text-sm font-bold text-slate-200 border-b border-slate-800 pb-2">System Authority</h3>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Operated under the National Research Fund (NRF) Power Systems Research Initiative for bulk transmission networks.
                   </p>
                 </div>
               </div>
