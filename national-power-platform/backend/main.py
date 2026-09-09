@@ -19,6 +19,7 @@ from nigeria_grid import get_nigeria_330kv
 import io
 import csv
 from fastapi.responses import StreamingResponse
+from datetime import datetime
 
 app = FastAPI(title="National Power System Simulation API")
 
@@ -562,3 +563,47 @@ def export_grid_report():
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=nigeria_330kv_audit_report.csv"}
     )
+
+
+# Global in-memory audit log
+system_audit_logs = [
+    {
+        "id": 1,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "event": "System Initialization",
+        "category": "SYSTEM",
+        "details": "Initialized Nigerian 330kV transmission grid EMS engine.",
+        "severity": "INFO",
+    }
+]
+
+class GridCodeConfig(BaseModel):
+    v_min_pu: float = 0.95
+    v_max_pu: float = 1.05
+    f_nominal_hz: float = 50.00
+    f_deadband_hz: float = 0.25
+    line_overload_threshold: float = 85.0
+
+grid_code_config = GridCodeConfig()
+
+@app.get("/api/admin/config")
+def get_grid_code_config():
+    return grid_code_config
+
+@app.post("/api/admin/config")
+def update_grid_code_config(config: GridCodeConfig):
+    global grid_code_config
+    grid_code_config = config
+    system_audit_logs.insert(0, {
+        "id": len(system_audit_logs) + 1,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "event": "Grid Code Configuration Updated",
+        "category": "REGULATION",
+        "details": f"Voltage limits set to {config.v_min_pu}-{config.v_max_pu} pu, thermal limit {config.line_overload_threshold}%.",
+        "severity": "WARNING",
+    })
+    return {"status": "success", "config": grid_code_config}
+
+@app.get("/api/admin/audit-logs")
+def get_audit_logs():
+    return system_audit_logs[:25]

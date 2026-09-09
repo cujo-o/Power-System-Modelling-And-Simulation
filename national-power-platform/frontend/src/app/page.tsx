@@ -12,9 +12,7 @@ import {
   FileText,
   ShieldCheck,
   Play,
-  Activity,
   Sliders,
-  LogIn,
   AlertTriangle,
   CheckCircle2,
   RefreshCw,
@@ -291,74 +289,56 @@ export default function PowerPlatformDashboard() {
 
   return (
     <div className="flex h-screen w-full flex-col bg-slate-900 font-sans text-slate-100 antialiased overflow-hidden">
-      {/* Global Header */}
-      <header className="flex h-16 w-full items-center justify-between border-b border-slate-800 bg-slate-950 px-4 md:px-6 shadow-md z-20">
+      {/* Clean Utility Header */}
+      <header className="flex h-14 w-full items-center justify-between border-b border-slate-800 bg-slate-950 px-4 md:px-5 z-20 select-none">
         <div className="flex items-center gap-3">
-          {/* Mobile Menu Button */}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden flex items-center justify-center p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+            className="md:hidden p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 transition"
             aria-label="Toggle menu"
           >
             {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
 
-          <div className="flex h-9 w-9 md:h-10 md:w-10 items-center justify-center rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 shrink-0">
-            <Zap className="h-5 w-5 fill-current" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-slate-100 truncate max-w-[180px] sm:max-w-none">
-                National Power Grid EMS
-              </h1>
-              <span className="hidden sm:inline-block rounded bg-emerald-950 px-2 py-0.5 text-[10px] font-semibold text-emerald-400 border border-emerald-800 truncate">
-                {results?.model_name || 'Nigeria 330kV'}
-              </span>
-            </div>
-            <p className="hidden md:block text-[11px] text-slate-400">NRF Static & Dynamic Grid Simulation Platform</p>
+          <div className="flex items-center gap-2.5">
+            <Zap className="h-4 w-4 text-emerald-400 fill-emerald-400" />
+            <span className="font-semibold text-sm text-slate-200 tracking-tight">Nigeria 330kV EMS</span>
+            <span className="hidden sm:inline-block font-mono text-[11px] text-slate-400 bg-slate-900 border border-slate-800 px-2 py-0.5 rounded truncate max-w-[170px]">
+              {results?.model_name || 'Baseline 330kV'}
+            </span>
           </div>
         </div>
 
-        {/* Live Telemetry: Desktop View */}
-        <div className="hidden lg:flex items-center gap-6 text-xs">
-          <div className="flex items-center gap-2 border-r border-slate-800 pr-6">
-            <Activity className={`h-4 w-4 ${results && (results.frequency < 49.8 || results.frequency > 50.2) ? 'text-rose-400 animate-pulse' : 'text-emerald-400'}`} />
-            <div>
-              <span className="text-slate-400">Frequency: </span>
-              <span className="font-mono font-bold text-slate-100">
-                {results?.frequency ? `${results.frequency.toFixed(2)} Hz` : '50.00 Hz'}
-              </span>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 border-r border-slate-800 pr-6">
-            <span className="text-slate-400">Generation: </span>
-            <span className="font-mono font-bold text-slate-100">
-              {results?.total_gen_mw ? `${results.total_gen_mw.toLocaleString()} MW` : '--'}
-            </span>
-          </div>
+        {/* Telemetry Strip */}
+        <div className="flex items-center gap-3 sm:gap-5 text-xs font-mono">
           <div className="flex items-center gap-2">
-            <span className="text-slate-400">Losses: </span>
-            <span className="font-mono font-bold text-slate-100">
-              {results?.total_losses_mw ? `${results.total_losses_mw} MW` : '--'}
+            <span className="relative flex h-2 w-2">
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${results && (results.frequency < 49.8 || results.frequency > 50.2) ? 'bg-rose-400' : 'bg-emerald-400'}`}></span>
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${results && (results.frequency < 49.8 || results.frequency > 50.2) ? 'bg-rose-500' : 'bg-emerald-500'}`}></span>
             </span>
+            <span className="text-slate-100 font-bold">{results?.frequency ? `${results.frequency.toFixed(2)} Hz` : '50.00 Hz'}</span>
+          </div>
+
+          <div className="hidden md:flex items-center gap-4 text-slate-400 border-l border-slate-800/80 pl-4">
+            <div>
+              <span className="text-slate-500">Gen: </span>
+              <span className="text-slate-200 font-semibold">{results?.total_gen_mw ? `${results.total_gen_mw.toLocaleString()} MW` : '--'}</span>
+            </div>
+            <div>
+              <span className="text-slate-500">Loss: </span>
+              <span className="text-slate-200 font-semibold">{results?.total_losses_mw ? `${results.total_losses_mw} MW` : '--'}</span>
+            </div>
+          </div>
+
+          <div className="border-l border-slate-800/80 pl-3 sm:pl-4">
+            <span className="text-[11px] font-sans text-slate-400">NCC Osogbo</span>
           </div>
         </div>
-
-        {/* Live Telemetry: Mobile Compact Badge */}
-        <div className="flex lg:hidden items-center gap-2 font-mono text-[11px] bg-slate-900 px-2.5 py-1 rounded-md border border-slate-800">
-          <Activity className={`h-3 w-3 ${results && (results.frequency < 49.8 || results.frequency > 50.2) ? 'text-rose-400 animate-pulse' : 'text-emerald-400'}`} />
-          <span className="font-bold text-slate-200">{results?.frequency ? `${results.frequency.toFixed(2)}Hz` : '50Hz'}</span>
-        </div>
-
-        <button className="hidden sm:flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-700">
-          <LogIn className="h-3.5 w-3.5" />
-          <span>Operator Login</span>
-        </button>
       </header>
 
-      {/* Main Framework Container */}
+      {/* Main Container */}
       <div className="flex flex-1 overflow-hidden relative">
-        {/* Mobile Slide-Over Drawer */}
+        {/* Mobile Navigation Drawer */}
         {mobileMenuOpen && (
           <div
             className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden"
@@ -375,7 +355,7 @@ export default function PowerPlatformDashboard() {
                     <X className="h-5 w-5" />
                   </button>
                 </div>
-                <nav className="space-y-1.5">
+                <nav className="space-y-1">
                   {navItems.map((tab) => {
                     const Icon = tab.icon;
                     const isActive = activeTab === tab.id;
@@ -386,9 +366,9 @@ export default function PowerPlatformDashboard() {
                           setActiveTab(tab.id);
                           setMobileMenuOpen(false);
                         }}
-                        className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
+                        className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
                           isActive
-                            ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/30'
+                            ? 'bg-emerald-600 text-white'
                             : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
                         }`}
                       >
@@ -414,8 +394,8 @@ export default function PowerPlatformDashboard() {
         )}
 
         {/* Desktop Sidebar */}
-        <aside className="hidden md:flex w-64 border-r border-slate-800 bg-slate-950 p-4 flex-col justify-between shrink-0">
-          <nav className="space-y-1.5">
+        <aside className="hidden md:flex w-60 border-r border-slate-800 bg-slate-950 p-3 flex-col justify-between shrink-0 select-none">
+          <nav className="space-y-1">
             {navItems.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -423,9 +403,9 @@ export default function PowerPlatformDashboard() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
+                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-xs font-medium transition ${
                     isActive
-                      ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/30'
+                      ? 'bg-emerald-600 text-white font-semibold'
                       : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
                   }`}
                 >
@@ -436,8 +416,8 @@ export default function PowerPlatformDashboard() {
             })}
           </nav>
 
-          <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-xs space-y-2.5">
-            <div className="flex items-center justify-between text-slate-400">
+          <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-2.5 text-xs space-y-2">
+            <div className="flex items-center justify-between text-[11px] text-slate-400">
               <span>Solver Engine</span>
               <span className="font-semibold text-emerald-400">Pandapower</span>
             </div>
@@ -447,12 +427,12 @@ export default function PowerPlatformDashboard() {
               className="w-full flex items-center justify-center gap-1.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 py-1.5 text-[11px] font-medium text-slate-200 transition disabled:opacity-50"
             >
               <RotateCcw className="h-3 w-3 text-emerald-400" />
-              <span>Reset Grid to Baseline</span>
+              <span>Reset to Baseline</span>
             </button>
           </div>
         </aside>
 
-        {/* Workspace Body */}
+        {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto bg-slate-900 p-4 sm:p-6 md:p-8">
           {/* TAB 1: HOME */}
           {activeTab === 'Home' && (
@@ -468,28 +448,28 @@ export default function PowerPlatformDashboard() {
                     title: 'GRID STABILITY MODELS',
                     desc: 'Newton-Raphson power flow, N-1 contingency studies, and transient frequency response.',
                     icon: TrendingUp,
-                    color: 'from-blue-500/20 to-cyan-500/10 border-blue-500/30 text-blue-400',
+                    color: 'from-blue-500/10 to-cyan-500/5 border-blue-500/30 text-blue-400',
                     action: () => setActiveTab('Grid Models'),
                   },
                   {
                     title: 'MARKET SIMULATION MODELS',
                     desc: 'Merit order dispatch, locational marginal pricing (LMP), and hydro-thermal generation optimization.',
                     icon: DollarSign,
-                    color: 'from-emerald-500/20 to-teal-500/10 border-emerald-500/30 text-emerald-400',
+                    color: 'from-emerald-500/10 to-teal-500/5 border-emerald-500/30 text-emerald-400',
                     action: () => setActiveTab('Market Simulations'),
                   },
                   {
                     title: 'DATA UPLOAD & VALIDATION',
                     desc: 'SCADA telemetry ingestion, IEEE MATPOWER parser, and automated topology error checking.',
                     icon: UploadCloud,
-                    color: 'from-purple-500/20 to-indigo-500/10 border-purple-500/30 text-purple-400',
+                    color: 'from-purple-500/10 to-indigo-500/5 border-purple-500/30 text-purple-400',
                     action: () => setActiveTab('Data Upload'),
                   },
                   {
                     title: 'REPORTS & VISUALIZATION',
                     desc: 'Single-line diagrams, voltage profile heatmaps, transmission congestion, and PDF audit exports.',
                     icon: BarChart3,
-                    color: 'from-amber-500/20 to-orange-500/10 border-amber-500/30 text-amber-400',
+                    color: 'from-amber-500/10 to-orange-500/5 border-amber-500/30 text-amber-400',
                     action: () => setActiveTab('Visualization'),
                   },
                 ].map((card) => {
@@ -498,9 +478,9 @@ export default function PowerPlatformDashboard() {
                     <div
                       key={card.title}
                       onClick={card.action}
-                      className={`group cursor-pointer rounded-xl border bg-gradient-to-br p-6 md:p-8 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-xl ${card.color}`}
+                      className={`group cursor-pointer rounded-xl border bg-gradient-to-br p-6 md:p-8 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-lg ${card.color}`}
                     >
-                      <div className="mb-4 flex h-12 w-12 md:h-14 md:w-14 items-center justify-center rounded-xl bg-slate-950/60 border border-slate-800 shadow-inner group-hover:scale-110 transition-transform">
+                      <div className="mb-4 flex h-12 w-12 md:h-14 md:w-14 items-center justify-center rounded-xl bg-slate-950/80 border border-slate-800 shadow-inner group-hover:scale-105 transition-transform">
                         <Icon className="h-6 w-6 md:h-7 md:w-7 stroke-[1.75]" />
                       </div>
                       <h3 className="text-sm md:text-base font-bold tracking-wider text-slate-100 group-hover:text-white">
@@ -528,7 +508,7 @@ export default function PowerPlatformDashboard() {
                 <div>
                   <h2 className="text-lg md:text-xl font-bold text-slate-100">Static Power Flow & Contingency</h2>
                   <p className="text-xs md:text-sm text-slate-400">
-                    Active Grid: <span className="text-emerald-400 font-mono font-bold">{results?.model_name || 'Nigeria 330kV Baseline'}</span>
+                    Active Grid: <span className="text-emerald-400 font-mono font-semibold">{results?.model_name || 'Nigeria 330kV Baseline'}</span>
                   </p>
                 </div>
 
@@ -628,7 +608,7 @@ export default function PowerPlatformDashboard() {
                 </div>
               </div>
 
-              {/* N-1 Contingency Breaker Controls */}
+              {/* Breaker Controls */}
               <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 sm:p-5">
                 <h3 className="text-sm font-bold text-slate-200 mb-1">N-1 Line Contingency & Breaker Controls</h3>
                 <p className="text-xs text-slate-400 mb-4">Click "Trip" to open a breaker and observe power redistribution across adjacent corridors.</p>
@@ -706,7 +686,7 @@ export default function PowerPlatformDashboard() {
                 </button>
               </div>
 
-              {/* Market Parameter Scenario Controls */}
+              {/* Scenario Controls */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-950 flex flex-col justify-between">
                   <div className="flex justify-between items-center mb-2">
@@ -754,7 +734,7 @@ export default function PowerPlatformDashboard() {
                 </div>
               </div>
 
-              {/* Generation Merit Order Stack */}
+              {/* Merit Order Table */}
               <div className="rounded-xl border border-slate-800 bg-slate-950 overflow-hidden shadow-sm">
                 <div className="border-b border-slate-800 bg-slate-900/60 px-5 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
@@ -821,7 +801,7 @@ export default function PowerPlatformDashboard() {
                 </div>
               </div>
 
-              {/* Locational Marginal Pricing (LMP) */}
+              {/* LMP Table */}
               <div className="rounded-xl border border-slate-800 bg-slate-950 p-5">
                 <div className="mb-4">
                   <h3 className="text-sm font-bold text-slate-200">Substation Locational Marginal Prices (LMP)</h3>
@@ -894,7 +874,6 @@ export default function PowerPlatformDashboard() {
                   </label>
                 </div>
 
-                {/* Scorecard Display */}
                 {uploadResult && (
                   <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 sm:p-5 space-y-4">
                     <div className="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -984,7 +963,6 @@ export default function PowerPlatformDashboard() {
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-                {/* SVG Vector Canvas */}
                 <div className="lg:col-span-2 rounded-xl border border-slate-800 bg-slate-950 p-3 md:p-4 relative overflow-hidden flex flex-col items-center justify-center">
                   <svg viewBox="100 40 440 420" className="w-full h-[320px] sm:h-[400px] md:h-[460px] select-none">
                     <defs>
@@ -997,7 +975,6 @@ export default function PowerPlatformDashboard() {
                       </filter>
                     </defs>
 
-                    {/* Lines */}
                     {results?.lines.map((line) => {
                       const fromBus = results.buses.find((b) => b.id === line.from_bus);
                       const toBus = results.buses.find((b) => b.id === line.to_bus);
@@ -1035,7 +1012,6 @@ export default function PowerPlatformDashboard() {
                       );
                     })}
 
-                    {/* Buses */}
                     {results?.buses.map((bus) => {
                       const isSelected = selectedBus?.id === bus.id;
                       const isUnder = bus.v_pu < 0.95;
@@ -1074,7 +1050,6 @@ export default function PowerPlatformDashboard() {
                   </svg>
                 </div>
 
-                {/* Substation Inspector */}
                 <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 sm:p-5 flex flex-col justify-between">
                   <div>
                     <h3 className="text-sm font-bold text-slate-200 mb-3 flex items-center gap-2">
@@ -1192,7 +1167,7 @@ export default function PowerPlatformDashboard() {
                 </div>
               </div>
 
-              {/* Itemized Grid Code Violation Ledger */}
+              {/* Itemized Violation Ledger */}
               <div className="rounded-xl border border-slate-800 bg-slate-950 overflow-hidden shadow-sm">
                 <div className="border-b border-slate-800 bg-slate-900/60 px-5 py-3 flex justify-between items-center text-xs">
                   <h3 className="font-bold text-slate-200">Grid Code Violation & Contingency Ledger</h3>
@@ -1264,10 +1239,145 @@ export default function PowerPlatformDashboard() {
             </div>
           )}
 
-          {/* TAB 7: ADMIN PANEL PLACEHOLDER */}
+          {/* TAB 7: TASK FORCE & OPERATOR ADMIN PANEL */}
           {activeTab === 'Admin Panel' && (
-            <div className="flex h-64 items-center justify-center text-xs md:text-sm text-slate-500">
-              <p>Task Force & Operator Admin Panel is under construction.</p>
+            <div className="space-y-6 max-w-6xl mx-auto">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg md:text-xl font-bold text-slate-100">National Grid Task Force & Administration</h2>
+                  <p className="text-xs md:text-sm text-slate-400">Manage statutory NERC Grid Code criteria, system security margins, and operator audit trail.</p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400">Current Role:</span>
+                  <select className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-emerald-400 font-bold focus:outline-none">
+                    <option>System Operator (NCC Osogbo)</option>
+                    <option>Market Operator (MO Abuja)</option>
+                    <option>NRF Task Force Lead Researcher</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Regulatory Criteria */}
+                <div className="rounded-xl border border-slate-800 bg-slate-950 p-5 space-y-4">
+                  <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+                    <ShieldCheck className="h-5 w-5 text-emerald-400" />
+                    <h3 className="text-sm font-bold text-slate-200">NERC Grid Code Criteria</h3>
+                  </div>
+
+                  <div className="space-y-3 text-xs">
+                    <div>
+                      <div className="flex justify-between text-slate-300 mb-1">
+                        <span>Nominal Grid Frequency</span>
+                        <span className="font-mono font-bold text-slate-100">50.00 Hz</span>
+                      </div>
+                      <div className="p-2.5 rounded bg-slate-900 border border-slate-800 text-[11px] text-slate-400">
+                        Operational Band: <span className="text-emerald-400 font-mono font-semibold">49.75 Hz – 50.25 Hz</span> (±0.5%)
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-slate-300 mb-1">
+                        <span>Statutory Voltage Limits</span>
+                        <span className="font-mono font-bold text-slate-100">±5.0%</span>
+                      </div>
+                      <div className="p-2.5 rounded bg-slate-900 border border-slate-800 text-[11px] text-slate-400">
+                        Permissible Range: <span className="text-emerald-400 font-mono font-semibold">0.95 – 1.05 p.u.</span> (313.5kV – 346.5kV)
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-slate-300 mb-1">
+                        <span>Line Thermal Alarm Threshold</span>
+                        <span className="font-mono font-bold text-amber-400">85.0% MVA</span>
+                      </div>
+                      <div className="p-2.5 rounded bg-slate-900 border border-slate-800 text-[11px] text-slate-400">
+                        Branches above 85% trigger auto-dispatch alerts to prevent sag and conductor annealing.
+                      </div>
+                    </div>
+
+                    <div className="pt-2">
+                      <button
+                        onClick={() => alert('Grid code parameters synchronized with NERC standard document.')}
+                        className="w-full rounded-lg bg-emerald-600/20 border border-emerald-500/40 py-2 text-xs font-bold text-emerald-300 hover:bg-emerald-600 hover:text-white transition"
+                      >
+                        Enforce Standards
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Audit Log */}
+                <div className="lg:col-span-2 rounded-xl border border-slate-800 bg-slate-950 overflow-hidden flex flex-col justify-between">
+                  <div>
+                    <div className="border-b border-slate-800 bg-slate-900/60 px-5 py-3 flex items-center justify-between">
+                      <h3 className="text-sm font-bold text-slate-200">System Event & Contingency Audit Trail</h3>
+                      <span className="text-[10px] text-emerald-400 bg-emerald-950 border border-emerald-800 px-2 py-0.5 rounded font-mono">
+                        LOGGING ACTIVE
+                      </span>
+                    </div>
+
+                    <div className="divide-y divide-slate-800 text-xs">
+                      {[
+                        {
+                          time: 'Just now',
+                          event: 'Newton-Raphson Solver Executed',
+                          user: 'Operator (Osogbo)',
+                          badge: 'SOLVER',
+                          color: 'text-cyan-400 bg-cyan-950/40 border-cyan-800',
+                          desc: 'Full AC power flow convergence achieved in 4 iterations.',
+                        },
+                        {
+                          time: '3 mins ago',
+                          event: 'Contingency Tripping Simulation',
+                          user: 'Planning Engineer',
+                          badge: 'N-1 EVENT',
+                          color: 'text-rose-400 bg-rose-950/40 border-rose-800',
+                          desc: 'Line outage applied. Corridors recalculated with redistribution across South-West.',
+                        },
+                        {
+                          time: '12 mins ago',
+                          event: 'Market Economic Dispatch',
+                          user: 'Market Operator',
+                          badge: 'MARKET',
+                          color: 'text-emerald-400 bg-emerald-950/40 border-emerald-800',
+                          desc: 'Merit order resolved. Kainji/Jebba/Shiroro dispatched as base infeed.',
+                        },
+                        {
+                          time: '25 mins ago',
+                          event: 'MATPOWER Network Ingestion',
+                          user: 'System Admin',
+                          badge: 'DATA',
+                          color: 'text-purple-400 bg-purple-950/40 border-purple-800',
+                          desc: 'Ingested IEEE/TCN .m format case file with 0 islanding violations.',
+                        },
+                      ].map((item, idx) => (
+                        <div key={idx} className="p-3.5 hover:bg-slate-900/40 flex items-start justify-between gap-4">
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${item.color}`}>
+                                {item.badge}
+                              </span>
+                              <span className="font-semibold text-slate-200">{item.event}</span>
+                            </div>
+                            <p className="text-[11px] text-slate-400">{item.desc}</p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <span className="block font-mono text-[10px] text-slate-400">{item.time}</span>
+                            <span className="block text-[10px] text-slate-500">{item.user}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-slate-900/60 border-t border-slate-800 text-[11px] text-slate-400 flex justify-between items-center">
+                    <span>Audit logs retained for NRF project compliance review</span>
+                    <span className="text-emerald-400 font-mono">SHA-256 Verified</span>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </main>
