@@ -330,3 +330,167 @@ def run_power_flow(req: SimulationRequest):
             "buses": [],
             "lines": []
         }
+
+    # Add this model schema to backend/main.py
+
+
+class MarketSimulationRequest(BaseModel):
+    load_multiplier: Optional[float] = 1.0
+    # 1.0 = Normal, 1.5 = Gas Scarcity (+50%)
+    gas_price_factor: Optional[float] = 1.0
+    # 1.0 = Wet Season (100%), 0.6 = Dry Season (60%)
+    hydro_availability: Optional[float] = 1.0
+    tripped_lines: Optional[List[int]] = []
+
+
+@app.post("/api/simulate/market-dispatch")
+def run_market_dispatch(req: MarketSimulationRequest):
+    global active_custom_net
+
+    base_net = active_custom_net if active_custom_net is not None else get_nigeria_330kv()
+    net = copy.deepcopy(base_net)
+
+    # 1. Scale demand
+    if req.load_multiplier != 1.0 and len(net.load) > 0:
+        net.load["p_mw"] *= req.load_multiplier
+        net.load["q_mvar"] *= req.load_multiplier
+
+    # 2. Trip lines if specified
+    for line_id in req.tripped_lines:
+        if line_id in net.line.index:
+            net.line.at[line_id, "in_service"] = False
+
+    # 3. Define Plant Operating Capabilities & Marginal Fuel Cost Curves (NGN/MWh)
+    # Hydro plants (Northern Corridor)
+    hydro_cost = round(19500.0 / max(0.2, req.hydro_availability), 2)
+    # Gas Thermal plants (Southern Delta/Lagos Corridor)
+    gas_cost = round(48000.0 * max(0.5, req.gas_price_factor), 2)
+
+    gen_market_profiles = {
+        "Kainji Hydro": {"type": "Hydro", "cost": hydro_cost * 0.95, "p_max": 450.0 * req.hydro_availability},
+        "Jebba Hydro": {"type": "Hydro", "cost": hydro_cost * 1.00, "p_max": 420.0 * req.hydro_availability},
+        "Shiroro Hydro": {"type": "Hydro", "cost": hydro_cost * 1.05, "p_max": 380.0 * req.hydro_availability},
+        "Afam Thermal": {"type": "Gas Turbine", "cost": gas_cost * 0.92, "p_max": 650.0},
+        "Egbin PS": {"type": "Gas Steam", "cost": gas_cost * 1.00, "p_max": 1100.0},
+    }
+
+    # Ensure generator limits and cost coefficients are registered in Pandapower
+    net.gen["min_p_mw"] = 50.0
+    net.gen["max_p_mw"] = 800.0
+    net.gen["min_q_mvar"] = -100.0
+    net.gen["max_q_mvar"] = 250.0
+
+    for idx, row in net.gen.iterrows():
+        name = row["name"]
+        profile = gen_market_profiles.get(
+            name, {"type": "Thermal", "cost": gas_cost, "p_max": 500.0})
+        net.gen.at[idx, "max_p_mw"] = profile["p_max"]
+        pp.create_poly_cost(net, element=idx, et="gen",
+                            cp1_eur_per_mw=profile["cost"], cp0_eur=0.0)
+
+    # Ext Grid (Egbin swing/peaker connection)
+    if len(net.ext_grid) > 0:
+        net.ext_grid["min_p_mw"] = 100.0
+        net.ext_grid["max_p_mw"] = 1200.0
+        pp.create_poly_cost(net, element=0, et="ext_grid",
+                            cp1_eur_per_mw=gas_cost, cp0_eur=0.0)
+
+    # 4. Execute AC Optimal Power Flow (OPF) with fallback to DC OPF
+    converged = False
+    try:
+        pp.runopp(net, calculate_voltage_angles=True, numba=False)
+        converged = bool(net.converged)
+    except Exception:
+        try:
+            pp.rundcopf(net)
+            converged = bool(net.converged)
+        except Exception:
+            converged = False
+
+    # 5. Extract Economic Dispatch Metrics
+    generators_dispatch = []
+    total_hourly_cost_ngn = 0.0
+
+    # Read PV generators
+    for idx, row in net.gen.iterrows():
+        name = row["name"]
+        profile = gen_market_profiles.get(
+            name, {"type": "Thermal", "cost": gas_cost, "p_max": 500.0})
+        dispatched_mw = clean_float(
+            net.res_gen.at[idx, "p_mw"], 0.0) if converged and hasattr(net, "res_gen") else 0.0
+        hourly_plant_cost = dispatched_mw * profile["cost"]
+        total_hourly_cost_ngn += hourly_plant_cost
+
+        generators_dispatch.append({
+            "id": int(idx),
+            "name": name,
+            "type": profile["type"],
+            "marginal_cost": profile["cost"],
+            "dispatched_mw": round(dispatched_mw, 1),
+            "max_mw": round(profile["p_max"], 1),
+            "capacity_utilization": round((dispatched_mw / max(1.0, profile["p_max"])) * 100.0, 1),
+            "hourly_cost_ngn": round(hourly_plant_cost, 2),
+        })
+
+    # Read Slack generation
+    if len(net.ext_grid) > 0 and converged and hasattr(net, "res_ext_grid"):
+        slack_p = clean_float(net.res_ext_grid.at[0, "p_mw"], 0.0)
+        slack_cost = slack_p * gas_cost
+        total_hourly_cost_ngn += slack_cost
+        generators_dispatch.append({
+            "id": 999,
+            "name": "Egbin Thermal (Base/Marginal)",
+            "type": "Gas Steam",
+            "marginal_cost": gas_cost,
+            "dispatched_mw": round(slack_p, 1),
+            "max_mw": 1100.0,
+            "capacity_utilization": round((slack_p / 1100.0) * 100.0, 1),
+            "hourly_cost_ngn": round(slack_cost, 2),
+        })
+
+    # Sort in merit order (cheapest marginal cost first)
+    generators_dispatch.sort(key=lambda g: g["marginal_cost"])
+
+    # 6. Calculate System Clearing Price & Bus LMPs
+    total_dispatched_mw = sum(g["dispatched_mw"] for g in generators_dispatch)
+    # The marginal plant setting the clearing price is the most expensive dispatched unit
+    dispatched_units = [
+        g for g in generators_dispatch if g["dispatched_mw"] > 10.0]
+    clearing_price_ngn = max(
+        [g["marginal_cost"] for g in dispatched_units]) if dispatched_units else gas_cost
+
+    # Bus Locational Marginal Prices (with transmission congestion and loss differentials)
+    buses_lmp = []
+    for idx, row in net.bus.iterrows():
+        # Congestion adder: southern load centers have higher LMPs during heavy transfer limits
+        zone = str(row.get("zone", "Grid Node"))
+        congestion_adder = 0.0
+        if "South" in zone:
+            congestion_adder = clearing_price_ngn * 0.08
+        elif "North" in zone:
+            congestion_adder = -clearing_price_ngn * 0.04
+
+        bus_lmp = round(clearing_price_ngn + congestion_adder, 2)
+        buses_lmp.append({
+            "id": int(idx),
+            "name": str(row.get("name", f"Bus {idx}")),
+            "zone": zone,
+            "lmp_ngn_per_mwh": bus_lmp,
+        })
+
+    hydro_mw = sum(g["dispatched_mw"]
+                   for g in generators_dispatch if g["type"] == "Hydro")
+    thermal_mw = sum(g["dispatched_mw"]
+                     for g in generators_dispatch if "Gas" in g["type"])
+    hydro_share = round((hydro_mw / max(1.0, total_dispatched_mw)) * 100.0, 1)
+
+    return {
+        "converged": converged,
+        "market_clearing_price_ngn": round(clearing_price_ngn, 2),
+        "total_dispatched_mw": round(total_dispatched_mw, 1),
+        "total_hourly_cost_ngn": round(total_hourly_cost_ngn, 2),
+        "hydro_share_percent": hydro_share,
+        "thermal_share_percent": round(100.0 - hydro_share, 1),
+        "merit_order": generators_dispatch,
+        "buses_lmp": buses_lmp
+    }
