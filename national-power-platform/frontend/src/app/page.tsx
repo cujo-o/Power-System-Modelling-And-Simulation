@@ -136,6 +136,12 @@ export default function PowerPlatformDashboard() {
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
+  // Market Simulation State
+  const [gasPriceFactor, setGasPriceFactor] = useState(1.0);
+  const [hydroAvailability, setHydroAvailability] = useState(1.0);
+  const [marketLoading, setMarketLoading] = useState(false);
+  const [marketResults, setMarketResults] = useState<MarketResult | null>(null);
+
   const navItems = [
     { id: 'Home', label: 'Home', icon: Home },
     { id: 'Grid Models', label: 'Grid Models', icon: Grid },
@@ -145,39 +151,6 @@ export default function PowerPlatformDashboard() {
     { id: 'Reports', label: 'Reports & Publications', icon: FileText },
     { id: 'Admin Panel', label: 'Task Force/Admin Panel', icon: ShieldCheck },
   ];
-
-  // Market Simulation States
-  const [gasPriceFactor, setGasPriceFactor] = useState(1.0);
-  const [hydroAvailability, setHydroAvailability] = useState(1.0);
-  const [marketLoading, setMarketLoading] = useState(false);
-  const [marketResults, setMarketResults] = useState<MarketResult | null>(null);
-
-  const runMarketSimulation = async () => {
-    setMarketLoading(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/simulate/market-dispatch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          load_multiplier: loadMultiplier,
-          gas_price_factor: gasPriceFactor,
-          hydro_availability: hydroAvailability,
-          tripped_lines: trippedLines,
-        }),
-      });
-      const data = await res.json();
-      setMarketResults(data);
-    } catch {
-      setDivergedNotice('Failed to calculate economic dispatch.');
-    } finally {
-      setMarketLoading(false);
-    }
-  };
-
-  // Run market dispatch once on mount
-  useEffect(() => {
-    runMarketSimulation();
-  }, []);
 
   const runSimulation = async (multiplier = loadMultiplier, outages = trippedLines) => {
     setLoading(true);
@@ -216,8 +189,37 @@ export default function PowerPlatformDashboard() {
     }
   };
 
+  const runMarketSimulation = async () => {
+    setMarketLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/simulate/market-dispatch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          load_multiplier: loadMultiplier,
+          gas_price_factor: gasPriceFactor,
+          hydro_availability: hydroAvailability,
+          tripped_lines: trippedLines,
+        }),
+      });
+
+      if (!res.ok) {
+        setDivergedNotice('Market dispatch solver failed to converge.');
+        return;
+      }
+
+      const data = await res.json();
+      setMarketResults(data);
+    } catch {
+      setDivergedNotice('Failed to calculate economic dispatch.');
+    } finally {
+      setMarketLoading(false);
+    }
+  };
+
   useEffect(() => {
     runSimulation(1.0, []);
+    runMarketSimulation();
   }, []);
 
   const toggleLine = (lineId: number) => {
@@ -272,6 +274,7 @@ export default function PowerPlatformDashboard() {
       setSelectedBus(null);
       setDivergedNotice(null);
       await runSimulation(1.0, []);
+      await runMarketSimulation();
     } catch {
       setDivergedNotice('Failed to communicate grid reset to server.');
     } finally {
@@ -341,7 +344,7 @@ export default function PowerPlatformDashboard() {
           </div>
         </div>
 
-        {/* Live Telemetry: Mobile Compact Pill */}
+        {/* Live Telemetry: Mobile Compact Badge */}
         <div className="flex lg:hidden items-center gap-2 font-mono text-[11px] bg-slate-900 px-2.5 py-1 rounded-md border border-slate-800">
           <Activity className={`h-3 w-3 ${results && (results.frequency < 49.8 || results.frequency > 50.2) ? 'text-rose-400 animate-pulse' : 'text-emerald-400'}`} />
           <span className="font-bold text-slate-200">{results?.frequency ? `${results.frequency.toFixed(2)}Hz` : '50Hz'}</span>
@@ -353,9 +356,9 @@ export default function PowerPlatformDashboard() {
         </button>
       </header>
 
-      {/* Main Container */}
+      {/* Main Framework Container */}
       <div className="flex flex-1 overflow-hidden relative">
-        {/* Mobile Navigation Drawer Overlay */}
+        {/* Mobile Slide-Over Drawer */}
         {mobileMenuOpen && (
           <div
             className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden"
@@ -367,7 +370,7 @@ export default function PowerPlatformDashboard() {
             >
               <div className="space-y-4">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Modules</span>
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Navigation</span>
                   <button onClick={() => setMobileMenuOpen(false)} className="text-slate-400 hover:text-white">
                     <X className="h-5 w-5" />
                   </button>
@@ -530,7 +533,6 @@ export default function PowerPlatformDashboard() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                  {/* Load Scale Slider */}
                   <div className="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 text-xs">
                     <Sliders className="h-3.5 w-3.5 text-slate-400" />
                     <span className="text-slate-400 hidden sm:inline">Load:</span>
@@ -685,7 +687,7 @@ export default function PowerPlatformDashboard() {
             </div>
           )}
 
-          {/* TAB 3: MARKET SIMULATIONS (ECONOMIC DISPATCH & LMP) */}
+          {/* TAB 3: MARKET SIMULATIONS */}
           {activeTab === 'Market Simulations' && (
             <div className="space-y-6 max-w-6xl mx-auto">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -819,7 +821,7 @@ export default function PowerPlatformDashboard() {
                 </div>
               </div>
 
-              {/* Locational Marginal Pricing (LMP) Table */}
+              {/* Locational Marginal Pricing (LMP) */}
               <div className="rounded-xl border border-slate-800 bg-slate-950 p-5">
                 <div className="mb-4">
                   <h3 className="text-sm font-bold text-slate-200">Substation Locational Marginal Prices (LMP)</h3>
@@ -1121,10 +1123,151 @@ export default function PowerPlatformDashboard() {
             </div>
           )}
 
-          {/* Placeholders */}
-          {['Market Simulations', 'Reports', 'Admin Panel'].includes(activeTab) && (
+          {/* TAB 6: REPORTS & PUBLICATIONS */}
+          {activeTab === 'Reports' && (
+            <div className="space-y-6 max-w-6xl mx-auto">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg md:text-xl font-bold text-slate-100">National Grid Contingency Audit Report</h2>
+                  <p className="text-xs md:text-sm text-slate-400">Automated compliance audit against the Nigerian Grid Code (0.95 ≤ |V| ≤ 1.05 p.u., loading ≤ 85%).</p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <a
+                    href={`${API_BASE_URL}/api/reports/export-csv`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-700"
+                  >
+                    <FileText className="h-3.5 w-3.5 text-emerald-400" />
+                    <span>Download CSV</span>
+                  </a>
+
+                  <button
+                    onClick={() => window.print()}
+                    className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-emerald-500"
+                  >
+                    <BarChart3 className="h-3.5 w-3.5" />
+                    <span>Print Audit Document</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Summary Audit Scorecard */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950">
+                  <span className="text-slate-400 block mb-1">Total System Infeed</span>
+                  <span className="text-xl font-mono font-bold text-emerald-400">
+                    {results?.total_gen_mw ? `${results.total_gen_mw.toLocaleString()} MW` : '--'}
+                  </span>
+                  <span className="text-[10px] text-slate-500 block mt-1">Generation + Grid Infeed</span>
+                </div>
+
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950">
+                  <span className="text-slate-400 block mb-1">Total System Losses</span>
+                  <span className="text-xl font-mono font-bold text-rose-400">
+                    {results?.total_losses_mw ? `${results.total_losses_mw} MW` : '--'}
+                  </span>
+                  <span className="text-[10px] text-slate-500 block mt-1">
+                    {results?.total_gen_mw && results?.total_losses_mw
+                      ? `${((results.total_losses_mw / results.total_gen_mw) * 100).toFixed(2)}% transmission losses`
+                      : 'Active branch dissipation'}
+                  </span>
+                </div>
+
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950">
+                  <span className="text-slate-400 block mb-1">Voltage Violations</span>
+                  <span className="text-xl font-mono font-bold text-amber-400">
+                    {results?.buses ? results.buses.filter((b) => b.v_pu < 0.95 || b.v_pu > 1.05).length : 0} Nodes
+                  </span>
+                  <span className="text-[10px] text-slate-500 block mt-1">Outside 0.95–1.05 p.u.</span>
+                </div>
+
+                <div className="p-4 rounded-xl border border-slate-800 bg-slate-950">
+                  <span className="text-slate-400 block mb-1">Critical Lines (&gt;80%)</span>
+                  <span className="text-xl font-mono font-bold text-cyan-400">
+                    {results?.lines ? results.lines.filter((l) => l.loading_percent > 80).length : 0} Corridors
+                  </span>
+                  <span className="text-[10px] text-slate-500 block mt-1">Approaching thermal ceiling</span>
+                </div>
+              </div>
+
+              {/* Itemized Grid Code Violation Ledger */}
+              <div className="rounded-xl border border-slate-800 bg-slate-950 overflow-hidden shadow-sm">
+                <div className="border-b border-slate-800 bg-slate-900/60 px-5 py-3 flex justify-between items-center text-xs">
+                  <h3 className="font-bold text-slate-200">Grid Code Violation & Contingency Ledger</h3>
+                  <span className="text-slate-400">Status: {divergedNotice ? 'Grid Alert Active' : 'Normal Operation'}</span>
+                </div>
+
+                <div className="divide-y divide-slate-800 text-xs">
+                  {results?.buses
+                    ?.filter((b) => b.v_pu < 0.95)
+                    .map((bus) => (
+                      <div key={bus.id} className="p-3.5 flex items-center justify-between bg-rose-950/20 hover:bg-rose-950/30">
+                        <div className="flex items-center gap-3">
+                          <AlertTriangle className="h-4 w-4 text-rose-400 shrink-0" />
+                          <div>
+                            <span className="font-bold text-slate-200">{bus.name} ({bus.zone} Zone)</span>
+                            <span className="block text-[11px] text-rose-300">Under-voltage detected: {bus.v_pu} p.u. (below statutory 0.95 p.u. lower limit)</span>
+                          </div>
+                        </div>
+                        <span className="font-mono text-rose-400 font-bold px-2 py-1 rounded bg-rose-950 border border-rose-800 text-[11px]">
+                          V-LOW
+                        </span>
+                      </div>
+                    ))}
+
+                  {results?.lines
+                    ?.filter((l) => l.loading_percent > 80 && l.in_service)
+                    .map((line) => (
+                      <div key={line.id} className="p-3.5 flex items-center justify-between bg-amber-950/20 hover:bg-amber-950/30">
+                        <div className="flex items-center gap-3">
+                          <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
+                          <div>
+                            <span className="font-bold text-slate-200">{line.name}</span>
+                            <span className="block text-[11px] text-amber-300">Thermal threshold warning: loading reached {line.loading_percent}% ({line.flow_mw} MW)</span>
+                          </div>
+                        </div>
+                        <span className="font-mono text-amber-400 font-bold px-2 py-1 rounded bg-amber-950 border border-amber-800 text-[11px]">
+                          OVERLOAD
+                        </span>
+                      </div>
+                    ))}
+
+                  {results?.lines
+                    ?.filter((l) => !l.in_service)
+                    .map((line) => (
+                      <div key={line.id} className="p-3.5 flex items-center justify-between bg-slate-900/60">
+                        <div className="flex items-center gap-3">
+                          <RotateCcw className="h-4 w-4 text-slate-400 shrink-0" />
+                          <div>
+                            <span className="font-bold text-slate-300">{line.name}</span>
+                            <span className="block text-[11px] text-slate-500">Breaker opened: N-1 outage applied to this transmission corridor</span>
+                          </div>
+                        </div>
+                        <span className="font-mono text-slate-400 font-bold px-2 py-1 rounded bg-slate-800 border border-slate-700 text-[11px]">
+                          N-1 OUTAGE
+                        </span>
+                      </div>
+                    ))}
+
+                  {results?.buses?.every((b) => b.v_pu >= 0.95 && b.v_pu <= 1.05) &&
+                    results?.lines?.every((l) => l.loading_percent <= 80 && l.in_service) && (
+                      <div className="p-6 text-center text-slate-400 flex flex-col items-center justify-center">
+                        <CheckCircle2 className="h-8 w-8 text-emerald-400 mb-2" />
+                        <span className="font-semibold text-slate-200">Full Grid Code Compliance</span>
+                        <span className="text-[11px] text-slate-500 mt-0.5">All substation voltages and line loadings fall within operational boundaries.</span>
+                      </div>
+                    )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 7: ADMIN PANEL PLACEHOLDER */}
+          {activeTab === 'Admin Panel' && (
             <div className="flex h-64 items-center justify-center text-xs md:text-sm text-slate-500">
-              <p>{activeTab} module is under construction.</p>
+              <p>Task Force & Operator Admin Panel is under construction.</p>
             </div>
           )}
         </main>

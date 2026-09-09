@@ -16,6 +16,9 @@ try:
 except ImportError:
     from pandapower.converter.pypower import from_ppc
 from nigeria_grid import get_nigeria_330kv
+import io
+import csv
+from fastapi.responses import StreamingResponse
 
 app = FastAPI(title="National Power System Simulation API")
 
@@ -494,3 +497,68 @@ def run_market_dispatch(req: MarketSimulationRequest):
         "merit_order": generators_dispatch,
         "buses_lmp": buses_lmp
     }
+
+
+@app.get("/api/reports/export-csv")
+def export_grid_report():
+    global active_custom_net
+    base_net = active_custom_net if active_custom_net is not None else get_nigeria_330kv()
+    net = copy.deepcopy(base_net)
+
+    try:
+        pp.runpp(net, algorithm="nr", max_iteration=30, tolerance_mva=1e-3, numba=False)
+    except Exception:
+        pass
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Header section
+    writer.writerow(["NATIONAL POWER SYSTEM MODELLING & SIMULATION PLATFORM"])
+    writer.writerow(["GRID AUDIT & LOAD FLOW REPORT"])
+    writer.writerow(["Model", active_model_name])
+    writer.writerow([])
+
+    # Substation Bus Telemetry
+    writer.writerow(["SUBSTATION BUS VOLTAGE PROFILES"])
+    writer.writerow(["Bus ID", "Substation Name", "Zone", "Nominal kV", "Voltage (pu)", "Voltage Angle (deg)", "Active Load (MW)", "Reactive Load (MVAR)", "Grid Code Compliance"])
+    
+    for idx, row in net.bus.iterrows():
+        v_pu = round(float(net.res_bus.at[idx, "vm_pu"]), 3) if hasattr(net, "res_bus") and idx in net.res_bus.index else 1.0
+        va_deg = round(float(net.res_bus.at[idx, "va_degree"]), 2) if hasattr(net, "res_bus") and idx in net.res_bus.index else 0.0
+        p_mw = round(float(net.res_bus.at[idx, "p_mw"]), 1) if hasattr(net, "res_bus") and idx in net.res_bus.index else 0.0
+        q_mvar = round(float(net.res_bus.at[idx, "q_mvar"]), 1) if hasattr(net, "res_bus") and idx in net.res_bus.index else 0.0
+        
+        status = "COMPLIANT"
+        if v_pu < 0.95:
+            status = "VIOLATION - UNDERVOLTAGE"
+        elif v_pu > 1.05:
+            status = "VIOLATION - OVERVOLTAGE"
+
+        writer.writerow([idx, row.get("name", f"Bus {idx}"), row.get("zone", "Transmission"), row.get("vn_kv", 330.0), v_pu, va_deg, p_mw, q_mvar, status])
+
+    writer.writerow([])
+    # Transmission Lines
+    writer.writerow(["TRANSMISSION CORRIDOR THERMAL LOADING"])
+    writer.writerow(["Branch ID", "Corridor Name", "From Bus", "To Bus", "Loading (%)", "Active Power Flow (MW)", "Losses (MW)", "Operating Status"])
+    
+    for idx, row in net.line.iterrows():
+        is_in = bool(row["in_service"])
+        loading = round(float(net.res_line.at[idx, "loading_percent"]), 1) if hasattr(net, "res_line") and idx in net.res_line.index and is_in else 0.0
+        flow = round(float(net.res_line.at[idx, "p_from_mw"]), 1) if hasattr(net, "res_line") and idx in net.res_line.index and is_in else 0.0
+        losses = round(float(net.res_line.at[idx, "pl_mw"]), 2) if hasattr(net, "res_line") and idx in net.res_line.index and is_in else 0.0
+        
+        status = "NORMAL"
+        if not is_in:
+            status = "OUT OF SERVICE (TRIPPED)"
+        elif loading > 85.0:
+            status = "THERMAL OVERLOAD WARNING"
+
+        writer.writerow([idx, row.get("name", f"Line {idx}"), row["from_bus"], row["to_bus"], loading, flow, losses, status])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=nigeria_330kv_audit_report.csv"}
+    )
