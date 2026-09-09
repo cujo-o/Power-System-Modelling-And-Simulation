@@ -49,6 +49,27 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
+# --- Safe Grid Metric Calculations ---
+def calculate_installed_mw(net) -> float:
+    """Safely calculates total generator capacity without triggering AttributeError."""
+    gen_mw = float(net.gen["p_mw"].sum()) if ("p_mw" in net.gen.columns and len(net.gen) > 0) else 0.0
+    ext_mw = 0.0
+    if len(net.ext_grid) > 0:
+        if "max_p_mw" in net.ext_grid.columns and not net.ext_grid["max_p_mw"].isnull().all():
+            ext_mw = float(net.ext_grid["max_p_mw"].sum())
+        elif "p_mw" in net.ext_grid.columns and not net.ext_grid["p_mw"].isnull().all():
+            ext_mw = float(net.ext_grid["p_mw"].sum())
+        else:
+            ext_mw = 1000.0  # Nominal allowance for reference/slack unit
+    return round(gen_mw + ext_mw, 1)
+
+
+def calculate_demand_mw(net) -> float:
+    if "p_mw" in net.load.columns and len(net.load) > 0:
+        return round(float(net.load["p_mw"].sum()), 1)
+    return 0.0
+
+
 # --- Model Registry ---
 model_registry: Dict[str, Dict[str, Any]] = {}
 active_model_id: str = "baseline-330kv"
@@ -57,9 +78,6 @@ active_model_id: str = "baseline-330kv"
 def init_baseline():
     global model_registry
     base_net = get_nigeria_330kv()
-    gen_sum = float(base_net.gen.p_mw.sum()) if len(base_net.gen) > 0 else 0.0
-    ext_sum = float(base_net.ext_grid.p_mw.sum()) if len(base_net.ext_grid) > 0 else 0.0
-    demand_sum = float(base_net.load.p_mw.sum()) if len(base_net.load) > 0 else 0.0
 
     model_registry["baseline-330kv"] = {
         "id": "baseline-330kv",
@@ -68,8 +86,8 @@ def init_baseline():
         "net": base_net,
         "buses": len(base_net.bus),
         "branches": len(base_net.line),
-        "total_installed_mw": round(gen_sum + ext_sum if (gen_sum + ext_sum) > 0 else 1750.0, 1),
-        "total_demand_mw": round(demand_sum if demand_sum > 0 else 1690.0, 1),
+        "total_installed_mw": calculate_installed_mw(base_net),
+        "total_demand_mw": calculate_demand_mw(base_net),
         "converged": True,
         "is_default": True
     }
@@ -249,8 +267,8 @@ async def upload_matpower_case(file: UploadFile = File(...)):
             converged = False
 
         model_id = str(uuid.uuid4())[:8]
-        installed_mw = round(float(net.gen.p_mw.sum() + net.ext_grid.p_mw.sum() if len(net.gen) > 0 else 0.0), 1)
-        demand_mw = round(float(net.load.p_mw.sum() if len(net.load) > 0 else 0.0), 1)
+        installed_mw = calculate_installed_mw(net)
+        demand_mw = calculate_demand_mw(net)
 
         model_registry[model_id] = {
             "id": model_id,
@@ -378,7 +396,7 @@ def run_power_flow(req: SimulationRequest):
         total_gen = round(clean_float(gen_sum + ext_sum, 0.0), 1)
 
         total_load = round(clean_float(net.res_load.p_mw.sum() if len(net.res_load) > 0 else 0.0), 1)
-        total_losses = round(clean_float(net.res_line.pl_mw.sum() if len(net.line) > 0 else 0.0), 1)
+        total_losses = round(clean_float(net.res_line.pl_mw.sum() if len(net.res_line) > 0 else 0.0), 1)
 
         imbalance = total_gen - total_load - total_losses
         frequency = round(50.0 + (imbalance / 3500.0), 2)
