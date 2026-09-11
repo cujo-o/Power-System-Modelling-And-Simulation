@@ -51,7 +51,6 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # --- Safe Grid Metric Calculations ---
 def calculate_installed_mw(net) -> float:
-    """Safely calculates total generator capacity without triggering AttributeError."""
     gen_mw = float(net.gen["p_mw"].sum()) if ("p_mw" in net.gen.columns and len(net.gen) > 0) else 0.0
     ext_mw = 0.0
     if len(net.ext_grid) > 0:
@@ -60,7 +59,7 @@ def calculate_installed_mw(net) -> float:
         elif "p_mw" in net.ext_grid.columns and not net.ext_grid["p_mw"].isnull().all():
             ext_mw = float(net.ext_grid["p_mw"].sum())
         else:
-            ext_mw = 1000.0  # Nominal allowance for reference/slack unit
+            ext_mw = 1000.0
     return round(gen_mw + ext_mw, 1)
 
 
@@ -70,7 +69,15 @@ def calculate_demand_mw(net) -> float:
     return 0.0
 
 
-# --- Model Registry ---
+def clean_float(val, fallback: float = 0.0) -> float:
+    try:
+        f = float(val)
+        return fallback if (math.isnan(f) or math.isinf(f)) else f
+    except Exception:
+        return fallback
+
+
+# --- In-Memory Active Model Session Cache ---
 model_registry: Dict[str, Dict[str, Any]] = {}
 active_model_id: str = "baseline-330kv"
 
@@ -78,10 +85,10 @@ active_model_id: str = "baseline-330kv"
 def init_baseline():
     global model_registry
     base_net = get_nigeria_330kv()
-
     model_registry["baseline-330kv"] = {
         "id": "baseline-330kv",
         "name": "Nigeria 330kV Baseline Backbone",
+        "format": "NATIVE",
         "uploaded_at": "System Default",
         "net": base_net,
         "buses": len(base_net.bus),
@@ -115,20 +122,9 @@ DEFAULT_COORDS = {
 }
 
 
-def clean_float(val, fallback: float = 0.0) -> float:
-    try:
-        f = float(val)
-        return fallback if (math.isnan(f) or math.isinf(f)) else f
-    except Exception:
-        return fallback
-
-
+# --- Multi-Format Parsers ---
 def parse_matpower_m_file(content: str) -> dict:
-    clean_lines = []
-    for line in content.splitlines():
-        line = line.split('%')[0].strip()
-        if line:
-            clean_lines.append(line)
+    clean_lines = [line.split('%')[0].strip() for line in content.splitlines() if line.split('%')[0].strip()]
     text = "\n".join(clean_lines)
 
     base_mva_match = re.search(r'(?:mpc\.)?baseMVA\s*=\s*([0-9.]+)', text, re.IGNORECASE)
@@ -166,6 +162,62 @@ def parse_matpower_m_file(content: str) -> dict:
     }
 
 
+def parse_excel_case(raw_bytes: bytes) -> pp.pandapowerNet:
+    xls = pd.ExcelFile(io.BytesIO(raw_bytes))
+    net = pp.create_empty_network(f_hz=50.0, sn_mva=100.0)
+
+    if "buses" not in xls.sheet_names:
+        raise ValueError("Excel file must contain a 'buses' sheet.")
+    
+    df_bus = pd.read_excel(xls, "buses")
+    bus_map = {}
+    for _, row in df_bus.iterrows():
+        b_id = pp.create_bus(
+            net,
+            vn_kv=float(row.get("vn_kv", 330.0)),
+            name=str(row.get("name", f"Bus {row.get('id', '')}")),
+            zone=str(row.get("zone", "Transmission")),
+            geodata=(float(row.get("x", 200.0)), float(row.get("y", 200.0)))
+        )
+        original_id = row.get("id", b_id)
+        bus_map[original_id] = b_id
+
+    if "lines" in xls.sheet_names:
+        df_lines = pd.read_excel(xls, "lines")
+        for _, row in df_lines.iterrows():
+            from_b = bus_map.get(row["from_bus"], int(row["from_bus"]))
+            to_b = bus_map.get(row["to_bus"], int(row["to_bus"]))
+            pp.create_line_from_parameters(
+                net,
+                from_bus=from_b,
+                to_bus=to_b,
+                length_km=float(row.get("length_km", 50.0)),
+                r_ohm_per_km=float(row.get("r_ohm_per_km", 0.035)),
+                x_ohm_per_km=float(row.get("x_ohm_per_km", 0.320)),
+                c_nf_per_km=float(row.get("c_nf_per_km", 11.2)),
+                max_i_ka=float(row.get("max_i_ka", 1.25)),
+                name=str(row.get("name", f"Line {from_b}-{to_b}"))
+            )
+
+    if "generators" in xls.sheet_names:
+        df_gen = pd.read_excel(xls, "generators")
+        for idx, row in df_gen.iterrows():
+            b_target = bus_map.get(row["bus"], int(row["bus"]))
+            if idx == 0 and "slack" in str(row.get("type", "")).lower():
+                pp.create_ext_grid(net, bus=b_target, vm_pu=float(row.get("vm_pu", 1.02)), name=str(row.get("name", "Slack Gen")))
+            else:
+                pp.create_gen(net, bus=b_target, p_mw=float(row.get("p_mw", 100.0)), vm_pu=float(row.get("vm_pu", 1.0)), name=str(row.get("name", f"Gen {idx}")))
+
+    if "loads" in xls.sheet_names:
+        df_loads = pd.read_excel(xls, "loads")
+        for _, row in df_loads.iterrows():
+            b_target = bus_map.get(row["bus"], int(row["bus"]))
+            pp.create_load(net, bus=b_target, p_mw=float(row.get("p_mw", 50.0)), q_mvar=float(row.get("q_mvar", 15.0)), name=str(row.get("name", "Load")))
+
+    return net
+
+
+# --- Model Schemas ---
 class SimulationRequest(BaseModel):
     load_multiplier: Optional[float] = 1.0
     tripped_lines: Optional[List[int]] = []
@@ -176,6 +228,12 @@ class MarketSimulationRequest(BaseModel):
     gas_price_factor: Optional[float] = 1.0
     hydro_availability: Optional[float] = 1.0
     tripped_lines: Optional[List[int]] = []
+
+
+class LoadPayloadRequest(BaseModel):
+    id: str
+    name: str
+    network_payload: str
 
 
 @app.get("/")
@@ -194,6 +252,7 @@ def list_models():
         {
             "id": m["id"],
             "name": m["name"],
+            "format": m.get("format", "MATPOWER"),
             "uploaded_at": m["uploaded_at"],
             "buses": m["buses"],
             "branches": m["branches"],
@@ -207,11 +266,36 @@ def list_models():
     ]
 
 
+@app.post("/api/models/load-payload")
+def load_model_from_payload(req: LoadPayloadRequest):
+    """Instantiates a network directly from Supabase JSON into active backend RAM."""
+    global model_registry, active_model_id
+    try:
+        net = pp.from_json_string(req.network_payload)
+        model_registry[req.id] = {
+            "id": req.id,
+            "name": req.name,
+            "format": "JSON/SUPABASE",
+            "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "net": net,
+            "buses": len(net.bus),
+            "branches": len(net.line),
+            "total_installed_mw": calculate_installed_mw(net),
+            "total_demand_mw": calculate_demand_mw(net),
+            "converged": True,
+            "is_default": False
+        }
+        active_model_id = req.id
+        return {"status": "success", "active_model_id": active_model_id, "name": req.name}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to restore model from payload: {str(e)}")
+
+
 @app.post("/api/models/{model_id}/activate")
 def activate_model(model_id: str):
     global active_model_id
     if model_id not in model_registry:
-        raise HTTPException(status_code=404, detail="Model not found.")
+        raise HTTPException(status_code=404, detail="Model not currently in server cache.")
     active_model_id = model_id
     return {"status": "success", "active_model_id": active_model_id, "name": model_registry[model_id]["name"]}
 
@@ -230,18 +314,42 @@ def delete_model(model_id: str):
     return {"status": "success", "active_model_id": active_model_id}
 
 
-@app.post("/api/upload/matpower")
-async def upload_matpower_case(file: UploadFile = File(...)):
+@app.post("/api/upload/model")
+async def upload_unified_model(file: UploadFile = File(...)):
+    """Unified parser for .m, .json, .xlsx, .xls, and .raw files."""
     global model_registry, active_model_id
 
-    if not file.filename.endswith(".m"):
-        raise HTTPException(status_code=400, detail="Only MATPOWER (.m) files are supported.")
+    filename = file.filename
+    ext = filename.split(".")[-1].lower() if "." in filename else ""
+    if ext not in ["m", "json", "xlsx", "xls", "raw"]:
+        raise HTTPException(status_code=400, detail=f"Unsupported format '.{ext}'. Use .m, .json, .xlsx, or .raw")
+
+    raw_bytes = await file.read()
+    net = None
+    detected_format = ext.upper()
 
     try:
-        raw_bytes = await file.read()
-        content = raw_bytes.decode("utf-8", errors="ignore")
-        ppc = parse_matpower_m_file(content)
-        net = from_ppc(ppc, f_hz=50.0)
+        if ext == "m":
+            content = raw_bytes.decode("utf-8", errors="ignore")
+            ppc = parse_matpower_m_file(content)
+            net = from_ppc(ppc, f_hz=50.0)
+
+        elif ext == "json":
+            json_str = raw_bytes.decode("utf-8", errors="ignore")
+            net = pp.from_json_string(json_str)
+
+        elif ext in ["xlsx", "xls"]:
+            net = parse_excel_case(raw_bytes)
+
+        elif ext == "raw":
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".raw") as tmp:
+                tmp.write(raw_bytes)
+                tmp_path = tmp.name
+            try:
+                net = pp.converter.from_raw(tmp_path)
+            finally:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
 
         if not hasattr(net, "bus_geodata") or net.bus_geodata is None:
             net.bus_geodata = pd.DataFrame(columns=["x", "y"], index=net.bus.index)
@@ -272,7 +380,8 @@ async def upload_matpower_case(file: UploadFile = File(...)):
 
         model_registry[model_id] = {
             "id": model_id,
-            "name": file.filename,
+            "name": filename,
+            "format": detected_format,
             "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "net": net,
             "buses": len(net.bus),
@@ -284,11 +393,16 @@ async def upload_matpower_case(file: UploadFile = File(...)):
         }
         active_model_id = model_id
 
+        # Serialized JSON string for Supabase storage
+        net_json = pp.to_json(net)
+
         return {
             "status": "success",
             "model_id": model_id,
-            "filename": file.filename,
+            "filename": filename,
+            "format": detected_format,
             "converged": converged,
+            "network_payload": net_json,
             "metrics": {
                 "buses": len(net.bus),
                 "branches": len(net.line),
@@ -304,7 +418,7 @@ async def upload_matpower_case(file: UploadFile = File(...)):
             }
         }
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Failed to parse MATPOWER case: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"Failed to parse {detected_format} file: {str(e)}")
 
 
 @app.post("/api/grid/reset")
@@ -396,7 +510,7 @@ def run_power_flow(req: SimulationRequest):
         total_gen = round(clean_float(gen_sum + ext_sum, 0.0), 1)
 
         total_load = round(clean_float(net.res_load.p_mw.sum() if len(net.res_load) > 0 else 0.0), 1)
-        total_losses = round(clean_float(net.res_line.pl_mw.sum() if len(net.res_line) > 0 else 0.0), 1)
+        total_losses = round(clean_float(net.res_line.pl_mw.sum() if len(net.line) > 0 else 0.0), 1)
 
         imbalance = total_gen - total_load - total_losses
         frequency = round(50.0 + (imbalance / 3500.0), 2)

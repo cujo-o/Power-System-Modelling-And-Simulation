@@ -3,4 +3,5 @@ uvicorn>=0.28.0
 pydantic>=2.6.0
 pandapower>=2.14.0
 pandas>=2.0.0
+openpyxl>=3.1.2
 python-multipart>=0.0.9
