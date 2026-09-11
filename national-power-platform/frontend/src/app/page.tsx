@@ -23,6 +23,8 @@ import {
   Menu,
   X,
   Trash2,
+  Layers,
+  MapPin,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -126,16 +128,29 @@ interface MarketResult {
   buses_lmp: BusLMP[];
 }
 
-const FALLBACK_COORDS: Record<number, { x: number; y: number }> = {
-  0: { x: 170, y: 70 },
-  1: { x: 210, y: 140 },
-  2: { x: 360, y: 100 },
-  3: { x: 400, y: 180 },
-  4: { x: 250, y: 240 },
-  5: { x: 150, y: 330 },
-  6: { x: 210, y: 390 },
-  7: { x: 340, y: 330 },
-  8: { x: 440, y: 390 },
+const GEOGRAPHIC_COORDS: Record<number, { x: number; y: number }> = {
+  0: { x: 170, y: 80 },   // Kainji
+  1: { x: 210, y: 150 },  // Jebba
+  2: { x: 360, y: 110 },  // Shiroro
+  3: { x: 410, y: 180 },  // Katampe/Abuja
+  4: { x: 250, y: 250 },  // Osogbo
+  5: { x: 150, y: 340 },  // Ikeja West
+  6: { x: 220, y: 390 },  // Egbin
+  7: { x: 340, y: 330 },  // Benin
+  8: { x: 440, y: 380 },  // Afam
+};
+
+// Standard IEEE Control-Room 3-Tier Busbar Layout
+const SCHEMATIC_BUSBARS: Record<number, { x: number; y: number; width: number; isGen?: boolean; isLoad?: boolean }> = {
+  0: { x: 130, y: 90, width: 65, isGen: true },       // Kainji (Hydro Gen)
+  1: { x: 240, y: 90, width: 65, isGen: true },       // Jebba (Hydro Gen)
+  2: { x: 360, y: 90, width: 65, isGen: true },       // Shiroro (Hydro Gen)
+  3: { x: 460, y: 90, width: 60, isLoad: true },      // Katampe (Load)
+  4: { x: 250, y: 230, width: 90, isLoad: true },     // Osogbo (Central Interconnection)
+  7: { x: 400, y: 230, width: 90, isLoad: true },     // Benin (Load & Mid-Station)
+  5: { x: 140, y: 350, width: 70, isLoad: true },     // Ikeja West (Major Industrial Load)
+  6: { x: 260, y: 350, width: 70, isGen: true },      // Egbin (Thermal Slack Gen)
+  8: { x: 440, y: 350, width: 70, isGen: true },      // Afam (Gas Turbine Gen)
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://national-power-backend.onrender.com';
@@ -149,6 +164,9 @@ export default function PowerPlatformDashboard() {
   const [selectedBus, setSelectedBus] = useState<BusData | null>(null);
   const [divergedNotice, setDivergedNotice] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Diagram Layout Toggle: 'geographic' vs 'schematic'
+  const [diagramView, setDiagramView] = useState<'geographic' | 'schematic'>('geographic');
 
   // Authentication State
   const [user, setUser] = useState<any>(null);
@@ -180,7 +198,6 @@ export default function PowerPlatformDashboard() {
     { id: 'Admin Panel', label: 'Task Force/Admin Panel', icon: ShieldCheck },
   ];
 
-  // Sync Supabase Auth Session
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
@@ -224,14 +241,12 @@ export default function PowerPlatformDashboard() {
 
   const fetchModels = async () => {
     try {
-      // 1. Fetch live active session models from backend
       const res = await fetch(`${API_BASE_URL}/api/models`);
       let backendModels: GridModelMeta[] = [];
       if (res.ok) {
         backendModels = await res.json();
       }
 
-      // 2. Fetch persistent saved models from Supabase
       const { data: dbModels } = await supabase
         .from('grid_models')
         .select('*')
@@ -253,7 +268,6 @@ export default function PowerPlatformDashboard() {
           network_payload: m.network_payload,
         }));
 
-        // Merge baseline with Supabase models
         const baseline = backendModels.find((m) => m.is_default);
         const combined = baseline ? [baseline, ...mappedDbModels.filter((m) => m.id !== baseline.id)] : mappedDbModels;
         setModelList(combined);
@@ -261,7 +275,7 @@ export default function PowerPlatformDashboard() {
         setModelList(backendModels);
       }
     } catch {
-      // Fallback
+      // Ignore network fallback
     }
   };
 
@@ -367,7 +381,6 @@ export default function PowerPlatformDashboard() {
       const data: UploadValidation = await res.json();
       setUploadResult(data);
 
-      // Persist model in Supabase PostgreSQL
       try {
         await supabase.from('grid_models').insert({
           id: data.filename.replace(/[^a-zA-Z0-9]/g, '_') + '_' + Date.now().toString(36),
@@ -401,7 +414,6 @@ export default function PowerPlatformDashboard() {
   const handleActivateModel = async (model: GridModelMeta) => {
     setLoading(true);
     try {
-      // If network_payload is available from Supabase, hydrate backend memory instantly
       if (model.network_payload) {
         await fetch(`${API_BASE_URL}/api/models/load-payload`, {
           method: 'POST',
@@ -463,10 +475,14 @@ export default function PowerPlatformDashboard() {
   };
 
   const getCoordinates = (bus: BusData) => {
+    if (diagramView === 'schematic') {
+      const sch = SCHEMATIC_BUSBARS[bus.id];
+      if (sch) return { x: sch.x, y: sch.y };
+    }
     if (bus.x !== undefined && bus.y !== undefined) {
       return { x: bus.x, y: bus.y };
     }
-    return FALLBACK_COORDS[bus.id] || { x: 250, y: 250 };
+    return GEOGRAPHIC_COORDS[bus.id] || { x: 250, y: 250 };
   };
 
   return (
@@ -1095,7 +1111,7 @@ export default function PowerPlatformDashboard() {
             </div>
           )}
 
-          {/* TAB 5: VISUALIZATION TOOLS */}
+          {/* TAB 5: VISUALIZATION TOOLS (WITH DUAL-VIEW TOGGLE) */}
           {activeTab === 'Visualization' && (
             <div className="space-y-6 max-w-6xl mx-auto">
               {divergedNotice && (
@@ -1108,21 +1124,55 @@ export default function PowerPlatformDashboard() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg md:text-xl font-bold text-slate-100">Interactive Single-Line Diagram</h2>
-                  <p className="text-xs text-slate-400">Click corridors to trip breakers or select substation nodes for live telemetry.</p>
+                  <p className="text-xs text-slate-400">
+                    {diagramView === 'geographic'
+                      ? 'Geographic spatial layout of the 330kV transmission network.'
+                      : 'IEEE standard busbar schematic with synchronous generators, feeder loads, and breakers.'}
+                  </p>
                 </div>
-                <button
-                  onClick={handleResetBaseline}
-                  disabled={loading}
-                  className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 w-fit"
-                >
-                  <RotateCcw className="h-3.5 w-3.5 text-emerald-400" />
-                  <span>Reset Grid</span>
-                </button>
+
+                <div className="flex items-center gap-2">
+                  {/* View Mode Toggle */}
+                  <div className="flex items-center rounded-lg border border-slate-800 bg-slate-950 p-0.5 text-xs">
+                    <button
+                      onClick={() => setDiagramView('geographic')}
+                      className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-medium transition ${
+                        diagramView === 'geographic'
+                          ? 'bg-emerald-600 text-white font-semibold shadow-xs'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <MapPin className="h-3.5 w-3.5" />
+                      <span>Geographic</span>
+                    </button>
+                    <button
+                      onClick={() => setDiagramView('schematic')}
+                      className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-medium transition ${
+                        diagramView === 'schematic'
+                          ? 'bg-emerald-600 text-white font-semibold shadow-xs'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <Layers className="h-3.5 w-3.5" />
+                      <span>Busbar (IEEE)</span>
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={handleResetBaseline}
+                    disabled={loading}
+                    className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 w-fit"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5 text-emerald-400" />
+                    <span>Reset</span>
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
+                {/* SVG Vector Canvas */}
                 <div className="lg:col-span-2 rounded-xl border border-slate-800 bg-slate-950 p-3 md:p-4 relative overflow-hidden flex flex-col items-center justify-center">
-                  <svg viewBox="100 40 440 420" className="w-full h-[320px] sm:h-[400px] md:h-[460px] select-none">
+                  <svg viewBox="90 30 430 390" className="w-full h-[360px] sm:h-[440px] select-none">
                     <defs>
                       <filter id="node-glow" x="-20%" y="-20%" width="140%" height="140%">
                         <feGaussianBlur stdDeviation="3" result="glow" />
@@ -1133,6 +1183,7 @@ export default function PowerPlatformDashboard() {
                       </filter>
                     </defs>
 
+                    {/* Transmission Corridors */}
                     {results?.lines.map((line) => {
                       const fromBus = results.buses.find((b) => b.id === line.from_bus);
                       const toBus = results.buses.find((b) => b.id === line.to_bus);
@@ -1142,26 +1193,50 @@ export default function PowerPlatformDashboard() {
                       const cTo = getCoordinates(toBus);
                       const isTripped = trippedLines.includes(line.id);
 
+                      // Calculate midpoint for circuit breaker symbol
+                      const midX = (cFrom.x + cTo.x) / 2;
+                      const midY = (cFrom.y + cTo.y) / 2;
+
+                      const strokeColor = isTripped
+                        ? '#e11d48'
+                        : line.loading_percent > 85
+                        ? '#f59e0b'
+                        : '#059669';
+
                       return (
-                        <g key={line.id} className="cursor-pointer" onClick={() => toggleLine(line.id)}>
+                        <g key={line.id} className="cursor-pointer group" onClick={() => toggleLine(line.id)}>
                           <line
                             x1={cFrom.x}
                             y1={cFrom.y}
                             x2={cTo.x}
                             y2={cTo.y}
-                            stroke={isTripped ? '#e11d48' : line.loading_percent > 85 ? '#f59e0b' : '#059669'}
-                            strokeWidth={isTripped ? 2 : 3}
+                            stroke={strokeColor}
+                            strokeWidth={isTripped ? 2 : 2.5}
                             strokeDasharray={isTripped ? '6 6' : 'none'}
-                            className="transition-colors hover:stroke-white"
+                            className="transition-colors group-hover:stroke-white"
                           />
+
+                          {/* Circuit Breaker Box (IEEE Standard) */}
+                          <rect
+                            x={midX - 5}
+                            y={midY - 5}
+                            width={10}
+                            height={10}
+                            rx={1.5}
+                            fill={isTripped ? '#881337' : '#064e3b'}
+                            stroke={isTripped ? '#f43f5e' : '#10b981'}
+                            strokeWidth="1.5"
+                            className="transition-transform group-hover:scale-125"
+                          />
+
                           {!isTripped && (
                             <text
-                              x={(cFrom.x + cTo.x) / 2}
-                              y={(cFrom.y + cTo.y) / 2 - 6}
+                              x={midX}
+                              y={midY - 8}
                               fill="#94a3b8"
                               fontSize="8"
                               textAnchor="middle"
-                              className="font-mono font-semibold select-none"
+                              className="font-mono font-semibold select-none pointer-events-none"
                             >
                               {line.flow_mw} MW
                             </text>
@@ -1170,6 +1245,7 @@ export default function PowerPlatformDashboard() {
                       );
                     })}
 
+                    {/* Substation Nodes & Busbars */}
                     {results?.buses.map((bus) => {
                       const isSelected = selectedBus?.id === bus.id;
                       const isUnder = bus.v_pu < 0.95;
@@ -1177,6 +1253,71 @@ export default function PowerPlatformDashboard() {
                       const nodeColor = isUnder ? '#f43f5e' : isOver ? '#fbbf24' : '#10b981';
                       const coords = getCoordinates(bus);
 
+                      // VIEW 1: Electrical Busbar Schematic (IEEE)
+                      if (diagramView === 'schematic') {
+                        const sch = SCHEMATIC_BUSBARS[bus.id] || { width: 60 };
+                        const barW = sch.width;
+
+                        return (
+                          <g
+                            key={bus.id}
+                            transform={`translate(${coords.x}, ${coords.y})`}
+                            onClick={() => setSelectedBus(bus)}
+                            className="cursor-pointer group"
+                          >
+                            {/* Horizontal Solid Busbar */}
+                            <rect
+                              x={-barW / 2}
+                              y={-3}
+                              width={barW}
+                              height={6}
+                              rx={1.5}
+                              fill={isSelected ? '#38bdf8' : nodeColor}
+                              stroke="#0f172a"
+                              strokeWidth="1.5"
+                              filter={isSelected ? 'url(#node-glow)' : undefined}
+                              className="transition-all group-hover:brightness-125"
+                            />
+
+                            {/* Generator Component (Circle with Sine Wave) */}
+                            {sch.isGen && (
+                              <g transform="translate(0, -26)">
+                                <line x1="0" y1="23" x2="0" y2="10" stroke="#94a3b8" strokeWidth="1.5" />
+                                <circle r="10" fill="#0f172a" stroke="#38bdf8" strokeWidth="1.5" />
+                                <path
+                                  d="M -5 0 Q -2.5 -4 0 0 Q 2.5 4 5 0"
+                                  fill="none"
+                                  stroke="#38bdf8"
+                                  strokeWidth="1.5"
+                                />
+                              </g>
+                            )}
+
+                            {/* Load Component (Downward Arrow) */}
+                            {sch.isLoad && (
+                              <g transform="translate(0, 15)">
+                                <line x1="0" y1="-12" x2="0" y2="4" stroke="#94a3b8" strokeWidth="1.5" />
+                                <path d="M 0 10 L -4 4 L 4 4 Z" fill="#f59e0b" stroke="#f59e0b" />
+                              </g>
+                            )}
+
+                            {/* Bus Identification Label */}
+                            <text
+                              x="0"
+                              y={sch.isLoad ? 24 : -12}
+                              fill="#f8fafc"
+                              fontSize="8"
+                              fontFamily="monospace"
+                              fontWeight="bold"
+                              textAnchor="middle"
+                            >
+                              {bus.name.split(' ')[0]}
+                            </text>
+                          </g>
+                        );
+                      }
+
+                      // VIEW 2: Geographic Network Map
                       return (
                         <g
                           key={bus.id}
@@ -1244,13 +1385,15 @@ export default function PowerPlatformDashboard() {
                       </div>
                     ) : (
                       <div className="h-40 sm:h-48 flex items-center justify-center text-center text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4">
-                        Click on any node in the Single-Line Diagram to inspect live bus telemetry.
+                        Click on any substation or busbar in the diagram to inspect live telemetry.
                       </div>
                     )}
                   </div>
                   <div className="mt-4 pt-3 border-t border-slate-800 text-[10px] text-slate-400 flex justify-between">
-                    <span>Click corridors to trip (N-1)</span>
-                    <span className="text-emerald-400">● Live 330kV Map</span>
+                    <span>Click breaker squares to trip (N-1)</span>
+                    <span className="text-emerald-400">
+                      {diagramView === 'geographic' ? '● Geographic View' : '● IEEE Busbar View'}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1436,7 +1579,7 @@ export default function PowerPlatformDashboard() {
         </main>
       </div>
 
-      {/* Operator Login / Registration Modal */}
+      {/* Operator Login Modal */}
       {showAuthModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
           <div className="w-full max-w-sm rounded-xl border border-slate-800 bg-slate-950 p-6 shadow-2xl">
