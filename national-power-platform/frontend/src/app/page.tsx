@@ -508,7 +508,7 @@ export default function PowerPlatformDashboard() {
 
   return (
     <div className="flex h-screen w-full flex-col bg-slate-50 font-sans text-slate-900 antialiased overflow-hidden">
-      {/* Clean White Top Bar */}
+      {/* Clean Daylight Header */}
       <header className="flex h-16 w-full items-center justify-between border-b border-slate-200 bg-white px-4 md:px-6 z-20 select-none shadow-xs">
         <div className="flex items-center gap-3">
           <button
@@ -650,73 +650,79 @@ export default function PowerPlatformDashboard() {
           </div>
         </aside>
 
-        {/* Workspace Canvas (Daylight Slate Background) */}
+        {/* Main Workspace Body */}
         <main className="flex-1 overflow-y-auto bg-slate-50 p-6 sm:p-8">
-          {/* TAB 1: HOME (WHITE CANVAS WITH 4 DARK-TINTED BOXES FROM 248775.PNG) */}
+          {/* TAB 1: HOME (WHITE CARDS WITH DEFINED DARK BORDERS & THEMATIC ICONS) */}
           {activeTab === 'Home' && (
             <div className="space-y-6 max-w-5xl mx-auto">
-              
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">Simulation Workspace</h2>
+                <p className="text-xs sm:text-sm text-slate-500">
+                  Select a primary module below to perform dynamic studies, economic dispatch, or upload network parameters.
+                </p>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* 1. Grid Stability: Dark Navy Tint */}
+                {/* 1. Grid Stability Models: White Card with Dark Border & Cyan Accent */}
                 <div
                   onClick={() => setActiveTab('Grid Models')}
-                  className="group cursor-pointer rounded-2xl border border-[#1e3a5f]/80 bg-gradient-to-br from-[#12233b] to-[#0c1829] p-8 shadow-md hover:shadow-xl transition-all duration-200 hover:-translate-y-1 hover:border-[#38bdf8]"
+                  className="group cursor-pointer rounded-2xl border-2 border-slate-800 bg-white p-8 shadow-sm hover:shadow-xl transition-all duration-200 hover:-translate-y-1 hover:border-cyan-600"
                 >
-                  <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-[#091424] border border-[#38bdf8]/30 text-[#38bdf8] group-hover:scale-110 transition-transform">
+                  <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 border border-slate-700 shadow-sm text-cyan-400 group-hover:scale-110 transition-transform">
                     <TrendingUp className="h-6 w-6 stroke-[2.2]" />
                   </div>
-                  <h3 className="text-sm font-bold tracking-wider text-white uppercase">
+                  <h3 className="text-sm font-bold tracking-wider text-slate-900 uppercase group-hover:text-cyan-700 transition-colors">
                     GRID STABILITY MODELS
                   </h3>
-                  <p className="mt-2 text-xs text-slate-300 leading-relaxed font-normal">
+                  <p className="mt-2 text-xs text-slate-600 leading-relaxed font-normal">
                     Newton-Raphson power flow, N-1 contingency studies, and transient frequency response.
                   </p>
                 </div>
 
-                {/* 2. Market Simulation: Dark Forest/Teal Tint */}
+                {/* 2. Market Simulation Models: White Card with Dark Border & Emerald Accent */}
                 <div
                   onClick={() => setActiveTab('Market Simulations')}
-                  className="group cursor-pointer rounded-2xl border border-[#15433f]/80 bg-gradient-to-br from-[#102b28] to-[#081c1a] p-8 shadow-md hover:shadow-xl transition-all duration-200 hover:-translate-y-1 hover:border-[#34d399]"
+                  className="group cursor-pointer rounded-2xl border-2 border-slate-800 bg-white p-8 shadow-sm hover:shadow-xl transition-all duration-200 hover:-translate-y-1 hover:border-emerald-600"
                 >
-                  <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-[#061715] border border-[#34d399]/30 text-[#34d399] group-hover:scale-110 transition-transform">
+                  <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 border border-slate-700 shadow-sm text-emerald-400 group-hover:scale-110 transition-transform">
                     <DollarSign className="h-6 w-6 stroke-[2.2]" />
                   </div>
-                  <h3 className="text-sm font-bold tracking-wider text-white uppercase">
+                  <h3 className="text-sm font-bold tracking-wider text-slate-900 uppercase group-hover:text-emerald-700 transition-colors">
                     MARKET SIMULATION MODELS
                   </h3>
-                  <p className="mt-2 text-xs text-slate-300 leading-relaxed font-normal">
+                  <p className="mt-2 text-xs text-slate-600 leading-relaxed font-normal">
                     Merit order dispatch, locational marginal pricing (LMP), and hydro-thermal generation optimization.
                   </p>
                 </div>
 
-                {/* 3. Data Upload: Dark Plum/Violet Tint */}
+                {/* 3. Data Upload & Validation: White Card with Dark Border & Purple Accent */}
                 <div
                   onClick={() => setActiveTab('Data Upload')}
-                  className="group cursor-pointer rounded-2xl border border-[#3b285a]/80 bg-gradient-to-br from-[#241938] to-[#140e24] p-8 shadow-md hover:shadow-xl transition-all duration-200 hover:-translate-y-1 hover:border-[#c084fc]"
+                  className="group cursor-pointer rounded-2xl border-2 border-slate-800 bg-white p-8 shadow-sm hover:shadow-xl transition-all duration-200 hover:-translate-y-1 hover:border-purple-600"
                 >
-                  <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-[#120b20] border border-[#c084fc]/30 text-[#c084fc] group-hover:scale-110 transition-transform">
+                  <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 border border-slate-700 shadow-sm text-purple-400 group-hover:scale-110 transition-transform">
                     <UploadCloud className="h-6 w-6 stroke-[2.2]" />
                   </div>
-                  <h3 className="text-sm font-bold tracking-wider text-white uppercase">
+                  <h3 className="text-sm font-bold tracking-wider text-slate-900 uppercase group-hover:text-purple-700 transition-colors">
                     DATA UPLOAD & VALIDATION
                   </h3>
-                  <p className="mt-2 text-xs text-slate-300 leading-relaxed font-normal">
+                  <p className="mt-2 text-xs text-slate-600 leading-relaxed font-normal">
                     SCADA telemetry ingestion, multi-format model parser, and automated topology error checking.
                   </p>
                 </div>
 
-                {/* 4. Reports & Visualization: Dark Bronze/Amber Tint */}
+                {/* 4. Reports & Visualization: White Card with Dark Border & Amber Accent */}
                 <div
                   onClick={() => setActiveTab('Visualization')}
-                  className="group cursor-pointer rounded-2xl border border-[#4a3821]/80 bg-gradient-to-br from-[#2f2417] to-[#1c140c] p-8 shadow-md hover:shadow-xl transition-all duration-200 hover:-translate-y-1 hover:border-[#fbbf24]"
+                  className="group cursor-pointer rounded-2xl border-2 border-slate-800 bg-white p-8 shadow-sm hover:shadow-xl transition-all duration-200 hover:-translate-y-1 hover:border-amber-600"
                 >
-                  <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-[#160f07] border border-[#fbbf24]/30 text-[#fbbf24] group-hover:scale-110 transition-transform">
+                  <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 border border-slate-700 shadow-sm text-amber-400 group-hover:scale-110 transition-transform">
                     <BarChart3 className="h-6 w-6 stroke-[2.2]" />
                   </div>
-                  <h3 className="text-sm font-bold tracking-wider text-white uppercase">
+                  <h3 className="text-sm font-bold tracking-wider text-slate-900 uppercase group-hover:text-amber-700 transition-colors">
                     REPORTS & VISUALIZATION
                   </h3>
-                  <p className="mt-2 text-xs text-slate-300 leading-relaxed font-normal">
+                  <p className="mt-2 text-xs text-slate-600 leading-relaxed font-normal">
                     Single-line diagrams, voltage profile heatmaps, transmission congestion, and PDF audit exports.
                   </p>
                 </div>
