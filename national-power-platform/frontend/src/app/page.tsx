@@ -655,12 +655,7 @@ export default function PowerPlatformDashboard() {
           {/* TAB 1: HOME (WHITE CARDS WITH DEFINED DARK BORDERS & THEMATIC ICONS) */}
           {activeTab === 'Home' && (
             <div className="space-y-6 max-w-5xl mx-auto">
-              <div>
-                <h2 className="text-xl font-bold text-slate-900">Simulation Workspace</h2>
-                <p className="text-xs sm:text-sm text-slate-500">
-                  Select a primary module below to perform dynamic studies, economic dispatch, or upload network parameters.
-                </p>
-              </div>
+              
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* 1. Grid Stability Models: White Card with Dark Border & Cyan Accent */}
