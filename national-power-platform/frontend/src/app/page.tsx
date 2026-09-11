@@ -478,11 +478,7 @@ export default function PowerPlatformDashboard() {
         <main className="flex-1 overflow-y-auto bg-slate-900 p-6 sm:p-8">
           {/* TAB 1: HOME */}
           {activeTab === 'Home' && (
-            <div className="space-y-6 max-w-5xl mx-auto">
-              <div>
-                <h2 className="text-xl font-bold text-slate-100">Simulation Workspace</h2>
-                <p className="text-xs sm:text-sm text-slate-400">Select a primary module below to perform dynamic studies, economic dispatch, or upload network parameters.</p>
-              </div>
+            <div className="space-y-6 max-w-5xl mx-auto">gi
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {[
