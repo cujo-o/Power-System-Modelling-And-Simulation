@@ -14,6 +14,7 @@ import {
   Play,
   Sliders,
   LogIn,
+  LogOut,
   AlertTriangle,
   CheckCircle2,
   RefreshCw,
@@ -23,6 +24,7 @@ import {
   X,
   Trash2,
 } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
 
 interface BusData {
   id: number;
@@ -62,7 +64,9 @@ interface SimResult {
 interface UploadValidation {
   status: string;
   filename: string;
+  format: string;
   converged: boolean;
+  network_payload: string;
   metrics: {
     buses: number;
     branches: number;
@@ -81,6 +85,7 @@ interface UploadValidation {
 interface GridModelMeta {
   id: string;
   name: string;
+  format?: string;
   uploaded_at: string;
   buses: number;
   branches: number;
@@ -89,6 +94,7 @@ interface GridModelMeta {
   converged: boolean;
   is_default: boolean;
   is_active: boolean;
+  network_payload?: string;
 }
 
 interface GeneratorDispatch {
@@ -144,7 +150,15 @@ export default function PowerPlatformDashboard() {
   const [divergedNotice, setDivergedNotice] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Model Registry & Upload State
+  // Authentication State
+  const [user, setUser] = useState<any>(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [authMsg, setAuthMsg] = useState<string | null>(null);
+
+  // Upload & Model Management State
   const [modelList, setModelList] = useState<GridModelMeta[]>([]);
   const [uploadResult, setUploadResult] = useState<UploadValidation | null>(null);
   const [uploadLoading, setUploadLoading] = useState(false);
@@ -166,15 +180,88 @@ export default function PowerPlatformDashboard() {
     { id: 'Admin Panel', label: 'Task Force/Admin Panel', icon: ShieldCheck },
   ];
 
+  // Sync Supabase Auth Session
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthMsg(null);
+    try {
+      if (isSignUp) {
+        const { error } = await supabase.auth.signUp({
+          email: authEmail,
+          password: authPassword,
+        });
+        if (error) throw error;
+        setAuthMsg('Registration complete! You may now sign in.');
+        setIsSignUp(false);
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: authEmail,
+          password: authPassword,
+        });
+        if (error) throw error;
+        setShowAuthModal(false);
+      }
+    } catch (err: any) {
+      setAuthMsg(err.message || 'Authentication failed');
+    }
+  };
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+  };
+
   const fetchModels = async () => {
     try {
+      // 1. Fetch live active session models from backend
       const res = await fetch(`${API_BASE_URL}/api/models`);
+      let backendModels: GridModelMeta[] = [];
       if (res.ok) {
-        const data = await res.json();
-        setModelList(data);
+        backendModels = await res.json();
+      }
+
+      // 2. Fetch persistent saved models from Supabase
+      const { data: dbModels } = await supabase
+        .from('grid_models')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (dbModels && dbModels.length > 0) {
+        const mappedDbModels: GridModelMeta[] = dbModels.map((m: any) => ({
+          id: m.id,
+          name: m.name,
+          format: m.format,
+          uploaded_at: new Date(m.created_at).toLocaleDateString(),
+          buses: m.buses,
+          branches: m.branches,
+          total_installed_mw: Number(m.total_installed_mw),
+          total_demand_mw: Number(m.total_demand_mw),
+          converged: m.converged,
+          is_default: m.is_default,
+          is_active: backendModels.some((bm) => bm.id === m.id && bm.is_active),
+          network_payload: m.network_payload,
+        }));
+
+        // Merge baseline with Supabase models
+        const baseline = backendModels.find((m) => m.is_default);
+        const combined = baseline ? [baseline, ...mappedDbModels.filter((m) => m.id !== baseline.id)] : mappedDbModels;
+        setModelList(combined);
+      } else {
+        setModelList(backendModels);
       }
     } catch {
-      // Ignore network hiccup
+      // Fallback
     }
   };
 
@@ -267,7 +354,7 @@ export default function PowerPlatformDashboard() {
     setUploadLoading(true);
     setUploadError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/upload/matpower`, {
+      const res = await fetch(`${API_BASE_URL}/api/upload/model`, {
         method: 'POST',
         body: formData,
       });
@@ -279,6 +366,25 @@ export default function PowerPlatformDashboard() {
 
       const data: UploadValidation = await res.json();
       setUploadResult(data);
+
+      // Persist model in Supabase PostgreSQL
+      try {
+        await supabase.from('grid_models').insert({
+          id: data.filename.replace(/[^a-zA-Z0-9]/g, '_') + '_' + Date.now().toString(36),
+          name: data.filename,
+          format: data.format,
+          buses: data.metrics.buses,
+          branches: data.metrics.branches,
+          total_installed_mw: data.metrics.total_installed_mw,
+          total_demand_mw: data.metrics.total_demand_mw,
+          converged: data.converged,
+          network_payload: data.network_payload,
+          user_id: user?.id ?? null,
+        });
+      } catch (dbErr) {
+        console.warn('Supabase DB save note:', dbErr);
+      }
+
       setTrippedLines([]);
       setLoadMultiplier(1.0);
       setSelectedBus(null);
@@ -286,16 +392,30 @@ export default function PowerPlatformDashboard() {
       await runSimulation(1.0, []);
       await runMarketSimulation();
     } catch (err: any) {
-      setUploadError(err.message || 'Failed to parse MATPOWER case');
+      setUploadError(err.message || 'Failed to parse model case');
     } finally {
       setUploadLoading(false);
     }
   };
 
-  const handleActivateModel = async (modelId: string) => {
+  const handleActivateModel = async (model: GridModelMeta) => {
     setLoading(true);
     try {
-      await fetch(`${API_BASE_URL}/api/models/${modelId}/activate`, { method: 'POST' });
+      // If network_payload is available from Supabase, hydrate backend memory instantly
+      if (model.network_payload) {
+        await fetch(`${API_BASE_URL}/api/models/load-payload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: model.id,
+            name: model.name,
+            network_payload: model.network_payload,
+          }),
+        });
+      } else {
+        await fetch(`${API_BASE_URL}/api/models/${model.id}/activate`, { method: 'POST' });
+      }
+
       setTrippedLines([]);
       setLoadMultiplier(1.0);
       setSelectedBus(null);
@@ -310,9 +430,10 @@ export default function PowerPlatformDashboard() {
   };
 
   const handleDeleteModel = async (modelId: string) => {
-    if (!confirm('Are you sure you want to remove this case model from repository?')) return;
+    if (!confirm('Are you sure you want to remove this model from the repository?')) return;
     try {
       await fetch(`${API_BASE_URL}/api/models/${modelId}`, { method: 'DELETE' });
+      await supabase.from('grid_models').delete().eq('id', modelId);
       await fetchModels();
       await runSimulation(1.0, []);
       await runMarketSimulation();
@@ -375,10 +496,29 @@ export default function PowerPlatformDashboard() {
           </div>
         </div>
 
-        <button className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/80 px-4 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-700 hover:text-white">
-          <LogIn className="h-3.5 w-3.5" />
-          <span>Login</span>
-        </button>
+        {/* Operator Profile / Login Button */}
+        {user ? (
+          <div className="flex items-center gap-3">
+            <span className="hidden sm:inline font-mono text-xs text-emerald-400 truncate max-w-[180px]">
+              {user.email}
+            </span>
+            <button
+              onClick={handleSignOut}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              <span>Logout</span>
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setShowAuthModal(true)}
+            className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/80 px-4 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-700 hover:text-white"
+          >
+            <LogIn className="h-3.5 w-3.5" />
+            <span>Login</span>
+          </button>
+        )}
       </header>
 
       {/* Main Container */}
@@ -478,8 +618,7 @@ export default function PowerPlatformDashboard() {
         <main className="flex-1 overflow-y-auto bg-slate-900 p-6 sm:p-8">
           {/* TAB 1: HOME */}
           {activeTab === 'Home' && (
-            <div className="space-y-6 max-w-5xl mx-auto">gi
-
+            <div className="space-y-6 max-w-5xl mx-auto">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {[
                   {
@@ -498,7 +637,7 @@ export default function PowerPlatformDashboard() {
                   },
                   {
                     title: 'DATA UPLOAD & VALIDATION',
-                    desc: 'SCADA telemetry ingestion, IEEE MATPOWER parser, and automated topology error checking.',
+                    desc: 'SCADA telemetry ingestion, multi-format model parser, and automated topology error checking.',
                     icon: UploadCloud,
                     color: 'from-purple-500/20 to-indigo-500/10 border-purple-500/30 text-purple-400',
                     action: () => setActiveTab('Data Upload'),
@@ -836,21 +975,25 @@ export default function PowerPlatformDashboard() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg md:text-xl font-bold text-slate-100">Grid Model Ingestion & Case Library</h2>
-                  <p className="text-xs md:text-sm text-slate-400">Upload, manage, and switch active MATPOWER (.m) simulation models.</p>
+                  <p className="text-xs md:text-sm text-slate-400">Ingest, manage, and persist network topologies (.m, .json, .xlsx, .raw).</p>
                 </div>
               </div>
 
-              {/* Upload Dropzone */}
+              {/* Multi-Format Upload Dropzone */}
               <div className="rounded-xl border border-slate-800 bg-slate-950 p-6 space-y-6">
                 <div className="border-2 border-dashed border-slate-700 hover:border-emerald-500 rounded-xl p-8 text-center transition flex flex-col items-center justify-center bg-slate-900/40">
                   <UploadCloud className="h-10 w-10 sm:h-12 sm:w-12 text-slate-400 mb-3" />
-                  <p className="text-xs sm:text-sm font-semibold text-slate-200">Select or drop a MATPOWER case file (.m)</p>
-                  <p className="text-[11px] text-slate-500 mt-1">Supports standard IEEE cases or TCN custom models</p>
+                  <p className="text-xs sm:text-sm font-semibold text-slate-200">
+                    Select or drop grid case files
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Supports MATPOWER (.m), Pandapower (.json), Excel spreadsheets (.xlsx), and PSS/E (.raw)
+                  </p>
 
                   <input
                     type="file"
                     id="fileUploadInput"
-                    accept=".m"
+                    accept=".m,.json,.xlsx,.xls,.raw"
                     className="hidden"
                     onChange={handleFileUpload}
                   />
@@ -860,7 +1003,7 @@ export default function PowerPlatformDashboard() {
                       uploadLoading ? 'opacity-50 pointer-events-none' : ''
                     }`}
                   >
-                    {uploadLoading ? 'Parsing Case...' : 'Browse .m File'}
+                    {uploadLoading ? 'Parsing Case...' : 'Browse Model File'}
                   </label>
                 </div>
               </div>
@@ -881,7 +1024,7 @@ export default function PowerPlatformDashboard() {
                       <tr>
                         <th className="p-3">Active</th>
                         <th className="p-3">Model Name</th>
-                        <th className="p-3">Uploaded</th>
+                        <th className="p-3">Format</th>
                         <th className="p-3">Buses</th>
                         <th className="p-3">Branches</th>
                         <th className="p-3">Capacity</th>
@@ -904,7 +1047,7 @@ export default function PowerPlatformDashboard() {
                           <td className="p-3 font-semibold text-slate-100">
                             <div className="flex items-center gap-2">
                               <FileCode className="h-4 w-4 text-emerald-400 shrink-0" />
-                              <span className="truncate max-w-[200px]">{model.name}</span>
+                              <span className="truncate max-w-[180px]">{model.name}</span>
                               {model.is_default && (
                                 <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[9px] font-bold text-slate-400 border border-slate-700">
                                   Default
@@ -912,7 +1055,7 @@ export default function PowerPlatformDashboard() {
                               )}
                             </div>
                           </td>
-                          <td className="p-3 font-mono text-slate-400 text-[11px]">{model.uploaded_at}</td>
+                          <td className="p-3 font-mono text-slate-400 text-[11px]">{model.format || 'MATPOWER'}</td>
                           <td className="p-3 font-mono">{model.buses}</td>
                           <td className="p-3 font-mono">{model.branches}</td>
                           <td className="p-3 font-mono text-cyan-400">{model.total_installed_mw} MW</td>
@@ -921,7 +1064,7 @@ export default function PowerPlatformDashboard() {
                             <div className="flex items-center justify-end gap-2">
                               {!model.is_active ? (
                                 <button
-                                  onClick={() => handleActivateModel(model.id)}
+                                  onClick={() => handleActivateModel(model)}
                                   className="rounded border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-slate-200 hover:bg-emerald-600 hover:border-emerald-500 hover:text-white transition"
                                 >
                                   Activate
@@ -1292,6 +1435,77 @@ export default function PowerPlatformDashboard() {
           )}
         </main>
       </div>
+
+      {/* Operator Login / Registration Modal */}
+      {showAuthModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-sm rounded-xl border border-slate-800 bg-slate-950 p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-100">
+                {isSignUp ? 'Register Operator' : 'Operator Login'}
+              </h3>
+              <button
+                onClick={() => setShowAuthModal(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAuth} className="mt-4 space-y-3">
+              {authMsg && (
+                <div className="p-2 rounded bg-emerald-950/60 border border-emerald-800 text-[11px] text-emerald-300">
+                  {authMsg}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">Email</label>
+                <input
+                  type="email"
+                  required
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  className="w-full rounded-lg bg-slate-900 border border-slate-800 px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
+                  placeholder="operator@ncc.gov.ng"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">Password</label>
+                <input
+                  type="password"
+                  required
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  className="w-full rounded-lg bg-slate-900 border border-slate-800 px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
+                  placeholder="••••••••"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full rounded-lg bg-emerald-600 py-2 text-xs font-bold text-white hover:bg-emerald-500 transition"
+              >
+                {isSignUp ? 'Create Operator Account' : 'Sign In'}
+              </button>
+
+              <div className="text-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSignUp(!isSignUp);
+                    setAuthMsg(null);
+                  }}
+                  className="text-[11px] text-slate-400 hover:text-emerald-400 transition"
+                >
+                  {isSignUp ? 'Already registered? Sign In' : 'Need an operator account? Register'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
