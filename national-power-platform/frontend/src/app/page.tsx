@@ -26,7 +26,6 @@ import {
   Layers,
   MapPin,
   User,
-  ExternalLink,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -131,15 +130,15 @@ interface MarketResult {
 }
 
 const GEOGRAPHIC_COORDS: Record<number, { x: number; y: number }> = {
-  0: { x: 140, y: 90 },   // Kainji
-  1: { x: 200, y: 160 },  // Jebba
-  2: { x: 380, y: 110 },  // Shiroro
-  3: { x: 450, y: 180 },  // Katampe / Abuja
-  4: { x: 260, y: 260 },  // Osogbo
-  5: { x: 130, y: 350 },  // Ikeja West
-  6: { x: 220, y: 400 },  // Egbin
-  7: { x: 370, y: 330 },  // Benin
-  8: { x: 490, y: 390 },  // Afam
+  0: { x: 140, y: 90 },
+  1: { x: 200, y: 160 },
+  2: { x: 380, y: 110 },
+  3: { x: 450, y: 180 },
+  4: { x: 260, y: 260 },
+  5: { x: 130, y: 350 },
+  6: { x: 220, y: 400 },
+  7: { x: 370, y: 330 },
+  8: { x: 490, y: 390 },
 };
 
 interface BusbarConfig {
@@ -513,7 +512,6 @@ export default function PowerPlatformDashboard() {
       {/* FUT Minna School Portal Header */}
       <header className="flex h-14 w-full items-center justify-between border-b border-slate-200 bg-white px-4 md:px-6 z-20 select-none shadow-xs">
         <div className="flex items-center gap-3">
-          {/* Signature Purple Square Menu Toggle */}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="flex h-8 w-8 items-center justify-center rounded bg-[#500b50] text-white hover:bg-[#680f68] transition"
@@ -532,7 +530,6 @@ export default function PowerPlatformDashboard() {
           </div>
         </div>
 
-        {/* Portal-Style Top-Right Action Pill */}
         {user ? (
           <div className="flex items-center gap-3">
             <span className="hidden sm:inline text-xs font-semibold text-slate-700">
@@ -570,7 +567,6 @@ export default function PowerPlatformDashboard() {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="space-y-4">
-                {/* Student / Operator Profile Header */}
                 <div className="flex flex-col items-center pb-4 border-b border-[#6f146f]/60 text-center">
                   <div className="h-14 w-14 rounded-full bg-white/20 p-1 flex items-center justify-center border-2 border-white/50 mb-2">
                     <User className="h-8 w-8 text-white" />
@@ -623,7 +619,6 @@ export default function PowerPlatformDashboard() {
         {/* Desktop Signature Purple Portal Sidebar */}
         <aside className="hidden md:flex w-60 bg-[#500b50] text-white p-3 flex-col justify-between shrink-0 select-none shadow-md">
           <div className="space-y-4">
-            {/* Student Profile Card (Matching Portal Left Header) */}
             <div className="flex flex-col items-center pt-2 pb-3 border-b border-[#6f146f]/60 text-center">
               <div className="h-14 w-14 rounded-full bg-white/20 p-1 flex items-center justify-center border-2 border-white/50 mb-2 shadow-xs">
                 <User className="h-8 w-8 text-white" />
@@ -674,100 +669,73 @@ export default function PowerPlatformDashboard() {
         {/* Main Workspace Body */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 flex flex-col justify-between">
           <div>
-            {/* TAB 1: PORTAL DASHBOARD TILES */}
+            {/* TAB 1: DASHBOARD (ONLY THE 4 PRIMARY MODULE CARDS) */}
             {activeTab === 'Home' && (
-              <div className="space-y-6 max-w-5xl mx-auto">
-                {/* Student Banner Card (Like Portal Welcome Box) */}
-                <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                  <div>
-                    <h2 className="text-lg font-bold text-[#500b50]">Welcome, Operator & Researcher</h2>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      National Power System Modelling & Simulation Platform | 330kV Bulk Transmission Analysis
+              <div className="h-full flex items-center justify-center max-w-4xl mx-auto py-8">
+                <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* 1. Grid Stability Models */}
+                  <div
+                    onClick={() => setActiveTab('Grid Models')}
+                    className="group cursor-pointer rounded-xl border border-slate-200 bg-white p-8 shadow-2xs hover:shadow-md hover:border-[#500b50] transition flex flex-col items-center text-center"
+                  >
+                    <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-[#f5eff6] text-[#500b50] group-hover:bg-[#500b50] group-hover:text-white transition shadow-inner">
+                      <TrendingUp className="h-7 w-7 stroke-[2]" />
+                    </div>
+                    <h3 className="text-sm font-bold tracking-wider text-slate-800 uppercase group-hover:text-[#500b50] transition-colors">
+                      Grid Stability Models
+                    </h3>
+                    <p className="mt-2 text-xs text-slate-500 leading-relaxed max-w-xs">
+                      Newton-Raphson power flow, N-1 contingency studies, and transient frequency response.
                     </p>
                   </div>
-                  <div className="flex items-center gap-3 text-xs">
-                    <div className="rounded border border-slate-200 bg-slate-50 px-3 py-1.5">
-                      <span className="text-slate-400 block text-[10px]">Grid Status</span>
-                      <span className="font-bold text-emerald-700">Solved (Normal)</span>
-                    </div>
-                    <div className="rounded border border-slate-200 bg-slate-50 px-3 py-1.5">
-                      <span className="text-slate-400 block text-[10px]">Frequency</span>
-                      <span className="font-bold font-mono text-[#500b50]">
-                        {results?.frequency ? `${results.frequency.toFixed(2)} Hz` : '50.00 Hz'}
-                      </span>
-                    </div>
-                  </div>
-                </div>
 
-                {/* Dashboard Action Tiles (Mirroring Portal Grid Buttons) */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {[
-                    {
-                      title: 'Grid Stability Models',
-                      sub: 'Static AC Load Flow',
-                      icon: TrendingUp,
-                      action: () => setActiveTab('Grid Models'),
-                    },
-                    {
-                      title: 'Market Simulations',
-                      sub: 'Merit Order & LMP',
-                      icon: DollarSign,
-                      action: () => setActiveTab('Market Simulations'),
-                    },
-                    {
-                      title: 'Model Upload',
-                      sub: 'Multi-Format Ingestion',
-                      icon: UploadCloud,
-                      action: () => setActiveTab('Data Upload'),
-                    },
-                    {
-                      title: 'Single-Line Diagram',
-                      sub: 'CAD Vector Schematic',
-                      icon: Layers,
-                      action: () => setActiveTab('Visualization'),
-                    },
-                    {
-                      title: 'Contingency Reports',
-                      sub: 'Audit & CSV Export',
-                      icon: FileText,
-                      action: () => setActiveTab('Reports'),
-                    },
-                    {
-                      title: 'NERC Task Force',
-                      sub: 'Grid Code Criteria',
-                      icon: ShieldCheck,
-                      action: () => setActiveTab('Admin Panel'),
-                    },
-                    {
-                      title: 'Substation Telemetry',
-                      sub: 'Bus Voltages & Angles',
-                      icon: Grid,
-                      action: () => setActiveTab('Grid Models'),
-                    },
-                    {
-                      title: 'Session Baseline',
-                      sub: 'Revert to Baseline',
-                      icon: RotateCcw,
-                      action: handleResetBaseline,
-                    },
-                  ].map((card, idx) => {
-                    const Icon = card.icon;
-                    return (
-                      <div
-                        key={idx}
-                        onClick={card.action}
-                        className="group cursor-pointer rounded-lg border border-slate-200 bg-white p-5 text-center shadow-2xs hover:shadow-md hover:border-[#500b50] transition flex flex-col items-center justify-center min-h-[120px]"
-                      >
-                        <div className="mb-2.5 flex h-10 w-10 items-center justify-center rounded bg-[#f5eff6] text-[#500b50] group-hover:bg-[#500b50] group-hover:text-white transition">
-                          <Icon className="h-5 w-5" />
-                        </div>
-                        <h3 className="text-xs font-bold text-slate-800 group-hover:text-[#500b50] transition">
-                          {card.title}
-                        </h3>
-                        <p className="text-[10px] text-slate-400 mt-0.5">{card.sub}</p>
-                      </div>
-                    );
-                  })}
+                  {/* 2. Market Simulation Models */}
+                  <div
+                    onClick={() => setActiveTab('Market Simulations')}
+                    className="group cursor-pointer rounded-xl border border-slate-200 bg-white p-8 shadow-2xs hover:shadow-md hover:border-[#500b50] transition flex flex-col items-center text-center"
+                  >
+                    <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-[#f5eff6] text-[#500b50] group-hover:bg-[#500b50] group-hover:text-white transition shadow-inner">
+                      <DollarSign className="h-7 w-7 stroke-[2]" />
+                    </div>
+                    <h3 className="text-sm font-bold tracking-wider text-slate-800 uppercase group-hover:text-[#500b50] transition-colors">
+                      Market Simulation Models
+                    </h3>
+                    <p className="mt-2 text-xs text-slate-500 leading-relaxed max-w-xs">
+                      Merit order dispatch, locational marginal pricing (LMP), and hydro-thermal generation optimization.
+                    </p>
+                  </div>
+
+                  {/* 3. Data Upload & Validation */}
+                  <div
+                    onClick={() => setActiveTab('Data Upload')}
+                    className="group cursor-pointer rounded-xl border border-slate-200 bg-white p-8 shadow-2xs hover:shadow-md hover:border-[#500b50] transition flex flex-col items-center text-center"
+                  >
+                    <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-[#f5eff6] text-[#500b50] group-hover:bg-[#500b50] group-hover:text-white transition shadow-inner">
+                      <UploadCloud className="h-7 w-7 stroke-[2]" />
+                    </div>
+                    <h3 className="text-sm font-bold tracking-wider text-slate-800 uppercase group-hover:text-[#500b50] transition-colors">
+                      Data Upload & Validation
+                    </h3>
+                    <p className="mt-2 text-xs text-slate-500 leading-relaxed max-w-xs">
+                      SCADA telemetry ingestion, multi-format model parser, and automated topology error checking.
+                    </p>
+                  </div>
+
+                  {/* 4. Reports & Visualization */}
+                  <div
+                    onClick={() => setActiveTab('Visualization')}
+                    className="group cursor-pointer rounded-xl border border-slate-200 bg-white p-8 shadow-2xs hover:shadow-md hover:border-[#500b50] transition flex flex-col items-center text-center"
+                  >
+                    <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-[#f5eff6] text-[#500b50] group-hover:bg-[#500b50] group-hover:text-white transition shadow-inner">
+                      <BarChart3 className="h-7 w-7 stroke-[2]" />
+                    </div>
+                    <h3 className="text-sm font-bold tracking-wider text-slate-800 uppercase group-hover:text-[#500b50] transition-colors">
+                      Reports & Visualization
+                    </h3>
+                    <p className="mt-2 text-xs text-slate-500 leading-relaxed max-w-xs">
+                      Single-line diagrams, voltage profile heatmaps, transmission congestion, and PDF audit exports.
+                    </p>
+                  </div>
                 </div>
               </div>
             )}
@@ -830,7 +798,7 @@ export default function PowerPlatformDashboard() {
                   </div>
                 </div>
 
-                {/* Substation Bus Table (Formatted like FUT Minna Course Registration Form) */}
+                {/* Substation Bus Table */}
                 <div className="rounded-lg border border-slate-200 bg-white overflow-hidden shadow-xs">
                   <div className="bg-[#500b50] text-white px-4 py-2.5 flex justify-between items-center text-xs font-bold">
                     <span>Substation Bus Voltage Profiles (330kV Nominal)</span>
@@ -1078,7 +1046,6 @@ export default function PowerPlatformDashboard() {
                   <p className="text-xs text-slate-500">Ingest, manage, and persist network topologies (.m, .json, .xlsx, .raw).</p>
                 </div>
 
-                {/* Upload Card */}
                 <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-xs">
                   <div className="border-2 border-dashed border-slate-300 hover:border-[#500b50] rounded-lg p-8 text-center transition flex flex-col items-center justify-center bg-slate-50">
                     <UploadCloud className="h-10 w-10 text-[#500b50] mb-2.5" />
@@ -1107,7 +1074,6 @@ export default function PowerPlatformDashboard() {
                   </div>
                 </div>
 
-                {/* Model Repository Table */}
                 <div className="rounded-lg border border-slate-200 bg-white overflow-hidden shadow-xs">
                   <div className="bg-[#500b50] text-white px-4 py-2.5 flex justify-between items-center text-xs font-bold">
                     <span>Registered Network Models</span>
@@ -1247,7 +1213,6 @@ export default function PowerPlatformDashboard() {
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-                  {/* High-Contrast Vector Canvas */}
                   <div className="lg:col-span-2 rounded-lg border border-slate-800 bg-[#0c1427] p-4 relative overflow-hidden flex flex-col items-center justify-center shadow-md">
                     <svg viewBox="30 20 700 440" className="w-full h-[380px] sm:h-[440px] select-none">
                       <defs>
@@ -1306,7 +1271,6 @@ export default function PowerPlatformDashboard() {
                                 className="transition-colors group-hover:stroke-white"
                               />
 
-                              {/* Circuit Breaker Box */}
                               <g
                                 transform={`translate(${breakerPos.x}, ${breakerPos.y})`}
                                 className="transition-transform group-hover:scale-125"
@@ -1629,7 +1593,6 @@ export default function PowerPlatformDashboard() {
                   </div>
                 </div>
 
-                {/* Summary Scorecard */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                   <div className="p-4 rounded-lg border border-slate-200 bg-white shadow-xs">
                     <span className="text-slate-400 block mb-1">Total System Infeed</span>
@@ -1660,7 +1623,6 @@ export default function PowerPlatformDashboard() {
                   </div>
                 </div>
 
-                {/* Violation Ledger (Purple Header) */}
                 <div className="rounded-lg border border-slate-200 bg-white overflow-hidden shadow-xs">
                   <div className="bg-[#500b50] text-white px-4 py-2.5 flex justify-between items-center text-xs font-bold">
                     <span>Grid Code Operational Deficiency Ledger</span>
