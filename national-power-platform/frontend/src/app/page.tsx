@@ -25,6 +25,8 @@ import {
   Trash2,
   Layers,
   MapPin,
+  User,
+  ExternalLink,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -129,15 +131,15 @@ interface MarketResult {
 }
 
 const GEOGRAPHIC_COORDS: Record<number, { x: number; y: number }> = {
-  0: { x: 140, y: 90 },
-  1: { x: 200, y: 160 },
-  2: { x: 380, y: 110 },
-  3: { x: 450, y: 180 },
-  4: { x: 260, y: 260 },
-  5: { x: 130, y: 350 },
-  6: { x: 220, y: 400 },
-  7: { x: 370, y: 330 },
-  8: { x: 490, y: 390 },
+  0: { x: 140, y: 90 },   // Kainji
+  1: { x: 200, y: 160 },  // Jebba
+  2: { x: 380, y: 110 },  // Shiroro
+  3: { x: 450, y: 180 },  // Katampe / Abuja
+  4: { x: 260, y: 260 },  // Osogbo
+  5: { x: 130, y: 350 },  // Ikeja West
+  6: { x: 220, y: 400 },  // Egbin
+  7: { x: 370, y: 330 },  // Benin
+  8: { x: 490, y: 390 },  // Afam
 };
 
 interface BusbarConfig {
@@ -201,7 +203,7 @@ export default function PowerPlatformDashboard() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [authMsg, setAuthMsg] = useState<string | null>(null);
 
-  // Model State
+  // Model Management State
   const [modelList, setModelList] = useState<GridModelMeta[]>([]);
   const [uploadResult, setUploadResult] = useState<UploadValidation | null>(null);
   const [uploadLoading, setUploadLoading] = useState(false);
@@ -214,13 +216,13 @@ export default function PowerPlatformDashboard() {
   const [marketResults, setMarketResults] = useState<MarketResult | null>(null);
 
   const navItems = [
-    { id: 'Home', label: 'Home', icon: Home },
-    { id: 'Grid Models', label: 'Grid Models', icon: Grid },
+    { id: 'Home', label: 'Dashboard', icon: Home },
+    { id: 'Grid Models', label: 'Grid Stability Models', icon: Grid },
     { id: 'Market Simulations', label: 'Market Simulations', icon: DollarSign },
-    { id: 'Data Upload', label: 'Data Upload/Down-', icon: UploadCloud },
+    { id: 'Data Upload', label: 'Upload & Validation', icon: UploadCloud },
     { id: 'Visualization', label: 'Visualization Tools', icon: TrendingUp },
-    { id: 'Reports', label: 'Reports & Publicati-', icon: FileText },
-    { id: 'Admin Panel', label: 'Task Force/Admin Panel', icon: ShieldCheck },
+    { id: 'Reports', label: 'Reports & Publications', icon: FileText },
+    { id: 'Admin Panel', label: 'Task Force / Admin', icon: ShieldCheck },
   ];
 
   useEffect(() => {
@@ -467,7 +469,7 @@ export default function PowerPlatformDashboard() {
   };
 
   const handleDeleteModel = async (modelId: string) => {
-    if (!confirm('Are you sure you want to remove this model from the repository?')) return;
+    if (!confirm('Are you sure you want to remove this model from repository?')) return;
     try {
       await fetch(`${API_BASE_URL}/api/models/${modelId}`, { method: 'DELETE' });
       await supabase.from('grid_models').delete().eq('id', modelId);
@@ -507,75 +509,78 @@ export default function PowerPlatformDashboard() {
   };
 
   return (
-    <div className="flex h-screen w-full flex-col bg-slate-50 font-sans text-slate-900 antialiased overflow-hidden">
-      {/* Clean Daylight Header */}
-      <header className="flex h-16 w-full items-center justify-between border-b border-slate-200 bg-white px-4 md:px-6 z-20 select-none shadow-xs">
+    <div className="flex h-screen w-full flex-col bg-[#f7f5f9] font-sans text-slate-800 antialiased overflow-hidden">
+      {/* FUT Minna School Portal Header */}
+      <header className="flex h-14 w-full items-center justify-between border-b border-slate-200 bg-white px-4 md:px-6 z-20 select-none shadow-xs">
         <div className="flex items-center gap-3">
+          {/* Signature Purple Square Menu Toggle */}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition"
+            className="flex h-8 w-8 items-center justify-center rounded bg-[#500b50] text-white hover:bg-[#680f68] transition"
             aria-label="Toggle menu"
           >
-            {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            {mobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
           </button>
 
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-600 shrink-0">
-            <Zap className="h-5 w-5 fill-current" />
-          </div>
-
           <div className="leading-tight">
-            <h1 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-900">
-              National Power System Modelling
+            <h1 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#500b50]">
+              National Power System Modelling & Simulation
             </h1>
-            <p className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-500">
-              and Simulation Platform (Nigeria)
+            <p className="text-[11px] font-medium text-slate-500">
+              Federal University of Technology, Minna | NRF Power Research
             </p>
           </div>
         </div>
 
+        {/* Portal-Style Top-Right Action Pill */}
         {user ? (
           <div className="flex items-center gap-3">
-            <span className="hidden sm:inline font-mono text-xs font-semibold text-emerald-600 truncate max-w-[180px]">
+            <span className="hidden sm:inline text-xs font-semibold text-slate-700">
               {user.email}
             </span>
             <button
               onClick={handleSignOut}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition"
+              className="flex items-center gap-1 rounded bg-[#ffefe5] px-3 py-1 text-xs font-semibold text-[#c2410c] border border-[#ffedd5] hover:bg-[#fed7aa] transition"
             >
               <LogOut className="h-3.5 w-3.5" />
-              <span>Logout</span>
+              <span>Log out</span>
             </button>
           </div>
         ) : (
           <button
             onClick={() => setShowAuthModal(true)}
-            className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-xs"
+            className="flex items-center gap-1.5 rounded bg-[#f1f5f9] px-3.5 py-1 text-xs font-semibold text-slate-700 border border-slate-300 hover:bg-slate-200 transition"
           >
-            <LogIn className="h-3.5 w-3.5" />
-            <span>Login</span>
+            <LogIn className="h-3.5 w-3.5 text-[#500b50]" />
+            <span>Log in</span>
           </button>
         )}
       </header>
 
-      {/* Main Container */}
+      {/* Main Framework Container */}
       <div className="flex flex-1 overflow-hidden relative">
         {/* Mobile Navigation Drawer */}
         {mobileMenuOpen && (
           <div
-            className="fixed inset-0 z-30 bg-black/40 backdrop-blur-xs md:hidden"
+            className="fixed inset-0 z-30 bg-black/50 backdrop-blur-xs md:hidden"
             onClick={() => setMobileMenuOpen(false)}
           >
             <aside
-              className="w-64 h-full bg-white border-r border-slate-200 p-4 flex flex-col justify-between"
+              className="w-64 h-full bg-[#500b50] text-white p-4 flex flex-col justify-between"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Navigation</span>
-                  <button onClick={() => setMobileMenuOpen(false)} className="text-slate-500 hover:text-slate-900">
-                    <X className="h-5 w-5" />
-                  </button>
+                {/* Student / Operator Profile Header */}
+                <div className="flex flex-col items-center pb-4 border-b border-[#6f146f]/60 text-center">
+                  <div className="h-14 w-14 rounded-full bg-white/20 p-1 flex items-center justify-center border-2 border-white/50 mb-2">
+                    <User className="h-8 w-8 text-white" />
+                  </div>
+                  <span className="text-xs font-bold leading-tight truncate max-w-full">
+                    {user ? user.email.split('@')[0] : 'Engineer / Researcher'}
+                  </span>
+                  <span className="text-[10px] text-emerald-300 font-medium mt-0.5">Academic Active</span>
                 </div>
+
                 <nav className="space-y-1">
                   {navItems.map((tab) => {
                     const Icon = tab.icon;
@@ -587,10 +592,10 @@ export default function PowerPlatformDashboard() {
                           setActiveTab(tab.id);
                           setMobileMenuOpen(false);
                         }}
-                        className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                        className={`flex w-full items-center gap-3 rounded px-3 py-2 text-xs font-medium transition ${
                           isActive
-                            ? 'bg-emerald-600 text-white shadow-xs'
-                            : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                            ? 'bg-[#15803d] text-white font-bold'
+                            : 'text-white/80 hover:bg-white/10 hover:text-white'
                         }`}
                       >
                         <Icon className="h-4 w-4 shrink-0" />
@@ -601,709 +606,800 @@ export default function PowerPlatformDashboard() {
                 </nav>
               </div>
 
-              <div className="pt-3 border-t border-slate-200">
+              <div className="pt-3 border-t border-[#6f146f]/60">
                 <button
                   onClick={handleResetBaseline}
                   disabled={loading}
-                  className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 transition disabled:opacity-50"
+                  className="w-full flex items-center justify-center gap-1.5 rounded bg-white/10 hover:bg-white/20 py-2 text-xs font-medium text-white transition disabled:opacity-50"
                 >
-                  <RotateCcw className="h-3.5 w-3.5 text-slate-500" />
-                  <span>Reset Grid</span>
+                  <RotateCcw className="h-3.5 w-3.5 text-emerald-300" />
+                  <span>Reset Grid Baseline</span>
                 </button>
               </div>
             </aside>
           </div>
         )}
 
-        {/* Desktop Sidebar */}
-        <aside className="hidden md:flex w-60 border-r border-slate-200 bg-white p-3.5 flex-col justify-between shrink-0 select-none">
-          <nav className="space-y-1">
-            {navItems.map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-xs font-medium transition ${
-                    isActive
-                      ? 'bg-emerald-600 text-white font-semibold shadow-xs'
-                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                  }`}
-                >
-                  <Icon className="h-4 w-4 shrink-0" />
-                  <span className="truncate">{tab.label}</span>
-                </button>
-              );
-            })}
-          </nav>
+        {/* Desktop Signature Purple Portal Sidebar */}
+        <aside className="hidden md:flex w-60 bg-[#500b50] text-white p-3 flex-col justify-between shrink-0 select-none shadow-md">
+          <div className="space-y-4">
+            {/* Student Profile Card (Matching Portal Left Header) */}
+            <div className="flex flex-col items-center pt-2 pb-3 border-b border-[#6f146f]/60 text-center">
+              <div className="h-14 w-14 rounded-full bg-white/20 p-1 flex items-center justify-center border-2 border-white/50 mb-2 shadow-xs">
+                <User className="h-8 w-8 text-white" />
+              </div>
+              <span className="text-xs font-bold leading-tight text-white px-2 truncate w-full">
+                {user ? user.email.split('@')[0] : 'Opeyemi Ibrahim Abubakar'}
+              </span>
+              <span className="text-[10px] text-white/70 font-mono mt-0.5">500L | EEE Department</span>
+              <span className="mt-1.5 inline-block px-2 py-0.5 text-[9px] font-bold rounded-full bg-emerald-600 text-white">
+                Current Status: Active
+              </span>
+            </div>
 
-          <div className="pt-3 border-t border-slate-200">
+            <nav className="space-y-1">
+              {navItems.map((tab) => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex w-full items-center gap-2.5 rounded px-3 py-2 text-xs transition ${
+                      isActive
+                        ? 'bg-[#15803d] text-white font-bold shadow-xs'
+                        : 'text-white/80 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    <Icon className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{tab.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+
+          <div className="pt-3 border-t border-[#6f146f]/60">
             <button
               onClick={handleResetBaseline}
               disabled={loading}
-              className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 py-2 text-xs font-medium text-slate-700 transition disabled:opacity-50"
+              className="w-full flex items-center justify-center gap-1.5 rounded bg-white/10 hover:bg-white/20 py-2 text-xs font-medium text-white transition disabled:opacity-50"
             >
-              <RotateCcw className="h-3.5 w-3.5 text-slate-500" />
-              <span>Reset Grid</span>
+              <RotateCcw className="h-3.5 w-3.5 text-emerald-300" />
+              <span>Reset Grid to Baseline</span>
             </button>
           </div>
         </aside>
 
         {/* Main Workspace Body */}
-        <main className="flex-1 overflow-y-auto bg-slate-50 p-6 sm:p-8">
-          {/* TAB 1: HOME (WHITE CARDS WITH DEFINED DARK BORDERS & THEMATIC ICONS) */}
-          {activeTab === 'Home' && (
-            <div className="space-y-6 max-w-5xl mx-auto">
-              
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* 1. Grid Stability Models: White Card with Dark Border & Cyan Accent */}
-                <div
-                  onClick={() => setActiveTab('Grid Models')}
-                  className="group cursor-pointer rounded-2xl border-2 border-slate-800 bg-white p-8 shadow-sm hover:shadow-xl transition-all duration-200 hover:-translate-y-1 hover:border-cyan-600"
-                >
-                  <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 border border-slate-700 shadow-sm text-cyan-400 group-hover:scale-110 transition-transform">
-                    <TrendingUp className="h-6 w-6 stroke-[2.2]" />
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 flex flex-col justify-between">
+          <div>
+            {/* TAB 1: PORTAL DASHBOARD TILES */}
+            {activeTab === 'Home' && (
+              <div className="space-y-6 max-w-5xl mx-auto">
+                {/* Student Banner Card (Like Portal Welcome Box) */}
+                <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                  <div>
+                    <h2 className="text-lg font-bold text-[#500b50]">Welcome, Operator & Researcher</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      National Power System Modelling & Simulation Platform | 330kV Bulk Transmission Analysis
+                    </p>
                   </div>
-                  <h3 className="text-sm font-bold tracking-wider text-slate-900 uppercase group-hover:text-cyan-700 transition-colors">
-                    GRID STABILITY MODELS
-                  </h3>
-                  <p className="mt-2 text-xs text-slate-600 leading-relaxed font-normal">
-                    Newton-Raphson power flow, N-1 contingency studies, and transient frequency response.
-                  </p>
-                </div>
-
-                {/* 2. Market Simulation Models: White Card with Dark Border & Emerald Accent */}
-                <div
-                  onClick={() => setActiveTab('Market Simulations')}
-                  className="group cursor-pointer rounded-2xl border-2 border-slate-800 bg-white p-8 shadow-sm hover:shadow-xl transition-all duration-200 hover:-translate-y-1 hover:border-emerald-600"
-                >
-                  <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 border border-slate-700 shadow-sm text-emerald-400 group-hover:scale-110 transition-transform">
-                    <DollarSign className="h-6 w-6 stroke-[2.2]" />
+                  <div className="flex items-center gap-3 text-xs">
+                    <div className="rounded border border-slate-200 bg-slate-50 px-3 py-1.5">
+                      <span className="text-slate-400 block text-[10px]">Grid Status</span>
+                      <span className="font-bold text-emerald-700">Solved (Normal)</span>
+                    </div>
+                    <div className="rounded border border-slate-200 bg-slate-50 px-3 py-1.5">
+                      <span className="text-slate-400 block text-[10px]">Frequency</span>
+                      <span className="font-bold font-mono text-[#500b50]">
+                        {results?.frequency ? `${results.frequency.toFixed(2)} Hz` : '50.00 Hz'}
+                      </span>
+                    </div>
                   </div>
-                  <h3 className="text-sm font-bold tracking-wider text-slate-900 uppercase group-hover:text-emerald-700 transition-colors">
-                    MARKET SIMULATION MODELS
-                  </h3>
-                  <p className="mt-2 text-xs text-slate-600 leading-relaxed font-normal">
-                    Merit order dispatch, locational marginal pricing (LMP), and hydro-thermal generation optimization.
-                  </p>
                 </div>
 
-                {/* 3. Data Upload & Validation: White Card with Dark Border & Purple Accent */}
-                <div
-                  onClick={() => setActiveTab('Data Upload')}
-                  className="group cursor-pointer rounded-2xl border-2 border-slate-800 bg-white p-8 shadow-sm hover:shadow-xl transition-all duration-200 hover:-translate-y-1 hover:border-purple-600"
-                >
-                  <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 border border-slate-700 shadow-sm text-purple-400 group-hover:scale-110 transition-transform">
-                    <UploadCloud className="h-6 w-6 stroke-[2.2]" />
-                  </div>
-                  <h3 className="text-sm font-bold tracking-wider text-slate-900 uppercase group-hover:text-purple-700 transition-colors">
-                    DATA UPLOAD & VALIDATION
-                  </h3>
-                  <p className="mt-2 text-xs text-slate-600 leading-relaxed font-normal">
-                    SCADA telemetry ingestion, multi-format model parser, and automated topology error checking.
-                  </p>
-                </div>
-
-                {/* 4. Reports & Visualization: White Card with Dark Border & Amber Accent */}
-                <div
-                  onClick={() => setActiveTab('Visualization')}
-                  className="group cursor-pointer rounded-2xl border-2 border-slate-800 bg-white p-8 shadow-sm hover:shadow-xl transition-all duration-200 hover:-translate-y-1 hover:border-amber-600"
-                >
-                  <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 border border-slate-700 shadow-sm text-amber-400 group-hover:scale-110 transition-transform">
-                    <BarChart3 className="h-6 w-6 stroke-[2.2]" />
-                  </div>
-                  <h3 className="text-sm font-bold tracking-wider text-slate-900 uppercase group-hover:text-amber-700 transition-colors">
-                    REPORTS & VISUALIZATION
-                  </h3>
-                  <p className="mt-2 text-xs text-slate-600 leading-relaxed font-normal">
-                    Single-line diagrams, voltage profile heatmaps, transmission congestion, and PDF audit exports.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 2: GRID MODELS */}
-          {activeTab === 'Grid Models' && (
-            <div className="space-y-6 max-w-6xl mx-auto">
-              {divergedNotice && (
-                <div className="flex items-center gap-2 rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700">
-                  <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
-                  <span>{divergedNotice}</span>
-                </div>
-              )}
-
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-lg md:text-xl font-bold text-slate-900">Static Power Flow & Contingency</h2>
-                  <p className="text-xs text-slate-500">
-                    Active Grid Model: <span className="text-emerald-600 font-mono font-bold">{results?.model_name || 'Nigeria 330kV'}</span>
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 text-xs shadow-xs">
-                    <Sliders className="h-3.5 w-3.5 text-slate-500" />
-                    <span className="text-slate-600 hidden sm:inline">Load:</span>
-                    <input
-                      type="range"
-                      min="0.7"
-                      max="1.4"
-                      step="0.05"
-                      value={loadMultiplier}
-                      onChange={(e) => {
-                        const val = parseFloat(e.target.value);
-                        setLoadMultiplier(val);
-                        runSimulation(val, trippedLines);
-                      }}
-                      className="w-16 sm:w-20 accent-emerald-600 cursor-pointer"
-                    />
-                    <span className="font-mono font-bold text-emerald-600">{(loadMultiplier * 100).toFixed(0)}%</span>
-                  </div>
-
-                  <button
-                    onClick={() => runSimulation()}
-                    disabled={loading}
-                    className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white transition hover:bg-emerald-500 shadow-xs active:scale-95 disabled:opacity-50"
-                  >
-                    {loading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                    <span>Solve</span>
-                  </button>
-
-                  <button
-                    onClick={handleResetBaseline}
-                    disabled={loading}
-                    className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-xs disabled:opacity-50"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5 text-slate-500" />
-                    <span>Reset</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Substation Bus Voltages Table */}
-              <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-xs">
-                <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 flex justify-between items-center text-xs">
-                  <h3 className="font-bold text-slate-800">Substation Bus Voltage Profiles</h3>
-                  <span className="text-slate-500 hidden sm:inline">Statutory Band: 0.95 – 1.05 p.u.</span>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs min-w-[550px]">
-                    <thead className="bg-slate-50 text-slate-500 border-b border-slate-200">
-                      <tr>
-                        <th className="p-3">Bus</th>
-                        <th className="p-3">Substation</th>
-                        <th className="p-3">Zone</th>
-                        <th className="p-3">Voltage (|V|)</th>
-                        <th className="p-3">Angle (°)</th>
-                        <th className="p-3">Active (MW)</th>
-                        <th className="p-3">Reactive (MVAR)</th>
-                        <th className="p-3">State</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-700">
-                      {results?.buses?.map((bus) => {
-                        const isUnder = bus.v_pu < 0.95;
-                        const isOver = bus.v_pu > 1.05;
-                        return (
-                          <tr key={bus.id} className="hover:bg-slate-50/80">
-                            <td className="p-3 font-mono font-bold text-slate-400">#{bus.id}</td>
-                            <td className="p-3 font-semibold text-slate-900">{bus.name}</td>
-                            <td className="p-3 text-slate-500">{bus.zone}</td>
-                            <td className="p-3 font-mono font-bold">
-                              <span className={isUnder ? 'text-rose-600' : isOver ? 'text-amber-600' : 'text-emerald-600'}>
-                                {bus.v_pu.toFixed(3)} pu
-                              </span>
-                            </td>
-                            <td className="p-3 font-mono">{bus.va_deg.toFixed(2)}°</td>
-                            <td className="p-3 font-mono">{bus.p_mw}</td>
-                            <td className="p-3 font-mono">{bus.q_mvar}</td>
-                            <td className="p-3">
-                              {isUnder ? (
-                                <span className="flex items-center gap-1 text-rose-600 font-semibold text-[11px]">
-                                  <AlertTriangle className="h-3 w-3" /> Low
-                                </span>
-                              ) : (
-                                <span className="flex items-center gap-1 text-emerald-600 font-semibold text-[11px]">
-                                  <CheckCircle2 className="h-3 w-3" /> Normal
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Line Breaker Controls */}
-              <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-xs">
-                <h3 className="text-sm font-bold text-slate-800 mb-1">N-1 Line Contingency & Breaker Controls</h3>
-                <p className="text-xs text-slate-500 mb-4">Click "Trip" to open a breaker and observe power redistribution across adjacent corridors.</p>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
-                  {results?.lines?.map((line) => {
-                    const isTripped = trippedLines.includes(line.id);
+                {/* Dashboard Action Tiles (Mirroring Portal Grid Buttons) */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {[
+                    {
+                      title: 'Grid Stability Models',
+                      sub: 'Static AC Load Flow',
+                      icon: TrendingUp,
+                      action: () => setActiveTab('Grid Models'),
+                    },
+                    {
+                      title: 'Market Simulations',
+                      sub: 'Merit Order & LMP',
+                      icon: DollarSign,
+                      action: () => setActiveTab('Market Simulations'),
+                    },
+                    {
+                      title: 'Model Upload',
+                      sub: 'Multi-Format Ingestion',
+                      icon: UploadCloud,
+                      action: () => setActiveTab('Data Upload'),
+                    },
+                    {
+                      title: 'Single-Line Diagram',
+                      sub: 'CAD Vector Schematic',
+                      icon: Layers,
+                      action: () => setActiveTab('Visualization'),
+                    },
+                    {
+                      title: 'Contingency Reports',
+                      sub: 'Audit & CSV Export',
+                      icon: FileText,
+                      action: () => setActiveTab('Reports'),
+                    },
+                    {
+                      title: 'NERC Task Force',
+                      sub: 'Grid Code Criteria',
+                      icon: ShieldCheck,
+                      action: () => setActiveTab('Admin Panel'),
+                    },
+                    {
+                      title: 'Substation Telemetry',
+                      sub: 'Bus Voltages & Angles',
+                      icon: Grid,
+                      action: () => setActiveTab('Grid Models'),
+                    },
+                    {
+                      title: 'Session Baseline',
+                      sub: 'Revert to Baseline',
+                      icon: RotateCcw,
+                      action: handleResetBaseline,
+                    },
+                  ].map((card, idx) => {
+                    const Icon = card.icon;
                     return (
                       <div
-                        key={line.id}
-                        className={`rounded-lg border p-3 flex flex-col justify-between transition ${
-                          isTripped
-                            ? 'border-rose-200 bg-rose-50/50'
-                            : line.loading_percent > 85
-                            ? 'border-amber-200 bg-amber-50/50'
-                            : 'border-slate-200 bg-slate-50/60'
-                        }`}
+                        key={idx}
+                        onClick={card.action}
+                        className="group cursor-pointer rounded-lg border border-slate-200 bg-white p-5 text-center shadow-2xs hover:shadow-md hover:border-[#500b50] transition flex flex-col items-center justify-center min-h-[120px]"
                       >
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="font-bold text-slate-800 truncate">{line.name}</span>
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            !isTripped ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' : 'bg-rose-100 text-rose-700 border border-rose-200'
-                          }`}>
-                            {!isTripped ? 'Online' : 'Tripped'}
-                          </span>
+                        <div className="mb-2.5 flex h-10 w-10 items-center justify-center rounded bg-[#f5eff6] text-[#500b50] group-hover:bg-[#500b50] group-hover:text-white transition">
+                          <Icon className="h-5 w-5" />
                         </div>
-
-                        <div className="space-y-1 font-mono text-[11px] text-slate-600 mb-3">
-                          <div className="flex justify-between">
-                            <span>Flow:</span>
-                            <span className="text-slate-900 font-bold">{line.flow_mw} MW</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Loading:</span>
-                            <span className={line.loading_percent > 85 ? 'text-amber-600 font-bold' : ''}>
-                              {line.loading_percent}%
-                            </span>
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={() => toggleLine(line.id)}
-                          className={`w-full py-1.5 rounded text-[11px] font-bold transition ${
-                            !isTripped
-                              ? 'bg-rose-50 border border-rose-200 text-rose-600 hover:bg-rose-600 hover:text-white'
-                              : 'bg-emerald-50 border border-emerald-200 text-emerald-600 hover:bg-emerald-600 hover:text-white'
-                          }`}
-                        >
-                          {!isTripped ? 'Trip Breaker (N-1)' : 'Reclose Line'}
-                        </button>
+                        <h3 className="text-xs font-bold text-slate-800 group-hover:text-[#500b50] transition">
+                          {card.title}
+                        </h3>
+                        <p className="text-[10px] text-slate-400 mt-0.5">{card.sub}</p>
                       </div>
                     );
                   })}
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* TAB 3: MARKET SIMULATIONS */}
-          {activeTab === 'Market Simulations' && (
-            <div className="space-y-6 max-w-6xl mx-auto">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-lg md:text-xl font-bold text-slate-900">Wholesale Electricity Market & Economic Dispatch</h2>
-                  <p className="text-xs text-slate-500">Merit-order generation scheduling and Locational Marginal Pricing (LMP).</p>
-                </div>
-
-                <button
-                  onClick={runMarketSimulation}
-                  disabled={marketLoading}
-                  className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500 active:scale-95 disabled:opacity-50 w-fit shadow-xs"
-                >
-                  {marketLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                  <span>{marketLoading ? 'Solving...' : 'Run Economic Dispatch'}</span>
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <div className="p-4 rounded-xl border border-slate-200 bg-white flex flex-col justify-between shadow-xs">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-xs font-semibold text-slate-700">Gas Fuel Price Index</span>
-                    <span className="text-xs font-mono font-bold text-emerald-600">{(gasPriceFactor * 100).toFixed(0)}%</span>
+            {/* TAB 2: GRID MODELS */}
+            {activeTab === 'Grid Models' && (
+              <div className="space-y-6 max-w-6xl mx-auto">
+                {divergedNotice && (
+                  <div className="flex items-center gap-2 rounded border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700">
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
+                    <span>{divergedNotice}</span>
                   </div>
-                  <input
-                    type="range"
-                    min="0.7"
-                    max="2.0"
-                    step="0.1"
-                    value={gasPriceFactor}
-                    onChange={(e) => setGasPriceFactor(parseFloat(e.target.value))}
-                    className="w-full accent-emerald-600 cursor-pointer"
-                  />
-                  <span className="text-[10px] text-slate-400 mt-1.5">Simulate natural gas pipeline tariff fluctuations</span>
-                </div>
+                )}
 
-                <div className="p-4 rounded-xl border border-slate-200 bg-white flex flex-col justify-between shadow-xs">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-xs font-semibold text-slate-700">Hydro Inflow Season</span>
-                    <span className="text-xs font-mono font-bold text-cyan-600">{hydroAvailability >= 0.9 ? 'Wet (Peak)' : 'Dry (Lean)'}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0.5"
-                    max="1.0"
-                    step="0.1"
-                    value={hydroAvailability}
-                    onChange={(e) => setHydroAvailability(parseFloat(e.target.value))}
-                    className="w-full accent-cyan-600 cursor-pointer"
-                  />
-                  <span className="text-[10px] text-slate-400 mt-1.5">Kainji, Jebba & Shiroro reservoir water head levels</span>
-                </div>
-
-                <div className="p-4 rounded-xl border border-slate-200 bg-white flex flex-col justify-between sm:col-span-2 lg:col-span-1 shadow-xs">
-                  <span className="text-xs font-semibold text-slate-700 mb-1">System Clearing Price</span>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-mono font-bold text-slate-900">
-                      ₦{marketResults?.market_clearing_price_ngn?.toLocaleString() || '--'}
-                    </span>
-                    <span className="text-xs text-slate-500">/ MWh</span>
-                  </div>
-                  <span className="text-[10px] text-slate-400 mt-1">Marginal unit setting wholesale spot settlement</span>
-                </div>
-              </div>
-
-              {/* Merit Order Table */}
-              <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-xs">
-                <div className="border-b border-slate-200 bg-slate-50 px-5 py-3 flex justify-between items-center text-xs">
-                  <h3 className="font-bold text-slate-800">Merit Order Generation Dispatch Stack</h3>
-                  <div className="flex items-center gap-3 text-xs">
-                    <span className="text-cyan-600 font-semibold">Hydro: {marketResults?.hydro_share_percent || 0}%</span>
-                    <span className="text-amber-600 font-semibold">Thermal: {marketResults?.thermal_share_percent || 0}%</span>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs min-w-[650px]">
-                    <thead className="bg-slate-50 text-slate-500 border-b border-slate-200">
-                      <tr>
-                        <th className="p-3">Rank</th>
-                        <th className="p-3">Generating Station</th>
-                        <th className="p-3">Primary Fuel</th>
-                        <th className="p-3">Marginal Cost (₦/MWh)</th>
-                        <th className="p-3">Dispatched (MW)</th>
-                        <th className="p-3">Capacity Max (MW)</th>
-                        <th className="p-3">Capacity Factor</th>
-                        <th className="p-3">Hourly Total (₦)</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-700">
-                      {marketResults?.merit_order?.map((gen, idx) => (
-                        <tr key={gen.name} className="hover:bg-slate-50">
-                          <td className="p-3 font-mono font-bold text-slate-400">#{idx + 1}</td>
-                          <td className="p-3 font-semibold text-slate-900">{gen.name}</td>
-                          <td className="p-3">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              gen.type === 'Hydro'
-                                ? 'bg-cyan-100 text-cyan-800 border border-cyan-200'
-                                : 'bg-amber-100 text-amber-800 border border-amber-200'
-                            }`}>
-                              {gen.type}
-                            </span>
-                          </td>
-                          <td className="p-3 font-mono font-bold text-emerald-600">₦{gen.marginal_cost.toLocaleString()}</td>
-                          <td className="p-3 font-mono font-bold text-slate-900">{gen.dispatched_mw} MW</td>
-                          <td className="p-3 font-mono text-slate-500">{gen.max_mw} MW</td>
-                          <td className="p-3 font-mono">{gen.capacity_utilization}%</td>
-                          <td className="p-3 font-mono text-slate-900">₦{gen.hourly_cost_ngn.toLocaleString()}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 4: DATA UPLOAD & CASE LIBRARY */}
-          {activeTab === 'Data Upload' && (
-            <div className="space-y-6 max-w-5xl mx-auto">
-              {uploadError && (
-                <div className="flex items-center gap-2 rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700">
-                  <AlertTriangle className="h-4 w-4 shrink-0 text-rose-400" />
-                  <span>Upload Notice: {uploadError}</span>
-                </div>
-              )}
-
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg md:text-xl font-bold text-slate-900">Grid Model Ingestion & Case Library</h2>
-                  <p className="text-xs md:text-sm text-slate-500">Ingest, manage, and persist network topologies (.m, .json, .xlsx, .raw).</p>
-                </div>
-              </div>
-
-              {/* Multi-Format Upload Dropzone */}
-              <div className="rounded-xl border border-slate-200 bg-white p-6 space-y-6 shadow-xs">
-                <div className="border-2 border-dashed border-slate-300 hover:border-emerald-500 rounded-xl p-8 text-center transition flex flex-col items-center justify-center bg-slate-50/50">
-                  <UploadCloud className="h-10 w-10 sm:h-12 sm:w-12 text-slate-400 mb-3" />
-                  <p className="text-xs sm:text-sm font-semibold text-slate-800">
-                    Select or drop grid case files
-                  </p>
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    Supports MATPOWER (.m), Pandapower (.json), Excel spreadsheets (.xlsx), and PSS/E (.raw)
-                  </p>
-
-                  <input
-                    type="file"
-                    id="fileUploadInput"
-                    accept=".m,.json,.xlsx,.xls,.raw"
-                    className="hidden"
-                    onChange={handleFileUpload}
-                  />
-                  <label
-                    htmlFor="fileUploadInput"
-                    className={`mt-4 cursor-pointer rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500 shadow-xs ${
-                      uploadLoading ? 'opacity-50 pointer-events-none' : ''
-                    }`}
-                  >
-                    {uploadLoading ? 'Parsing Case...' : 'Browse Model File'}
-                  </label>
-                </div>
-              </div>
-
-              {/* Model Repository Table */}
-              <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-xs">
-                <div className="border-b border-slate-200 bg-slate-50 px-5 py-3.5 flex justify-between items-center text-xs">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                   <div>
-                    <h3 className="font-bold text-slate-800">Model Repository</h3>
-                    <p className="text-[11px] text-slate-400">All registered network topologies available for simulation.</p>
+                    <h2 className="text-lg font-bold text-[#500b50]">Static Power Flow & Contingency (330kV)</h2>
+                    <p className="text-xs text-slate-500">
+                      Active Model: <span className="font-bold text-slate-800">{results?.model_name || 'Nigeria 330kV'}</span>
+                    </p>
                   </div>
-                  <span className="font-mono text-emerald-600 font-bold text-xs">{modelList.length} Model{modelList.length !== 1 ? 's' : ''} Loaded</span>
+
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded border border-slate-200 text-xs shadow-2xs">
+                      <Sliders className="h-3.5 w-3.5 text-slate-500" />
+                      <span className="text-slate-600">Load Scale:</span>
+                      <input
+                        type="range"
+                        min="0.7"
+                        max="1.4"
+                        step="0.05"
+                        value={loadMultiplier}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value);
+                          setLoadMultiplier(val);
+                          runSimulation(val, trippedLines);
+                        }}
+                        className="w-16 sm:w-20 accent-[#500b50] cursor-pointer"
+                      />
+                      <span className="font-mono font-bold text-[#500b50]">{(loadMultiplier * 100).toFixed(0)}%</span>
+                    </div>
+
+                    <button
+                      onClick={() => runSimulation()}
+                      disabled={loading}
+                      className="flex items-center gap-1.5 rounded bg-[#500b50] px-3.5 py-1.5 text-xs font-bold text-white transition hover:bg-[#6a106a] shadow-xs disabled:opacity-50"
+                    >
+                      {loading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                      <span>Solve AC Flow</span>
+                    </button>
+
+                    <button
+                      onClick={handleResetBaseline}
+                      disabled={loading}
+                      className="flex items-center gap-1.5 rounded border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs transition"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5 text-slate-500" />
+                      <span>Reset</span>
+                    </button>
+                  </div>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs min-w-[650px]">
-                    <thead className="bg-slate-50 text-slate-500 border-b border-slate-200 font-mono">
-                      <tr>
-                        <th className="p-3">Active</th>
-                        <th className="p-3">Model Name</th>
-                        <th className="p-3">Format</th>
-                        <th className="p-3">Buses</th>
-                        <th className="p-3">Branches</th>
-                        <th className="p-3">Capacity</th>
-                        <th className="p-3">Demand</th>
-                        <th className="p-3 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-700">
-                      {modelList.map((model) => (
-                        <tr key={model.id} className={`hover:bg-slate-50 transition ${model.is_active ? 'bg-emerald-50/50' : ''}`}>
-                          <td className="p-3">
-                            <span className="flex items-center">
-                              {model.is_active ? (
-                                <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-xs shadow-emerald-500" title="Active Model"></span>
-                              ) : (
-                                <span className="h-2.5 w-2.5 rounded-full bg-slate-300" title="Inactive"></span>
-                              )}
-                            </span>
-                          </td>
-                          <td className="p-3 font-semibold text-slate-900">
-                            <div className="flex items-center gap-2">
-                              <FileCode className="h-4 w-4 text-slate-500 shrink-0" />
-                              <span className="truncate max-w-[180px]">{model.name}</span>
-                              {model.is_default && (
-                                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-600 border border-slate-200">
-                                  Default
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="p-3 font-mono text-slate-500 text-[11px]">{model.format || 'MATPOWER'}</td>
-                          <td className="p-3 font-mono">{model.buses}</td>
-                          <td className="p-3 font-mono">{model.branches}</td>
-                          <td className="p-3 font-mono text-cyan-600 font-bold">{model.total_installed_mw} MW</td>
-                          <td className="p-3 font-mono text-amber-600 font-bold">{model.total_demand_mw} MW</td>
-                          <td className="p-3 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              {!model.is_active ? (
-                                <button
-                                  onClick={() => handleActivateModel(model)}
-                                  className="rounded border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white transition shadow-xs"
-                                >
-                                  Activate
-                                </button>
-                              ) : (
-                                <span className="rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700 border border-emerald-200">
-                                  Current
-                                </span>
-                              )}
-
-                              {!model.is_default && (
-                                <button
-                                  onClick={() => handleDeleteModel(model.id)}
-                                  className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
-                                  title="Delete Model"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                            </div>
-                          </td>
+                {/* Substation Bus Table (Formatted like FUT Minna Course Registration Form) */}
+                <div className="rounded-lg border border-slate-200 bg-white overflow-hidden shadow-xs">
+                  <div className="bg-[#500b50] text-white px-4 py-2.5 flex justify-between items-center text-xs font-bold">
+                    <span>Substation Bus Voltage Profiles (330kV Nominal)</span>
+                    <span className="font-normal text-[11px] text-white/80">Statutory: 0.95 – 1.05 p.u.</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs min-w-[550px]">
+                      <thead className="bg-slate-100 text-slate-600 border-b border-slate-200 font-semibold">
+                        <tr>
+                          <th className="p-2.5">ID</th>
+                          <th className="p-2.5">Substation Name</th>
+                          <th className="p-2.5">Regional Zone</th>
+                          <th className="p-2.5">Voltage (|V|)</th>
+                          <th className="p-2.5">Angle (°)</th>
+                          <th className="p-2.5">P (MW)</th>
+                          <th className="p-2.5">Q (MVAR)</th>
+                          <th className="p-2.5">Compliance</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {results?.buses?.map((bus) => {
+                          const isUnder = bus.v_pu < 0.95;
+                          const isOver = bus.v_pu > 1.05;
+                          return (
+                            <tr key={bus.id} className="hover:bg-[#fcfaff]">
+                              <td className="p-2.5 font-mono text-slate-400 font-bold">#{bus.id}</td>
+                              <td className="p-2.5 font-bold text-slate-900">{bus.name}</td>
+                              <td className="p-2.5 text-slate-500">{bus.zone}</td>
+                              <td className="p-2.5 font-mono font-bold">
+                                <span className={isUnder ? 'text-rose-600' : isOver ? 'text-amber-600' : 'text-emerald-700'}>
+                                  {bus.v_pu.toFixed(3)} pu
+                                </span>
+                              </td>
+                              <td className="p-2.5 font-mono">{bus.va_deg.toFixed(2)}°</td>
+                              <td className="p-2.5 font-mono">{bus.p_mw}</td>
+                              <td className="p-2.5 font-mono">{bus.q_mvar}</td>
+                              <td className="p-2.5">
+                                {isUnder ? (
+                                  <span className="inline-flex items-center gap-1 rounded bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700">
+                                    Low
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                                    Compliant
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Line Breaker Controls */}
+                <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-xs">
+                  <h3 className="text-sm font-bold text-[#500b50] mb-1">N-1 Line Contingency & Breaker Controls</h3>
+                  <p className="text-xs text-slate-500 mb-4">Click "Trip Breaker" to open a corridor and observe AC power redistribution.</p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+                    {results?.lines?.map((line) => {
+                      const isTripped = trippedLines.includes(line.id);
+                      return (
+                        <div
+                          key={line.id}
+                          className={`rounded border p-3 flex flex-col justify-between transition ${
+                            isTripped
+                              ? 'border-rose-300 bg-rose-50/50'
+                              : line.loading_percent > 85
+                              ? 'border-amber-300 bg-amber-50/50'
+                              : 'border-slate-200 bg-slate-50/60'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-bold text-slate-800 truncate">{line.name}</span>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              !isTripped ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-700'
+                            }`}>
+                              {!isTripped ? 'Online' : 'Tripped'}
+                            </span>
+                          </div>
+
+                          <div className="space-y-1 font-mono text-[11px] text-slate-600 mb-3">
+                            <div className="flex justify-between">
+                              <span>Active Flow:</span>
+                              <span className="text-slate-900 font-bold">{line.flow_mw} MW</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Loading:</span>
+                              <span className={line.loading_percent > 85 ? 'text-amber-600 font-bold' : ''}>
+                                {line.loading_percent}%
+                              </span>
+                            </div>
+                          </div>
+
+                          <button
+                            onClick={() => toggleLine(line.id)}
+                            className={`w-full py-1 rounded text-[11px] font-bold transition ${
+                              !isTripped
+                                ? 'bg-rose-600 text-white hover:bg-rose-700'
+                                : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                            }`}
+                          >
+                            {!isTripped ? 'Trip Breaker (N-1)' : 'Reclose Line'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* TAB 5: VISUALIZATION TOOLS */}
-          {activeTab === 'Visualization' && (
-            <div className="space-y-6 max-w-6xl mx-auto">
-              {divergedNotice && (
-                <div className="flex items-center gap-2 rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700">
-                  <AlertTriangle className="h-4 w-4 shrink-0 text-rose-400" />
-                  <span>{divergedNotice}</span>
-                </div>
-              )}
-
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg md:text-xl font-bold text-slate-900">Interactive Single-Line Diagram</h2>
-                  <p className="text-xs text-slate-500">
-                    {diagramView === 'schematic'
-                      ? 'IEEE standard busbar schematic with orthogonal routing and circuit breaker cubicles.'
-                      : 'Geographic spatial layout of 330kV transmission substations.'}
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2.5">
-                  <div className="flex items-center rounded-lg border border-slate-200 bg-white p-1 text-xs shadow-xs">
-                    <button
-                      onClick={() => setDiagramView('schematic')}
-                      className={`flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition ${
-                        diagramView === 'schematic'
-                          ? 'bg-emerald-600 text-white font-semibold shadow-xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      <Layers className="h-3.5 w-3.5" />
-                      <span>Busbar (IEEE)</span>
-                    </button>
-                    <button
-                      onClick={() => setDiagramView('geographic')}
-                      className={`flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition ${
-                        diagramView === 'geographic'
-                          ? 'bg-emerald-600 text-white font-semibold shadow-xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      <MapPin className="h-3.5 w-3.5" />
-                      <span>Geographic</span>
-                    </button>
+            {/* TAB 3: MARKET SIMULATIONS */}
+            {activeTab === 'Market Simulations' && (
+              <div className="space-y-6 max-w-6xl mx-auto">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-bold text-[#500b50]">Wholesale Market & Economic Dispatch</h2>
+                    <p className="text-xs text-slate-500">NESI Merit-order dispatch stack and Locational Marginal Pricing (LMP).</p>
                   </div>
 
                   <button
-                    onClick={handleResetBaseline}
-                    disabled={loading}
-                    className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-xs transition"
+                    onClick={runMarketSimulation}
+                    disabled={marketLoading}
+                    className="flex items-center gap-1.5 rounded bg-[#500b50] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#6a106a] shadow-xs disabled:opacity-50 w-fit"
                   >
-                    <RotateCcw className="h-3.5 w-3.5 text-slate-500" />
-                    <span>Reset</span>
+                    {marketLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                    <span>Run Economic Dispatch</span>
                   </button>
                 </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <div className="p-4 rounded-lg border border-slate-200 bg-white shadow-xs">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-xs font-semibold text-slate-700">Gas Fuel Price Index</span>
+                      <span className="text-xs font-mono font-bold text-[#500b50]">{(gasPriceFactor * 100).toFixed(0)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.7"
+                      max="2.0"
+                      step="0.1"
+                      value={gasPriceFactor}
+                      onChange={(e) => setGasPriceFactor(parseFloat(e.target.value))}
+                      className="w-full accent-[#500b50] cursor-pointer"
+                    />
+                    <span className="text-[10px] text-slate-400 mt-1.5 block">Pipeline tariff index variation</span>
+                  </div>
+
+                  <div className="p-4 rounded-lg border border-slate-200 bg-white shadow-xs">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-xs font-semibold text-slate-700">Hydro Inflow Season</span>
+                      <span className="text-xs font-mono font-bold text-emerald-700">{hydroAvailability >= 0.9 ? 'Wet Peak (100%)' : 'Dry Lean (60%)'}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="1.0"
+                      step="0.1"
+                      value={hydroAvailability}
+                      onChange={(e) => setHydroAvailability(parseFloat(e.target.value))}
+                      className="w-full accent-emerald-600 cursor-pointer"
+                    />
+                    <span className="text-[10px] text-slate-400 mt-1.5 block">Kainji, Jebba & Shiroro reservoir levels</span>
+                  </div>
+
+                  <div className="p-4 rounded-lg border border-slate-200 bg-white shadow-xs sm:col-span-2 lg:col-span-1">
+                    <span className="text-xs font-semibold text-slate-700 mb-1 block">Market Clearing Price</span>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-2xl font-mono font-bold text-[#500b50]">
+                        ₦{marketResults?.market_clearing_price_ngn?.toLocaleString() || '--'}
+                      </span>
+                      <span className="text-xs text-slate-500">/ MWh</span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 mt-1 block">Wholesale spot settlement rate</span>
+                  </div>
+                </div>
+
+                {/* Merit Order Table */}
+                <div className="rounded-lg border border-slate-200 bg-white overflow-hidden shadow-xs">
+                  <div className="bg-[#500b50] text-white px-4 py-2.5 flex justify-between items-center text-xs font-bold">
+                    <span>Merit Order Generation Dispatch Stack</span>
+                    <div className="flex items-center gap-3 text-xs font-normal">
+                      <span>Hydro: {marketResults?.hydro_share_percent || 0}%</span>
+                      <span>Thermal: {marketResults?.thermal_share_percent || 0}%</span>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs min-w-[650px]">
+                      <thead className="bg-slate-100 text-slate-600 border-b border-slate-200">
+                        <tr>
+                          <th className="p-2.5">Rank</th>
+                          <th className="p-2.5">Generating Station</th>
+                          <th className="p-2.5">Primary Fuel</th>
+                          <th className="p-2.5">Marginal Cost</th>
+                          <th className="p-2.5">Dispatched (MW)</th>
+                          <th className="p-2.5">Capacity Max</th>
+                          <th className="p-2.5">Utilization</th>
+                          <th className="p-2.5">Hourly Total (₦)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {marketResults?.merit_order?.map((gen, idx) => (
+                          <tr key={gen.name} className="hover:bg-[#fcfaff]">
+                            <td className="p-2.5 font-mono text-slate-400 font-bold">#{idx + 1}</td>
+                            <td className="p-2.5 font-bold text-slate-900">{gen.name}</td>
+                            <td className="p-2.5">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                gen.type === 'Hydro'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}>
+                                {gen.type}
+                              </span>
+                            </td>
+                            <td className="p-2.5 font-mono font-bold text-[#500b50]">₦{gen.marginal_cost.toLocaleString()}</td>
+                            <td className="p-2.5 font-mono font-bold text-slate-900">{gen.dispatched_mw} MW</td>
+                            <td className="p-2.5 font-mono text-slate-500">{gen.max_mw} MW</td>
+                            <td className="p-2.5 font-mono">{gen.capacity_utilization}%</td>
+                            <td className="p-2.5 font-mono text-slate-900">₦{gen.hourly_cost_ngn.toLocaleString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
+            )}
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-                {/* Dedicated Control Room Viewport */}
-                <div className="lg:col-span-2 rounded-xl border border-slate-800 bg-slate-950 p-3 md:p-5 relative overflow-hidden flex flex-col items-center justify-center shadow-lg">
-                  <svg viewBox="30 20 700 440" className="w-full h-[400px] sm:h-[480px] select-none">
-                    <defs>
-                      <filter id="node-glow" x="-20%" y="-20%" width="140%" height="140%">
-                        <feGaussianBlur stdDeviation="3" result="glow" />
-                        <feMerge>
-                          <feMergeNode in="glow" />
-                          <feMergeNode in="SourceGraphic" />
-                        </feMerge>
-                      </filter>
-                    </defs>
+            {/* TAB 4: DATA UPLOAD & CASE LIBRARY */}
+            {activeTab === 'Data Upload' && (
+              <div className="space-y-6 max-w-5xl mx-auto">
+                {uploadError && (
+                  <div className="flex items-center gap-2 rounded border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700">
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-rose-400" />
+                    <span>Upload Notice: {uploadError}</span>
+                  </div>
+                )}
 
-                    {/* Corridors */}
-                    {results?.lines.map((line) => {
-                      const fromBus = results.buses.find((b) => b.id === line.from_bus);
-                      const toBus = results.buses.find((b) => b.id === line.to_bus);
-                      if (!fromBus || !toBus) return null;
+                <div>
+                  <h2 className="text-lg font-bold text-[#500b50]">Model Ingestion & Repository</h2>
+                  <p className="text-xs text-slate-500">Ingest, manage, and persist network topologies (.m, .json, .xlsx, .raw).</p>
+                </div>
 
-                      const isTripped = trippedLines.includes(line.id);
-                      const strokeColor = isTripped
-                        ? '#f43f5e'
-                        : line.loading_percent > 85
-                        ? '#fbbf24'
-                        : '#10b981';
+                {/* Upload Card */}
+                <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-xs">
+                  <div className="border-2 border-dashed border-slate-300 hover:border-[#500b50] rounded-lg p-8 text-center transition flex flex-col items-center justify-center bg-slate-50">
+                    <UploadCloud className="h-10 w-10 text-[#500b50] mb-2.5" />
+                    <p className="text-xs sm:text-sm font-bold text-slate-800">
+                      Select or drop grid case files
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Supports MATPOWER (.m), Pandapower (.json), Excel (.xlsx), and PSS/E (.raw)
+                    </p>
 
-                      if (diagramView === 'schematic') {
-                        const key1 = `${line.from_bus}-${line.to_bus}`;
-                        const key2 = `${line.to_bus}-${line.from_bus}`;
-                        const route = ORTHOGONAL_CORRIDORS[key1] || ORTHOGONAL_CORRIDORS[key2];
+                    <input
+                      type="file"
+                      id="fileUploadInput"
+                      accept=".m,.json,.xlsx,.xls,.raw"
+                      className="hidden"
+                      onChange={handleFileUpload}
+                    />
+                    <label
+                      htmlFor="fileUploadInput"
+                      className={`mt-4 cursor-pointer rounded bg-[#500b50] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#6a106a] ${
+                        uploadLoading ? 'opacity-50 pointer-events-none' : ''
+                      }`}
+                    >
+                      {uploadLoading ? 'Parsing Case File...' : 'Choose Case File'}
+                    </label>
+                  </div>
+                </div>
 
-                        let pathD = '';
-                        let breakerPos = { x: 350, y: 250 };
-                        let labelPos = { x: 350, y: 235 };
+                {/* Model Repository Table */}
+                <div className="rounded-lg border border-slate-200 bg-white overflow-hidden shadow-xs">
+                  <div className="bg-[#500b50] text-white px-4 py-2.5 flex justify-between items-center text-xs font-bold">
+                    <span>Registered Network Models</span>
+                    <span className="font-mono text-emerald-300">{modelList.length} Model{modelList.length !== 1 ? 's' : ''} Saved</span>
+                  </div>
 
-                        if (route) {
-                          pathD = route.path;
-                          breakerPos = route.breaker;
-                          labelPos = route.label;
-                        } else {
-                          const bFrom = SCHEMATIC_BUSBARS[line.from_bus] || { x: 100, y: 100 };
-                          const bTo = SCHEMATIC_BUSBARS[line.to_bus] || { x: 200, y: 200 };
-                          const midY = (bFrom.y + bTo.y) / 2;
-                          pathD = `M ${bFrom.x} ${bFrom.y} L ${bFrom.x} ${midY} L ${bTo.x} ${midY} L ${bTo.x} ${bTo.y}`;
-                          breakerPos = { x: (bFrom.x + bTo.x) / 2, y: midY };
-                          labelPos = { x: breakerPos.x, y: midY - 14 };
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs min-w-[650px]">
+                      <thead className="bg-slate-100 text-slate-600 border-b border-slate-200 font-semibold">
+                        <tr>
+                          <th className="p-2.5">Status</th>
+                          <th className="p-2.5">Model Name</th>
+                          <th className="p-2.5">Format</th>
+                          <th className="p-2.5">Buses</th>
+                          <th className="p-2.5">Branches</th>
+                          <th className="p-2.5">Installed</th>
+                          <th className="p-2.5">Demand</th>
+                          <th className="p-2.5 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {modelList.map((model) => (
+                          <tr key={model.id} className={`hover:bg-[#fcfaff] ${model.is_active ? 'bg-emerald-50/50' : ''}`}>
+                            <td className="p-2.5">
+                              {model.is_active ? (
+                                <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-600" title="Active"></span>
+                              ) : (
+                                <span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-300" title="Inactive"></span>
+                              )}
+                            </td>
+                            <td className="p-2.5 font-bold text-slate-900">
+                              <div className="flex items-center gap-2">
+                                <FileCode className="h-4 w-4 text-[#500b50] shrink-0" />
+                                <span className="truncate max-w-[180px]">{model.name}</span>
+                                {model.is_default && (
+                                  <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-600">
+                                    Default
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="p-2.5 font-mono text-slate-500">{model.format || 'MATPOWER'}</td>
+                            <td className="p-2.5 font-mono">{model.buses}</td>
+                            <td className="p-2.5 font-mono">{model.branches}</td>
+                            <td className="p-2.5 font-mono font-bold text-[#500b50]">{model.total_installed_mw} MW</td>
+                            <td className="p-2.5 font-mono font-bold text-amber-700">{model.total_demand_mw} MW</td>
+                            <td className="p-2.5 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                {!model.is_active ? (
+                                  <button
+                                    onClick={() => handleActivateModel(model)}
+                                    className="rounded bg-[#500b50] px-2.5 py-1 text-[11px] font-bold text-white hover:bg-[#6a106a] transition"
+                                  >
+                                    Activate
+                                  </button>
+                                ) : (
+                                  <span className="rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                                    Active
+                                  </span>
+                                )}
+
+                                {!model.is_default && (
+                                  <button
+                                    onClick={() => handleDeleteModel(model.id)}
+                                    className="p-1 rounded text-slate-400 hover:text-rose-600 transition"
+                                    title="Delete Model"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 5: VISUALIZATION TOOLS */}
+            {activeTab === 'Visualization' && (
+              <div className="space-y-6 max-w-6xl mx-auto">
+                {divergedNotice && (
+                  <div className="flex items-center gap-2 rounded border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700">
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
+                    <span>{divergedNotice}</span>
+                  </div>
+                )}
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-bold text-[#500b50]">CAD Single-Line Diagram & Vector Map</h2>
+                    <p className="text-xs text-slate-500">
+                      {diagramView === 'schematic'
+                        ? 'IEEE standard busbar schematic with circuit breaker trip cubicles.'
+                        : 'Geographic spatial layout across Nigeria.'}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex items-center rounded border border-slate-200 bg-white p-0.5 text-xs shadow-2xs">
+                      <button
+                        onClick={() => setDiagramView('schematic')}
+                        className={`flex items-center gap-1 rounded px-3 py-1 font-bold transition ${
+                          diagramView === 'schematic'
+                            ? 'bg-[#500b50] text-white'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        <Layers className="h-3.5 w-3.5" />
+                        <span>IEEE Busbar</span>
+                      </button>
+                      <button
+                        onClick={() => setDiagramView('geographic')}
+                        className={`flex items-center gap-1 rounded px-3 py-1 font-bold transition ${
+                          diagramView === 'geographic'
+                            ? 'bg-[#500b50] text-white'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        <MapPin className="h-3.5 w-3.5" />
+                        <span>Geographic</span>
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={handleResetBaseline}
+                      disabled={loading}
+                      className="flex items-center gap-1 rounded border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5 text-slate-500" />
+                      <span>Reset</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
+                  {/* High-Contrast Vector Canvas */}
+                  <div className="lg:col-span-2 rounded-lg border border-slate-800 bg-[#0c1427] p-4 relative overflow-hidden flex flex-col items-center justify-center shadow-md">
+                    <svg viewBox="30 20 700 440" className="w-full h-[380px] sm:h-[440px] select-none">
+                      <defs>
+                        <filter id="node-glow" x="-20%" y="-20%" width="140%" height="140%">
+                          <feGaussianBlur stdDeviation="3" result="glow" />
+                          <feMerge>
+                            <feMergeNode in="glow" />
+                            <feMergeNode in="SourceGraphic" />
+                          </feMerge>
+                        </filter>
+                      </defs>
+
+                      {/* Line Corridors */}
+                      {results?.lines.map((line) => {
+                        const fromBus = results.buses.find((b) => b.id === line.from_bus);
+                        const toBus = results.buses.find((b) => b.id === line.to_bus);
+                        if (!fromBus || !toBus) return null;
+
+                        const isTripped = trippedLines.includes(line.id);
+                        const strokeColor = isTripped
+                          ? '#f43f5e'
+                          : line.loading_percent > 85
+                          ? '#fbbf24'
+                          : '#10b981';
+
+                        if (diagramView === 'schematic') {
+                          const key1 = `${line.from_bus}-${line.to_bus}`;
+                          const key2 = `${line.to_bus}-${line.from_bus}`;
+                          const route = ORTHOGONAL_CORRIDORS[key1] || ORTHOGONAL_CORRIDORS[key2];
+
+                          let pathD = '';
+                          let breakerPos = { x: 350, y: 250 };
+                          let labelPos = { x: 350, y: 235 };
+
+                          if (route) {
+                            pathD = route.path;
+                            breakerPos = route.breaker;
+                            labelPos = route.label;
+                          } else {
+                            const bFrom = SCHEMATIC_BUSBARS[line.from_bus] || { x: 100, y: 100 };
+                            const bTo = SCHEMATIC_BUSBARS[line.to_bus] || { x: 200, y: 200 };
+                            const midY = (bFrom.y + bTo.y) / 2;
+                            pathD = `M ${bFrom.x} ${bFrom.y} L ${bFrom.x} ${midY} L ${bTo.x} ${midY} L ${bTo.x} ${bTo.y}`;
+                            breakerPos = { x: (bFrom.x + bTo.x) / 2, y: midY };
+                            labelPos = { x: breakerPos.x, y: midY - 14 };
+                          }
+
+                          return (
+                            <g key={line.id} className="cursor-pointer group" onClick={() => toggleLine(line.id)}>
+                              <path
+                                d={pathD}
+                                fill="none"
+                                stroke={strokeColor}
+                                strokeWidth={2.5}
+                                strokeDasharray={isTripped ? '6 6' : 'none'}
+                                className="transition-colors group-hover:stroke-white"
+                              />
+
+                              {/* Circuit Breaker Box */}
+                              <g
+                                transform={`translate(${breakerPos.x}, ${breakerPos.y})`}
+                                className="transition-transform group-hover:scale-125"
+                              >
+                                <rect
+                                  x="-6"
+                                  y="-6"
+                                  width="12"
+                                  height="12"
+                                  rx="1.5"
+                                  fill={isTripped ? '#4c0519' : '#064e3b'}
+                                  stroke={isTripped ? '#f43f5e' : '#10b981'}
+                                  strokeWidth="1.5"
+                                />
+                              </g>
+
+                              {!isTripped && (
+                                <g transform={`translate(${labelPos.x}, ${labelPos.y})`}>
+                                  <rect
+                                    x="-26"
+                                    y="-8"
+                                    width="52"
+                                    height="15"
+                                    rx="3"
+                                    fill="#0a0f1d"
+                                    stroke="#334155"
+                                    strokeWidth="1"
+                                  />
+                                  <text
+                                    x="0"
+                                    y="3.5"
+                                    fill="#f8fafc"
+                                    fontSize="8.5"
+                                    fontFamily="monospace"
+                                    fontWeight="bold"
+                                    textAnchor="middle"
+                                  >
+                                    {line.flow_mw} MW
+                                  </text>
+                                </g>
+                              )}
+                            </g>
+                          );
                         }
+
+                        const cFrom = getGeoCoordinates(fromBus);
+                        const cTo = getGeoCoordinates(toBus);
+                        const midX = (cFrom.x + cTo.x) / 2;
+                        const midY = (cFrom.y + cTo.y) / 2;
 
                         return (
                           <g key={line.id} className="cursor-pointer group" onClick={() => toggleLine(line.id)}>
-                            <path
-                              d={pathD}
-                              fill="none"
+                            <line
+                              x1={cFrom.x}
+                              y1={cFrom.y}
+                              x2={cTo.x}
+                              y2={cTo.y}
                               stroke={strokeColor}
                               strokeWidth={2.5}
                               strokeDasharray={isTripped ? '6 6' : 'none'}
                               className="transition-colors group-hover:stroke-white"
                             />
-
-                            <g
-                              transform={`translate(${breakerPos.x}, ${breakerPos.y})`}
-                              className="transition-transform group-hover:scale-125"
-                            >
+                            <g transform={`translate(${midX}, ${midY})`}>
                               <rect
-                                x="-6.5"
-                                y="-6.5"
-                                width="13"
-                                height="13"
-                                rx="2"
+                                x="-5.5"
+                                y="-5.5"
+                                width="11"
+                                height="11"
+                                rx="1.5"
                                 fill={isTripped ? '#4c0519' : '#064e3b'}
                                 stroke={isTripped ? '#f43f5e' : '#10b981'}
-                                strokeWidth="2"
+                                strokeWidth="1.5"
                               />
                             </g>
-
                             {!isTripped && (
-                              <g transform={`translate(${labelPos.x}, ${labelPos.y})`}>
+                              <g transform={`translate(${midX}, ${midY - 14})`}>
                                 <rect
-                                  x="-26"
-                                  y="-8"
-                                  width="52"
-                                  height="15"
+                                  x="-24"
+                                  y="-7"
+                                  width="48"
+                                  height="14"
                                   rx="3"
-                                  fill="#0f172a"
+                                  fill="#0a0f1d"
                                   stroke="#334155"
                                   strokeWidth="1"
-                                  className="shadow-md"
                                 />
                                 <text
                                   x="0"
                                   y="3.5"
-                                  fill="#f8fafc"
-                                  fontSize="8.5"
+                                  fill="#94a3b8"
+                                  fontSize="8"
                                   fontFamily="monospace"
-                                  fontWeight="bold"
                                   textAnchor="middle"
-                                  className="select-none pointer-events-none"
                                 >
                                   {line.flow_mw} MW
                                 </text>
@@ -1311,445 +1407,387 @@ export default function PowerPlatformDashboard() {
                             )}
                           </g>
                         );
-                      }
+                      })}
 
-                      const cFrom = getGeoCoordinates(fromBus);
-                      const cTo = getGeoCoordinates(toBus);
-                      const midX = (cFrom.x + cTo.x) / 2;
-                      const midY = (cFrom.y + cTo.y) / 2;
+                      {/* Substation Busbars */}
+                      {results?.buses.map((bus) => {
+                        const isSelected = selectedBus?.id === bus.id;
+                        const isUnder = bus.v_pu < 0.95;
+                        const isOver = bus.v_pu > 1.05;
+                        const nodeColor = isUnder ? '#f43f5e' : isOver ? '#fbbf24' : '#10b981';
 
-                      return (
-                        <g key={line.id} className="cursor-pointer group" onClick={() => toggleLine(line.id)}>
-                          <line
-                            x1={cFrom.x}
-                            y1={cFrom.y}
-                            x2={cTo.x}
-                            y2={cTo.y}
-                            stroke={strokeColor}
-                            strokeWidth={2.5}
-                            strokeDasharray={isTripped ? '6 6' : 'none'}
-                            className="transition-colors group-hover:stroke-white"
-                          />
-                          <g transform={`translate(${midX}, ${midY})`}>
-                            <rect
-                              x="-5.5"
-                              y="-5.5"
-                              width="11"
-                              height="11"
-                              rx="1.5"
-                              fill={isTripped ? '#4c0519' : '#064e3b'}
-                              stroke={isTripped ? '#f43f5e' : '#10b981'}
-                              strokeWidth="1.5"
-                              className="transition-transform group-hover:scale-125"
-                            />
-                          </g>
-                          {!isTripped && (
-                            <g transform={`translate(${midX}, ${midY - 14})`}>
+                        if (diagramView === 'schematic') {
+                          const sch = SCHEMATIC_BUSBARS[bus.id] || {
+                            x: 100 + (bus.id % 4) * 150,
+                            y: 100 + Math.floor(bus.id / 4) * 120,
+                            width: 60,
+                          };
+                          const barW = sch.width;
+
+                          return (
+                            <g
+                              key={bus.id}
+                              transform={`translate(${sch.x}, ${sch.y})`}
+                              onClick={() => setSelectedBus(bus)}
+                              className="cursor-pointer group"
+                            >
                               <rect
-                                x="-24"
-                                y="-7"
-                                width="48"
-                                height="14"
-                                rx="3"
-                                fill="#0f172a"
-                                stroke="#334155"
-                                strokeWidth="1"
+                                x={-barW / 2}
+                                y="-3.5"
+                                width={barW}
+                                height="7"
+                                rx="2"
+                                fill={isSelected ? '#38bdf8' : nodeColor}
+                                stroke="#0a0f1d"
+                                strokeWidth="1.5"
+                                filter={isSelected ? 'url(#node-glow)' : undefined}
+                                className="transition-all group-hover:brightness-125"
                               />
+
+                              {sch.isGen && (
+                                <g transform="translate(0, -32)">
+                                  <line x1="0" y1="28" x2="0" y2="12" stroke="#94a3b8" strokeWidth="2" />
+                                  <circle
+                                    r="12"
+                                    fill="#0a0f1d"
+                                    stroke="#38bdf8"
+                                    strokeWidth="2"
+                                  />
+                                  <path
+                                    d="M -6 0 Q -3 -5 0 0 Q 3 5 6 0"
+                                    fill="none"
+                                    stroke="#38bdf8"
+                                    strokeWidth="2"
+                                  />
+                                  <text
+                                    x="0"
+                                    y="-17"
+                                    fill="#38bdf8"
+                                    fontSize="9"
+                                    fontFamily="monospace"
+                                    fontWeight="bold"
+                                    textAnchor="middle"
+                                  >
+                                    {sch.genName || bus.name.split(' ')[0]}
+                                  </text>
+                                </g>
+                              )}
+
+                              {sch.isLoad && (
+                                <g transform="translate(0, 18)">
+                                  <line x1="0" y1="-14" x2="0" y2="4" stroke="#94a3b8" strokeWidth="2" />
+                                  <path d="M 0 13 L -5 4 L 5 4 Z" fill="#fbbf24" stroke="#fbbf24" />
+                                  <text
+                                    x="0"
+                                    y="23"
+                                    fill="#fbbf24"
+                                    fontSize="8.5"
+                                    fontFamily="monospace"
+                                    fontWeight="bold"
+                                    textAnchor="middle"
+                                  >
+                                    {bus.p_mw > 0 ? `${bus.p_mw}MW` : 'LOAD'}
+                                  </text>
+                                </g>
+                              )}
+
                               <text
                                 x="0"
-                                y="3.5"
-                                fill="#94a3b8"
+                                y={sch.isLoad ? -12 : 20}
+                                fill="#f8fafc"
+                                fontSize="9.5"
+                                fontFamily="monospace"
+                                fontWeight="bold"
+                                textAnchor="middle"
+                              >
+                                {bus.name.split(' ')[0]}
+                              </text>
+                              <text
+                                x="0"
+                                y={sch.isLoad ? -23 : 30}
+                                fill={nodeColor}
                                 fontSize="8"
                                 fontFamily="monospace"
                                 textAnchor="middle"
-                                className="select-none pointer-events-none"
                               >
-                                {line.flow_mw} MW
+                                {bus.v_pu.toFixed(2)} pu
                               </text>
                             </g>
-                          )}
-                        </g>
-                      );
-                    })}
+                          );
+                        }
 
-                    {/* Substation Busbars */}
-                    {results?.buses.map((bus) => {
-                      const isSelected = selectedBus?.id === bus.id;
-                      const isUnder = bus.v_pu < 0.95;
-                      const isOver = bus.v_pu > 1.05;
-                      const nodeColor = isUnder ? '#f43f5e' : isOver ? '#fbbf24' : '#10b981';
-
-                      if (diagramView === 'schematic') {
-                        const sch = SCHEMATIC_BUSBARS[bus.id] || {
-                          x: 100 + (bus.id % 4) * 150,
-                          y: 100 + Math.floor(bus.id / 4) * 120,
-                          width: 60,
-                        };
-                        const barW = sch.width;
-
+                        const coords = getGeoCoordinates(bus);
                         return (
                           <g
                             key={bus.id}
-                            transform={`translate(${sch.x}, ${sch.y})`}
+                            transform={`translate(${coords.x}, ${coords.y})`}
                             onClick={() => setSelectedBus(bus)}
                             className="cursor-pointer group"
                           >
-                            <rect
-                              x={-barW / 2}
-                              y="-3.5"
-                              width={barW}
-                              height="7"
-                              rx="2"
-                              fill={isSelected ? '#38bdf8' : nodeColor}
-                              stroke="#0f172a"
-                              strokeWidth="1.5"
+                            <circle
+                              r={isSelected ? 11 : 7}
+                              fill={nodeColor}
+                              stroke="#0a0f1d"
+                              strokeWidth="2"
                               filter={isSelected ? 'url(#node-glow)' : undefined}
-                              className="transition-all group-hover:brightness-125"
+                              className="transition-all group-hover:scale-125"
                             />
-
-                            {sch.isGen && (
-                              <g transform="translate(0, -32)">
-                                <line x1="0" y1="28" x2="0" y2="12" stroke="#94a3b8" strokeWidth="2" />
-                                <circle
-                                  r="12"
-                                  fill="#0f172a"
-                                  stroke="#38bdf8"
-                                  strokeWidth="2"
-                                  className="transition-transform group-hover:scale-110"
-                                />
-                                <path
-                                  d="M -6 0 Q -3 -5 0 0 Q 3 5 6 0"
-                                  fill="none"
-                                  stroke="#38bdf8"
-                                  strokeWidth="2"
-                                />
-                                <text
-                                  x="0"
-                                  y="-17"
-                                  fill="#38bdf8"
-                                  fontSize="9"
-                                  fontFamily="monospace"
-                                  fontWeight="bold"
-                                  textAnchor="middle"
-                                >
-                                  {sch.genName || bus.name.split(' ')[0]}
-                                </text>
-                              </g>
-                            )}
-
-                            {sch.isLoad && (
-                              <g transform="translate(0, 18)">
-                                <line x1="0" y1="-14" x2="0" y2="4" stroke="#94a3b8" strokeWidth="2" />
-                                <path d="M 0 13 L -5 4 L 5 4 Z" fill="#fbbf24" stroke="#fbbf24" />
-                                <text
-                                  x="0"
-                                  y="23"
-                                  fill="#fbbf24"
-                                  fontSize="8.5"
-                                  fontFamily="monospace"
-                                  fontWeight="bold"
-                                  textAnchor="middle"
-                                >
-                                  {bus.p_mw > 0 ? `${bus.p_mw}MW` : 'LOAD'}
-                                </text>
-                              </g>
-                            )}
-
                             <text
-                              x="0"
-                              y={sch.isLoad ? -12 : 20}
+                              x={12}
+                              y={4}
                               fill="#f8fafc"
-                              fontSize="9.5"
+                              fontSize="9"
                               fontFamily="monospace"
                               fontWeight="bold"
-                              textAnchor="middle"
-                              className="select-none"
                             >
                               {bus.name.split(' ')[0]}
                             </text>
-                            <text
-                              x="0"
-                              y={sch.isLoad ? -23 : 30}
-                              fill={nodeColor}
-                              fontSize="8"
-                              fontFamily="monospace"
-                              textAnchor="middle"
-                              className="select-none"
-                            >
-                              {bus.v_pu.toFixed(2)} pu
-                            </text>
                           </g>
                         );
-                      }
+                      })}
+                    </svg>
+                  </div>
 
-                      const coords = getGeoCoordinates(bus);
-                      return (
-                        <g
-                          key={bus.id}
-                          transform={`translate(${coords.x}, ${coords.y})`}
-                          onClick={() => setSelectedBus(bus)}
-                          className="cursor-pointer group"
-                        >
-                          <circle
-                            r={isSelected ? 11 : 7}
-                            fill={nodeColor}
-                            stroke="#0f172a"
-                            strokeWidth="2"
-                            filter={isSelected ? 'url(#node-glow)' : undefined}
-                            className="transition-all group-hover:scale-125"
-                          />
-                          <text
-                            x={12}
-                            y={4}
-                            fill="#f8fafc"
-                            fontSize="9"
-                            fontFamily="monospace"
-                            fontWeight="bold"
-                          >
-                            {bus.name.split(' ')[0]}
-                          </text>
-                        </g>
-                      );
-                    })}
-                  </svg>
+                  {/* Substation Inspector Card */}
+                  <div className="rounded-lg border border-slate-200 bg-white p-4 flex flex-col justify-between shadow-xs">
+                    <div>
+                      <h3 className="text-sm font-bold text-[#500b50] mb-3 flex items-center gap-2">
+                        <Zap className="h-4 w-4" /> Substation Inspector
+                      </h3>
+                      {selectedBus ? (
+                        <div className="space-y-3 text-xs">
+                          <div className="p-3 rounded bg-slate-50 border border-slate-200">
+                            <span className="text-slate-400 block text-[10px] uppercase font-bold">Substation</span>
+                            <span className="font-bold text-slate-900 text-sm">{selectedBus.name}</span>
+                            <span className="block text-[11px] text-slate-500 mt-0.5">{selectedBus.zone} Regional Zone</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 font-mono">
+                            <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
+                              <span className="text-slate-400 block text-[10px]">Voltage (|V|)</span>
+                              <span className={`font-bold ${selectedBus.v_pu < 0.95 ? 'text-rose-600' : 'text-emerald-700'}`}>
+                                {selectedBus.v_pu} pu
+                              </span>
+                            </div>
+                            <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
+                              <span className="text-slate-400 block text-[10px]">Angle (°)</span>
+                              <span className="font-bold text-slate-800">{selectedBus.va_deg}°</span>
+                            </div>
+                            <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
+                              <span className="text-slate-400 block text-[10px]">Active</span>
+                              <span className="font-bold text-[#500b50]">{selectedBus.p_mw} MW</span>
+                            </div>
+                            <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
+                              <span className="text-slate-400 block text-[10px]">Reactive</span>
+                              <span className="font-bold text-amber-700">{selectedBus.q_mvar} MVAR</span>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="h-40 flex items-center justify-center text-center text-xs text-slate-400 border border-dashed border-slate-200 rounded p-4">
+                          Click on any node in the Single-Line Diagram to inspect live bus telemetry.
+                        </div>
+                      )}
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-slate-200 text-[10px] text-slate-400 flex justify-between">
+                      <span>Click breakers to trip (N-1)</span>
+                      <span className="text-[#500b50] font-bold">
+                        {diagramView === 'schematic' ? '● IEEE Busbar' : '● Geographic'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 6: REPORTS & PUBLICATIONS */}
+            {activeTab === 'Reports' && (
+              <div className="space-y-6 max-w-6xl mx-auto">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-bold text-[#500b50]">National Grid Contingency Audit Report</h2>
+                    <p className="text-xs text-slate-500">Grid Code compliance audit against statutory boundaries (0.95 ≤ |V| ≤ 1.05 p.u., loading ≤ 85%).</p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={`${API_BASE_URL}/api/reports/export-csv`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 rounded border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-xs"
+                    >
+                      <FileText className="h-3.5 w-3.5 text-[#500b50]" />
+                      <span>Download CSV</span>
+                    </a>
+
+                    <button
+                      onClick={() => window.print()}
+                      className="flex items-center gap-1.5 rounded bg-[#500b50] px-3.5 py-1.5 text-xs font-bold text-white transition hover:bg-[#6a106a] shadow-xs"
+                    >
+                      <BarChart3 className="h-3.5 w-3.5" />
+                      <span>Print Document</span>
+                    </button>
+                  </div>
                 </div>
 
-                {/* Substation Inspector */}
-                <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 flex flex-col justify-between shadow-xs">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
-                      <Zap className="h-4 w-4 text-emerald-600" /> Substation Inspector
-                    </h3>
-                    {selectedBus ? (
-                      <div className="space-y-3 text-xs">
-                        <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
-                          <span className="text-slate-400 block text-[10px] uppercase">Substation</span>
-                          <span className="font-bold text-slate-900 text-sm">{selectedBus.name}</span>
-                          <span className="block text-[11px] text-slate-500 mt-0.5">{selectedBus.zone} Zone</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 font-mono">
-                          <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
-                            <span className="text-slate-400 block text-[10px]">Voltage (|V|)</span>
-                            <span className={`font-bold ${selectedBus.v_pu < 0.95 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                              {selectedBus.v_pu} pu
-                            </span>
-                          </div>
-                          <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
-                            <span className="text-slate-400 block text-[10px]">Phase Angle</span>
-                            <span className="font-bold text-slate-800">{selectedBus.va_deg}°</span>
-                          </div>
-                          <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
-                            <span className="text-slate-400 block text-[10px]">Active</span>
-                            <span className="font-bold text-cyan-600">{selectedBus.p_mw} MW</span>
-                          </div>
-                          <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
-                            <span className="text-slate-400 block text-[10px]">Reactive</span>
-                            <span className="font-bold text-amber-600">{selectedBus.q_mvar} MVAR</span>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="h-40 sm:h-48 flex items-center justify-center text-center text-xs text-slate-400 border border-dashed border-slate-200 rounded-lg p-4">
-                        Click on any busbar or substation node in the diagram to inspect live telemetry.
-                      </div>
-                    )}
+                {/* Summary Scorecard */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                  <div className="p-4 rounded-lg border border-slate-200 bg-white shadow-xs">
+                    <span className="text-slate-400 block mb-1">Total System Infeed</span>
+                    <span className="text-xl font-mono font-bold text-[#500b50]">
+                      {results?.total_gen_mw ? `${results.total_gen_mw.toLocaleString()} MW` : '--'}
+                    </span>
                   </div>
-                  <div className="mt-4 pt-3 border-t border-slate-200 text-[10px] text-slate-400 flex justify-between">
-                    <span>Click breaker squares to trip (N-1)</span>
-                    <span className="text-emerald-600 font-medium">
-                      {diagramView === 'schematic' ? '● IEEE Busbar View' : '● Geographic View'}
+
+                  <div className="p-4 rounded-lg border border-slate-200 bg-white shadow-xs">
+                    <span className="text-slate-400 block mb-1">Total System Losses</span>
+                    <span className="text-xl font-mono font-bold text-rose-600">
+                      {results?.total_losses_mw ? `${results.total_losses_mw} MW` : '--'}
+                    </span>
+                  </div>
+
+                  <div className="p-4 rounded-lg border border-slate-200 bg-white shadow-xs">
+                    <span className="text-slate-400 block mb-1">Voltage Violations</span>
+                    <span className="text-xl font-mono font-bold text-amber-600">
+                      {results?.buses ? results.buses.filter((b) => b.v_pu < 0.95 || b.v_pu > 1.05).length : 0} Nodes
+                    </span>
+                  </div>
+
+                  <div className="p-4 rounded-lg border border-slate-200 bg-white shadow-xs">
+                    <span className="text-slate-400 block mb-1">Critical Lines (&gt;80%)</span>
+                    <span className="text-xl font-mono font-bold text-emerald-700">
+                      {results?.lines ? results.lines.filter((l) => l.loading_percent > 80).length : 0} Corridors
                     </span>
                   </div>
                 </div>
-              </div>
-            </div>
-          )}
 
-          {/* TAB 6: REPORTS & PUBLICATIONS */}
-          {activeTab === 'Reports' && (
-            <div className="space-y-6 max-w-6xl mx-auto">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-lg md:text-xl font-bold text-slate-900">National Grid Contingency Audit Report</h2>
-                  <p className="text-xs text-slate-500">Grid Code compliance audit (0.95 ≤ |V| ≤ 1.05 p.u., loading ≤ 85%).</p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <a
-                    href={`${API_BASE_URL}/api/reports/export-csv`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-xs transition"
-                  >
-                    <FileText className="h-3.5 w-3.5 text-slate-500" />
-                    <span>Download CSV</span>
-                  </a>
-
-                  <button
-                    onClick={() => window.print()}
-                    className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-emerald-500 shadow-xs"
-                  >
-                    <BarChart3 className="h-3.5 w-3.5" />
-                    <span>Print Audit Document</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Summary Audit Scorecard */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
-                  <span className="text-slate-400 block mb-1 font-medium">Total System Infeed</span>
-                  <span className="text-xl font-mono font-bold text-slate-900">
-                    {results?.total_gen_mw ? `${results.total_gen_mw.toLocaleString()} MW` : '--'}
-                  </span>
-                </div>
-
-                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
-                  <span className="text-slate-400 block mb-1 font-medium">Total System Losses</span>
-                  <span className="text-xl font-mono font-bold text-rose-600">
-                    {results?.total_losses_mw ? `${results.total_losses_mw} MW` : '--'}
-                  </span>
-                </div>
-
-                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
-                  <span className="text-slate-400 block mb-1 font-medium">Voltage Violations</span>
-                  <span className="text-xl font-mono font-bold text-amber-600">
-                    {results?.buses ? results.buses.filter((b) => b.v_pu < 0.95 || b.v_pu > 1.05).length : 0} Nodes
-                  </span>
-                </div>
-
-                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
-                  <span className="text-slate-400 block mb-1 font-medium">Critical Lines (&gt;80%)</span>
-                  <span className="text-xl font-mono font-bold text-cyan-600">
-                    {results?.lines ? results.lines.filter((l) => l.loading_percent > 80).length : 0} Corridors
-                  </span>
-                </div>
-              </div>
-
-              {/* Violation Ledger */}
-              <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-xs">
-                <div className="border-b border-slate-200 bg-slate-50 px-5 py-3 flex justify-between items-center text-xs">
-                  <h3 className="font-bold text-slate-800">Grid Code Violation & Contingency Ledger</h3>
-                </div>
-
-                <div className="divide-y divide-slate-100 text-xs">
-                  {results?.buses
-                    ?.filter((b) => b.v_pu < 0.95)
-                    .map((bus) => (
-                      <div key={bus.id} className="p-3.5 flex items-center justify-between bg-rose-50/40">
-                        <div className="flex items-center gap-3">
-                          <AlertTriangle className="h-4 w-4 text-rose-500 shrink-0" />
-                          <div>
-                            <span className="font-bold text-slate-900">{bus.name} ({bus.zone} Zone)</span>
-                            <span className="block text-[11px] text-rose-700">Under-voltage detected: {bus.v_pu} p.u.</span>
-                          </div>
-                        </div>
-                        <span className="font-mono text-rose-700 font-bold px-2 py-1 rounded bg-rose-100 border border-rose-200 text-[11px]">
-                          V-LOW
-                        </span>
-                      </div>
-                    ))}
-
-                  {results?.lines
-                    ?.filter((l) => l.loading_percent > 80 && l.in_service)
-                    .map((line) => (
-                      <div key={line.id} className="p-3.5 flex items-center justify-between bg-amber-50/40">
-                        <div className="flex items-center gap-3">
-                          <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
-                          <div>
-                            <span className="font-bold text-slate-900">{line.name}</span>
-                            <span className="block text-[11px] text-amber-700">Loading reached {line.loading_percent}% ({line.flow_mw} MW)</span>
-                          </div>
-                        </div>
-                        <span className="font-mono text-amber-700 font-bold px-2 py-1 rounded bg-amber-100 border border-amber-200 text-[11px]">
-                          OVERLOAD
-                        </span>
-                      </div>
-                    ))}
-
-                  {results?.lines
-                    ?.filter((l) => !l.in_service)
-                    .map((line) => (
-                      <div key={line.id} className="p-3.5 flex items-center justify-between bg-slate-50/60">
-                        <div className="flex items-center gap-3">
-                          <RotateCcw className="h-4 w-4 text-slate-400 shrink-0" />
-                          <div>
-                            <span className="font-bold text-slate-700">{line.name}</span>
-                            <span className="block text-[11px] text-slate-400">Breaker opened: N-1 outage applied to corridor</span>
-                          </div>
-                        </div>
-                        <span className="font-mono text-slate-500 font-bold px-2 py-1 rounded bg-slate-200 border border-slate-300 text-[11px]">
-                          N-1 OUTAGE
-                        </span>
-                      </div>
-                    ))}
-
-                  {results?.buses?.every((b) => b.v_pu >= 0.95 && b.v_pu <= 1.05) &&
-                    results?.lines?.every((l) => l.loading_percent <= 80 && l.in_service) && (
-                      <div className="p-6 text-center text-slate-500 flex flex-col items-center justify-center">
-                        <CheckCircle2 className="h-8 w-8 text-emerald-500 mb-2" />
-                        <span className="font-semibold text-slate-800">Full Grid Code Compliance</span>
-                        <span className="text-[11px] text-slate-400 mt-0.5">All substation voltages and line loadings fall within operational boundaries.</span>
-                      </div>
-                    )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 7: TASK FORCE & OPERATOR ADMIN PANEL */}
-          {activeTab === 'Admin Panel' && (
-            <div className="space-y-6 max-w-6xl mx-auto">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-lg md:text-xl font-bold text-slate-900">National Grid Task Force & Administration</h2>
-                  <p className="text-xs text-slate-500">Statutory NERC Grid Code criteria and system security margins.</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-4 shadow-xs">
-                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-                    <ShieldCheck className="h-5 w-5 text-emerald-600" />
-                    <h3 className="text-sm font-bold text-slate-800">NERC Grid Code Criteria</h3>
+                {/* Violation Ledger (Purple Header) */}
+                <div className="rounded-lg border border-slate-200 bg-white overflow-hidden shadow-xs">
+                  <div className="bg-[#500b50] text-white px-4 py-2.5 flex justify-between items-center text-xs font-bold">
+                    <span>Grid Code Operational Deficiency Ledger</span>
                   </div>
 
-                  <div className="space-y-3 text-xs">
-                    <div className="flex justify-between border-b border-slate-100 pb-2">
-                      <span className="text-slate-500">Nominal Grid Frequency</span>
-                      <span className="font-mono font-bold text-slate-900">50.00 Hz (±0.5%)</span>
-                    </div>
+                  <div className="divide-y divide-slate-100 text-xs">
+                    {results?.buses
+                      ?.filter((b) => b.v_pu < 0.95)
+                      .map((bus) => (
+                        <div key={bus.id} className="p-3 flex items-center justify-between bg-rose-50/40">
+                          <div className="flex items-center gap-3">
+                            <AlertTriangle className="h-4 w-4 text-rose-500 shrink-0" />
+                            <div>
+                              <span className="font-bold text-slate-900">{bus.name} ({bus.zone} Zone)</span>
+                              <span className="block text-[11px] text-rose-700">Under-voltage detected: {bus.v_pu} p.u.</span>
+                            </div>
+                          </div>
+                          <span className="rounded bg-rose-100 px-2 py-0.5 font-bold text-rose-700 text-[10px]">
+                            V-LOW
+                          </span>
+                        </div>
+                      ))}
 
-                    <div className="flex justify-between border-b border-slate-100 pb-2">
-                      <span className="text-slate-500">Statutory Voltage Limits</span>
-                      <span className="font-mono font-bold text-slate-900">0.95 – 1.05 p.u.</span>
-                    </div>
+                    {results?.lines
+                      ?.filter((l) => l.loading_percent > 80 && l.in_service)
+                      .map((line) => (
+                        <div key={line.id} className="p-3 flex items-center justify-between bg-amber-50/40">
+                          <div className="flex items-center gap-3">
+                            <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
+                            <div>
+                              <span className="font-bold text-slate-900">{line.name}</span>
+                              <span className="block text-[11px] text-amber-700">Loading reached {line.loading_percent}% ({line.flow_mw} MW)</span>
+                            </div>
+                          </div>
+                          <span className="rounded bg-amber-100 px-2 py-0.5 font-bold text-amber-800 text-[10px]">
+                            OVERLOAD
+                          </span>
+                        </div>
+                      ))}
 
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Line Thermal Alarm Threshold</span>
-                      <span className="font-mono font-bold text-amber-600">85.0% Loading</span>
-                    </div>
+                    {results?.lines
+                      ?.filter((l) => !l.in_service)
+                      .map((line) => (
+                        <div key={line.id} className="p-3 flex items-center justify-between bg-slate-50">
+                          <div className="flex items-center gap-3">
+                            <RotateCcw className="h-4 w-4 text-slate-400 shrink-0" />
+                            <div>
+                              <span className="font-bold text-slate-700">{line.name}</span>
+                              <span className="block text-[11px] text-slate-400">Breaker opened: N-1 outage applied to corridor</span>
+                            </div>
+                          </div>
+                          <span className="rounded bg-slate-200 px-2 py-0.5 font-bold text-slate-700 text-[10px]">
+                            N-1 OUTAGE
+                          </span>
+                        </div>
+                      ))}
+
+                    {results?.buses?.every((b) => b.v_pu >= 0.95 && b.v_pu <= 1.05) &&
+                      results?.lines?.every((l) => l.loading_percent <= 80 && l.in_service) && (
+                        <div className="p-6 text-center text-slate-500 flex flex-col items-center justify-center">
+                          <CheckCircle2 className="h-8 w-8 text-emerald-600 mb-2" />
+                          <span className="font-bold text-slate-800">Full Grid Code Compliance</span>
+                          <span className="text-[11px] text-slate-400 mt-0.5">All substation voltages and line loadings fall within operational boundaries.</span>
+                        </div>
+                      )}
                   </div>
                 </div>
+              </div>
+            )}
 
-                <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-3 shadow-xs">
-                  <h3 className="text-sm font-bold text-slate-800 border-b border-slate-100 pb-2">System Authority</h3>
-                  <p className="text-xs text-slate-500 leading-relaxed">
-                    Operated under the National Research Fund (NRF) Power Systems Research Initiative for bulk transmission networks.
-                  </p>
+            {/* TAB 7: TASK FORCE & OPERATOR ADMIN PANEL */}
+            {activeTab === 'Admin Panel' && (
+              <div className="space-y-6 max-w-6xl mx-auto">
+                <div>
+                  <h2 className="text-lg font-bold text-[#500b50]">National Grid Task Force & Administration</h2>
+                  <p className="text-xs text-slate-500">Statutory NERC Grid Code operational criteria and system security margins.</p>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="rounded-lg border border-slate-200 bg-white p-5 space-y-4 shadow-xs">
+                    <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                      <ShieldCheck className="h-5 w-5 text-[#500b50]" />
+                      <h3 className="text-sm font-bold text-slate-800">NERC Grid Code Criteria</h3>
+                    </div>
+
+                    <div className="space-y-3 text-xs">
+                      <div className="flex justify-between border-b border-slate-100 pb-2">
+                        <span className="text-slate-500">Nominal Grid Frequency</span>
+                        <span className="font-mono font-bold text-slate-900">50.00 Hz (±0.5%)</span>
+                      </div>
+
+                      <div className="flex justify-between border-b border-slate-100 pb-2">
+                        <span className="text-slate-500">Statutory Voltage Limits</span>
+                        <span className="font-mono font-bold text-slate-900">0.95 – 1.05 p.u.</span>
+                      </div>
+
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Line Thermal Alarm Threshold</span>
+                        <span className="font-mono font-bold text-amber-600">85.0% Loading</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-slate-200 bg-white p-5 space-y-3 shadow-xs">
+                    <h3 className="text-sm font-bold text-slate-800 border-b border-slate-100 pb-2">Institutional Authority</h3>
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      Operated under the National Research Fund (NRF) Power Systems Research Initiative in collaboration with the Department of Electrical & Electronics Engineering, Federal University of Technology, Minna.
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
+
+          {/* FUT Minna Portal Signature Footer */}
+          <footer className="mt-8 pt-3 border-t border-slate-200 text-center text-[11px] text-slate-500">
+            Copyright 2026 National Power System Modelling & Simulation Platform | Federal University of Technology, Minna
+          </footer>
         </main>
       </div>
 
-      {/* Operator Authentication Modal */}
+      {/* Operator Login Modal */}
       {showAuthModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-              <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-[#500b50]">
                 {isSignUp ? 'Register Operator' : 'Operator Login'}
               </h3>
               <button
@@ -1762,20 +1800,20 @@ export default function PowerPlatformDashboard() {
 
             <form onSubmit={handleAuth} className="mt-4 space-y-3">
               {authMsg && (
-                <div className="p-2 rounded bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-800">
+                <div className="p-2 rounded bg-purple-50 border border-purple-200 text-[11px] text-purple-800">
                   {authMsg}
                 </div>
               )}
 
               <div>
-                <label className="block text-[11px] font-medium text-slate-600 mb-1">Email</label>
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">Portal / Operator Email</label>
                 <input
                   type="email"
                   required
                   value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
-                  className="w-full rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-emerald-500"
-                  placeholder="operator@ncc.gov.ng"
+                  className="w-full rounded border border-slate-200 px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-[#500b50]"
+                  placeholder="operator@futminna.edu.ng"
                 />
               </div>
 
@@ -1786,14 +1824,14 @@ export default function PowerPlatformDashboard() {
                   required
                   value={authPassword}
                   onChange={(e) => setAuthPassword(e.target.value)}
-                  className="w-full rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-emerald-500"
+                  className="w-full rounded border border-slate-200 px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-[#500b50]"
                   placeholder="••••••••"
                 />
               </div>
 
               <button
                 type="submit"
-                className="w-full rounded-lg bg-emerald-600 py-2 text-xs font-bold text-white hover:bg-emerald-500 transition shadow-xs"
+                className="w-full rounded bg-[#500b50] py-2 text-xs font-bold text-white hover:bg-[#6a106a] transition"
               >
                 {isSignUp ? 'Create Operator Account' : 'Sign In'}
               </button>
@@ -1805,7 +1843,7 @@ export default function PowerPlatformDashboard() {
                     setIsSignUp(!isSignUp);
                     setAuthMsg(null);
                   }}
-                  className="text-[11px] text-slate-500 hover:text-emerald-600 transition"
+                  className="text-[11px] text-slate-500 hover:text-[#500b50] transition"
                 >
                   {isSignUp ? 'Already registered? Sign In' : 'Need an operator account? Register'}
                 </button>
