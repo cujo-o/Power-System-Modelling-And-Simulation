@@ -1,6 +1,7 @@
-from pydantic_settings import BaseSettings
+from dataclasses import dataclass
 
-class Settings(BaseSettings):
+@dataclass(frozen=True)
+class Settings:
     APP_TITLE: str = "National Power System Simulation API"
     V_MIN_PU: float = 0.95
     V_MAX_PU: float = 1.05
