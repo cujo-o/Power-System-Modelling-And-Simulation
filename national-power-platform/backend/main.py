@@ -17,7 +17,10 @@ import numpy as np
 import pandas as pd
 import pandapower as pp
 
-from nigeria_cases import build_nig_10_bus, build_case330
+try:
+    from pandapower.converter.pypower.from_ppc import from_ppc
+except ImportError:
+    from pandapower.converter.pypower import from_ppc
 
 app = FastAPI(title="National Power System Modelling & Simulation API")
 
@@ -49,7 +52,133 @@ def clean_float(val, fallback: float = 0.0) -> float:
     except Exception:
         return fallback
 
-# --- Model Registry & Default Cases ---
+# --- Case Network Builders ---
+def build_nig_10_bus() -> pp.pandapowerNet:
+    net = pp.create_empty_network(name="Nig 10-Bus Benchmark Grid", f_hz=50.0, sn_mva=100.0)
+    
+    stations = [
+        ("Kainji GS (Hydro)", 330, "North-Central", 130.0, 90.0),
+        ("Jebba TS/GS", 330, "North-Central", 270.0, 90.0),
+        ("Shiroro GS (Hydro)", 330, "North-Central", 470.0, 90.0),
+        ("Katampe (Abuja) TS", 330, "North-Central", 650.0, 90.0),
+        ("Osogbo NCC Hub", 330, "South-West", 270.0, 240.0),
+        ("Ikeja West TS", 330, "South-West", 120.0, 390.0),
+        ("Egbin PS (Slack)", 330, "South-West", 270.0, 390.0),
+        ("Benin TS", 330, "Mid-West", 500.0, 240.0),
+        ("Afam VI GS", 330, "South-South", 500.0, 390.0),
+        ("Delta IV GS", 330, "South-South", 650.0, 390.0)
+    ]
+    buses = {}
+    for i, (name, vn, zone, x, y) in enumerate(stations):
+        buses[i] = pp.create_bus(net, vn_kv=vn, name=name, zone=zone, geodata=(x, y))
+
+    pp.create_ext_grid(net, bus=buses[6], vm_pu=1.03, name="Egbin PS (Slack)")
+    pp.create_gen(net, bus=buses[0], p_mw=450.0, vm_pu=1.02, name="Kainji Hydro", min_p_mw=100, max_p_mw=760)
+    pp.create_gen(net, bus=buses[1], p_mw=420.0, vm_pu=1.02, name="Jebba Hydro", min_p_mw=100, max_p_mw=621)
+    pp.create_gen(net, bus=buses[2], p_mw=380.0, vm_pu=1.02, name="Shiroro Hydro", min_p_mw=100, max_p_mw=600)
+    pp.create_gen(net, bus=buses[8], p_mw=450.0, vm_pu=1.02, name="Afam VI Gas", min_p_mw=80, max_p_mw=650)
+    pp.create_gen(net, bus=buses[9], p_mw=390.0, vm_pu=1.02, name="Delta IV Gas", min_p_mw=50, max_p_mw=890)
+
+    pp.create_load(net, bus=buses[3], p_mw=468.5, q_mvar=117.2, name="Abuja Load")
+    pp.create_load(net, bus=buses[5], p_mw=587.2, q_mvar=152.1, name="Lagos Load")
+    pp.create_load(net, bus=buses[4], p_mw=159.6, q_mvar=42.2, name="Osogbo Load")
+    pp.create_load(net, bus=buses[7], p_mw=171.6, q_mvar=37.7, name="Benin Load")
+
+    corridors = [
+        (0, 1, 81.0, "Kainji - Jebba 330kV"),
+        (1, 2, 244.0, "Jebba - Shiroro 330kV"),
+        (2, 3, 144.0, "Shiroro - Katampe 330kV"),
+        (1, 4, 157.0, "Jebba - Osogbo 330kV"),
+        (4, 5, 248.0, "Osogbo - Ikeja West 330kV"),
+        (5, 6, 62.0, "Ikeja West - Egbin 330kV"),
+        (4, 7, 251.0, "Osogbo - Benin 330kV"),
+        (7, 6, 280.0, "Benin - Egbin 330kV"),
+        (7, 8, 130.0, "Benin - Afam 330kV"),
+        (8, 9, 85.0, "Afam - Delta 330kV")
+    ]
+    for fb, tb, length, name in corridors:
+        pp.create_line_from_parameters(
+            net, from_bus=buses[fb], to_bus=buses[tb], length_km=length,
+            r_ohm_per_km=0.035, x_ohm_per_km=0.320, c_nf_per_km=11.2, max_i_ka=1.25, name=name
+        )
+    return net
+
+def build_case330() -> pp.pandapowerNet:
+    net = pp.create_empty_network(name="Nigeria 330kV Grid (63-Bus NISO Equivalent)", f_hz=50.0, sn_mva=100.0)
+    
+    bus_names = [
+        'AJA 3', 'AKANGBA 3', 'EGBIN 3', 'IKEJA W 3', 'SAKETE 3', 'OLORUNSOGO3', 'OKE_ARO_3', 'ALAGBON_3',
+        'LEKKI 330', 'IKEJA W 3B', 'AYEDE 3', 'OSOGBO 3', 'GANMO 3', 'BKEBBI 3', 'JEBBA T.S.3', 'JEBBA G.S.3',
+        'KAINJI G.S.3', 'TRIPLE POINT', 'ZUNGERU 3', 'ZUNGERU GS3', 'SHIRORO 3', 'NBUSA FAKUN', 'BENIN 3',
+        'DELTA IV 3', 'SAPELE 3', 'OMOTOSHO3', 'AZURA', 'ALADJA_3', 'SAPELE 3B', 'IHOVBOR_3', 'KADUNA 3',
+        'M CITY_330', 'GOMBE 3', 'JOS 3', 'YOLA 3', 'JOS 1B', 'BAUCHI 3', 'MAIDUGURI 3', 'DAMATURU 3',
+        'MAYO BELW 3', 'JALINGO 3', 'NHAVEN 3', 'ONITSHA 3', 'OKPAI 3', 'MAKURDI_3', 'ASABA 3', 'UGWUAJI_3',
+        'AFAM IV 3', 'ALAOJI 3', 'ADIAGBO_3', 'IKOT-EKPENE_', 'CALABAR_PS_3', 'AJAOKUTA 3', 'KATAMPE 3',
+        'GEREGU', 'GWAGW BB1', 'LOKOJA _3', 'LAFIA 3', 'KANO 3', 'RIM_ZAKARA 3', 'OWERRI_3', 'EGBEMA_3', 'OMOKU_3'
+    ]
+    buses = {}
+    for idx, name in enumerate(bus_names, start=1):
+        angle = 2 * math.pi * (idx - 1) / len(bus_names)
+        gx = round(350.0 + 260.0 * math.cos(angle), 1)
+        gy = round(240.0 + 190.0 * math.sin(angle), 1)
+        zone = "South-West" if idx <= 13 or idx in [26, 27, 29, 30] else \
+               "North-Central" if idx in [14, 15, 16, 17, 18, 19, 20, 21, 22, 53, 54, 55, 56, 57, 58] else \
+               "North-West" if idx in [31, 32, 59, 60] else \
+               "North-East" if idx in range(33, 42) else \
+               "Mid-West" if idx in [23, 24, 25, 28, 46] else "South-South"
+        buses[idx] = pp.create_bus(net, vn_kv=330, name=name, zone=zone, geodata=(gx, gy))
+
+    pp.create_ext_grid(net, bus=buses[3], vm_pu=1.05, name="EGBIN 3 (Slack)")
+
+    generators = [
+        (6, 150.8, "OLORUNSOGO Gas", 336.8), (16, 278.1, "JEBBA Hydro", 621.0),
+        (17, 340.4, "KAINJI Hydro", 760.0), (20, 313.5, "ZUNGERU Hydro", 700.0),
+        (21, 268.7, "SHIRORO Hydro", 600.0), (24, 398.7, "DELTA IV Gas", 890.2),
+        (25, 268.7, "SAPELE Steam", 600.0), (26, 136.2, "OMOTOSHO Gas", 304.0),
+        (27, 203.5, "AZURA Gas", 454.4), (30, 223.9, "IHOVBOR Gas", 500.0),
+        (33, 17.9, "DADINKOWA Hydro", 40.0), (44, 209.6, "OKPAI Combined", 468.0),
+        (48, 291.1, "AFAM VI Shell", 650.0), (49, 201.5, "ALAOJI NIPP", 450.0),
+        (52, 251.9, "ODUKPANI NIPP", 562.5), (55, 194.8, "GEREGU Gas", 435.0),
+        (63, 61.8, "OMOKU Gas", 138.0)
+    ]
+    for b_id, p, name, pmax in generators:
+        pp.create_gen(net, bus=buses[b_id], p_mw=p, vm_pu=1.03, name=name, min_p_mw=10.0, max_p_mw=pmax)
+
+    branches = [
+        (1, 3, 20.0, "AJA - EGBIN"), (2, 4, 30.0, "AKANGBA - IKEJA W"),
+        (3, 4, 35.0, "EGBIN - IKEJA W"), (3, 23, 280.0, "EGBIN - BENIN"),
+        (4, 6, 80.0, "IKEJA W - OLORUNSOGO"), (6, 11, 100.0, "OLORUNSOGO - AYEDE"),
+        (11, 12, 115.0, "AYEDE - OSOGBO"), (12, 13, 85.0, "OSOGBO - GANMO"),
+        (12, 15, 157.0, "OSOGBO - JEBBA"), (15, 17, 81.0, "JEBBA - KAINJI"),
+        (15, 21, 244.0, "JEBBA - SHIRORO"), (21, 54, 144.0, "SHIRORO - KATAMPE"),
+        (21, 31, 96.0, "SHIRORO - KADUNA"), (31, 59, 230.0, "KADUNA - KANO"),
+        (31, 34, 197.0, "KADUNA - JOS"), (34, 33, 265.0, "JOS - GOMBE"),
+        (33, 35, 240.0, "GOMBE - YOLA"), (33, 38, 305.0, "GOMBE - MAIDUGURI"),
+        (23, 43, 137.0, "BENIN - ONITSHA"), (43, 47, 95.0, "ONITSHA - UGWUAJI"),
+        (47, 45, 160.0, "UGWUAJI - MAKURDI"), (47, 51, 140.0, "UGWUAJI - IKOT EKPENE"),
+        (51, 52, 60.0, "IKOT EKPENE - CALABAR"), (43, 49, 138.0, "ONITSHA - ALAOJI"),
+        (48, 49, 25.0, "AFAM - ALAOJI"), (23, 53, 195.0, "BENIN - AJAOKUTA"),
+        (53, 57, 45.0, "AJAOKUTA - LOKOJA"), (57, 56, 140.0, "LOKOJA - GWAGWALADA"),
+        (56, 54, 42.0, "GWAGWALADA - KATAMPE")
+    ]
+    for fb, tb, length, name in branches:
+        pp.create_line_from_parameters(
+            net, from_bus=buses[fb], to_bus=buses[tb], length_km=length,
+            r_ohm_per_km=0.035, x_ohm_per_km=0.320, c_nf_per_km=11.2, max_i_ka=1.25, name=name
+        )
+
+    load_specs = [
+        (1, 96.2, 20.5), (2, 378.8, 92.5), (4, 587.2, 152.1), (5, 322.8, 42.6),
+        (11, 211.1, 48.0), (12, 159.6, 42.2), (13, 124.1, 31.4), (14, 111.1, 14.2),
+        (23, 171.6, 37.8), (31, 159.2, 32.4), (34, 105.5, 19.9), (42, 184.4, 37.3),
+        (43, 147.8, 32.8), (49, 247.0, 55.7), (54, 468.5, 117.3), (59, 462.9, 84.0)
+    ]
+    for b_id, p, q in load_specs:
+        pp.create_load(net, bus=buses[b_id], p_mw=p, q_mvar=q, name=f"Load {bus_names[b_id-1]}")
+
+    return net
+
+# --- Model Registry ---
 model_registry: Dict[str, Dict[str, Any]] = {}
 active_model_id: str = "nig-10-bus"
 
@@ -77,20 +206,20 @@ registered_users = [
         "name": "Dr. K. A. Bello",
         "email": "kabello@abu.edu.ng",
         "institution": "Ahmadu Bello University",
-        "role": "Researcher",
+        "role": "Power Systems Researcher",
         "status": "PENDING",
         "registered_at": "2026-09-18 09:30"
     }
 ]
 
-def init_default_models():
+def init_registry():
     global model_registry
     m10 = build_nig_10_bus()
     m330 = build_case330()
-    
+
     model_registry["nig-10-bus"] = {
         "id": "nig-10-bus",
-        "name": "Nig 10 Bus Benchmark Model",
+        "name": "Nig 10-Bus Benchmark Grid",
         "voltage_level": "330kV",
         "domain": "Steady-State & Dynamic",
         "platform": "MATPOWER / PSAT",
@@ -117,15 +246,171 @@ def init_default_models():
         "is_default": False
     }
 
-init_default_models()
+init_registry()
 
 def get_active_net_and_name():
     entry = model_registry.get(active_model_id)
     if entry:
         return entry["net"], entry["name"]
-    return build_nig_10_bus(), "Nig 10 Bus Benchmark Model"
+    return model_registry["nig-10-bus"]["net"], model_registry["nig-10-bus"]["name"]
 
-# --- Dynamic Swing Equation & PSS Engine ---
+# --- API Endpoints ---
+@app.get("/")
+def read_root():
+    _, active_name = get_active_net_and_name()
+    return {
+        "status": "online",
+        "engine": "Pandapower + FastAPI",
+        "active_model": active_name,
+        "active_model_id": active_model_id
+    }
+
+@app.get("/api/models")
+def list_models():
+    return [
+        {
+            "id": m["id"],
+            "name": m["name"],
+            "voltage_level": m.get("voltage_level", "330kV"),
+            "domain": m.get("domain", "Steady-State"),
+            "platform": m.get("platform", "MATPOWER"),
+            "buses": m["buses"],
+            "branches": m["branches"],
+            "total_installed_mw": m["total_installed_mw"],
+            "total_demand_mw": m["total_demand_mw"],
+            "converged": m["converged"],
+            "is_default": m.get("is_default", False),
+            "is_active": (m["id"] == active_model_id)
+        }
+        for m in model_registry.values()
+    ]
+
+@app.post("/api/models/{model_id}/activate")
+def activate_model(model_id: str):
+    global active_model_id
+    if model_id not in model_registry:
+        raise HTTPException(status_code=404, detail="Model not found.")
+    active_model_id = model_id
+    return {"status": "success", "active_model_id": active_model_id, "name": model_registry[model_id]["name"]}
+
+@app.delete("/api/models/{model_id}")
+def delete_model(model_id: str):
+    global active_model_id
+    if model_id not in model_registry:
+        raise HTTPException(status_code=404, detail="Model not found.")
+    if model_registry[model_id].get("is_default"):
+        raise HTTPException(status_code=400, detail="Cannot delete default baseline.")
+    del model_registry[model_id]
+    if active_model_id == model_id:
+        active_model_id = "nig-10-bus"
+    return {"status": "success", "active_model_id": active_model_id}
+
+@app.post("/api/grid/reset")
+def reset_to_baseline():
+    global active_model_id
+    active_model_id = "nig-10-bus"
+    return {"status": "success", "active_model_id": active_model_id}
+
+# --- Load Flow Engine ---
+class SimulationRequest(BaseModel):
+    load_multiplier: Optional[float] = 1.0
+    tripped_lines: Optional[List[int]] = []
+
+@app.post("/api/simulate/power-flow")
+def run_power_flow(req: SimulationRequest):
+    try:
+        base_net, active_name = get_active_net_and_name()
+        net = copy.deepcopy(base_net)
+
+        if req.load_multiplier != 1.0 and len(net.load) > 0:
+            net.load["p_mw"] *= req.load_multiplier
+            net.load["q_mvar"] *= req.load_multiplier
+
+        for line_id in req.tripped_lines:
+            if line_id in net.line.index:
+                net.line.at[line_id, "in_service"] = False
+
+        try:
+            pp.runpp(net, algorithm="nr", max_iteration=35, tolerance_mva=1e-3, numba=False)
+            converged = bool(net.converged)
+        except Exception:
+            converged = False
+
+        if not converged:
+            return {
+                "converged": False,
+                "message": "Power flow diverged under the current contingency state.",
+                "buses": [],
+                "lines": []
+            }
+
+        buses = []
+        for idx, row in net.bus.iterrows():
+            gx = float(net.bus_geodata.at[idx, "x"]) if hasattr(net, "bus_geodata") and idx in net.bus_geodata.index else 250.0
+            gy = float(net.bus_geodata.at[idx, "y"]) if hasattr(net, "bus_geodata") and idx in net.bus_geodata.index else 250.0
+            vm_pu = float(net.res_bus.at[idx, "vm_pu"]) if hasattr(net, "res_bus") and idx in net.res_bus.index else 1.0
+            va_deg = float(net.res_bus.at[idx, "va_degree"]) if hasattr(net, "res_bus") and idx in net.res_bus.index else 0.0
+            p_mw = float(net.res_bus.at[idx, "p_mw"]) if hasattr(net, "res_bus") and idx in net.res_bus.index else 0.0
+            q_mvar = float(net.res_bus.at[idx, "q_mvar"]) if hasattr(net, "res_bus") and idx in net.res_bus.index else 0.0
+
+            buses.append({
+                "id": int(idx),
+                "name": str(row.get("name", f"Bus {idx}")),
+                "zone": str(row.get("zone", "Substation")),
+                "x": gx,
+                "y": gy,
+                "v_pu": round(clean_float(vm_pu, 1.0), 3),
+                "va_deg": round(clean_float(va_deg, 0.0), 2),
+                "p_mw": round(clean_float(p_mw, 0.0), 1),
+                "q_mvar": round(clean_float(q_mvar, 0.0), 1),
+            })
+
+        lines = []
+        for idx, row in net.line.iterrows():
+            is_in = bool(row["in_service"])
+            loading = round(clean_float(net.res_line.at[idx, "loading_percent"], 0.0), 1) if is_in and hasattr(net, "res_line") and idx in net.res_line.index else 0.0
+            flow = round(clean_float(net.res_line.at[idx, "p_from_mw"], 0.0), 1) if is_in and hasattr(net, "res_line") and idx in net.res_line.index else 0.0
+            ploss = round(clean_float(net.res_line.at[idx, "pl_mw"], 0.0), 2) if is_in and hasattr(net, "res_line") and idx in net.res_line.index else 0.0
+
+            lines.append({
+                "id": int(idx),
+                "name": str(row.get("name", f"Line {row['from_bus']}-{row['to_bus']}")),
+                "from_bus": int(row["from_bus"]),
+                "to_bus": int(row["to_bus"]),
+                "in_service": is_in,
+                "loading_percent": loading,
+                "flow_mw": flow,
+                "losses_mw": ploss
+            })
+
+        gen_sum = float(net.res_gen.p_mw.sum()) if hasattr(net, "res_gen") and len(net.res_gen) > 0 else 0.0
+        ext_sum = float(net.res_ext_grid.p_mw.sum()) if hasattr(net, "res_ext_grid") and len(net.res_ext_grid) > 0 else 0.0
+        total_gen = round(clean_float(gen_sum + ext_sum, 0.0), 1)
+        total_load = round(clean_float(net.res_load.p_mw.sum() if hasattr(net, "res_load") and len(net.res_load) > 0 else 0.0), 1)
+        total_losses = round(clean_float(net.res_line.pl_mw.sum() if hasattr(net, "res_line") and len(net.res_line) > 0 else 0.0), 1)
+
+        imbalance = total_gen - total_load - total_losses
+        frequency = round(50.0 + (imbalance / 3500.0), 2)
+
+        return {
+            "converged": True,
+            "model_name": active_name,
+            "frequency": frequency,
+            "total_gen_mw": total_gen,
+            "total_load_mw": total_load,
+            "total_losses_mw": total_losses,
+            "buses": buses,
+            "lines": lines
+        }
+    except Exception as e:
+        return {
+            "converged": False,
+            "message": f"Execution error: {str(e)}",
+            "buses": [],
+            "lines": []
+        }
+
+# --- Dynamic Swing Engine ---
 class DynamicSimRequest(BaseModel):
     disturbance_mw: float = 450.0
     inertia_constant_H: float = 4.5
@@ -196,7 +481,7 @@ def run_dynamic_simulation(req: DynamicSimRequest):
         }
     }
 
-# --- Multi-Format Case Ingestion ---
+# --- Multi-Format File Ingestion ---
 @app.post("/api/upload/model")
 @app.post("/api/upload/matpower")
 async def upload_model_file(file: UploadFile = File(...)):
@@ -218,6 +503,9 @@ async def upload_model_file(file: UploadFile = File(...)):
     model_id = str(uuid.uuid4())[:8]
     net = build_case330() if voltage_level == "330kV" else build_nig_10_bus()
     
+    installed_mw = float(net.gen.p_mw.sum() if len(net.gen) > 0 else 1000)
+    demand_mw = float(net.load.p_mw.sum() if len(net.load) > 0 else 800)
+
     model_registry[model_id] = {
         "id": model_id,
         "name": name,
@@ -227,8 +515,8 @@ async def upload_model_file(file: UploadFile = File(...)):
         "net": net,
         "buses": len(net.bus),
         "branches": len(net.line),
-        "total_installed_mw": float(net.gen.p_mw.sum() if len(net.gen) > 0 else 1000),
-        "total_demand_mw": float(net.load.p_mw.sum() if len(net.load) > 0 else 800),
+        "total_installed_mw": installed_mw,
+        "total_demand_mw": demand_mw,
         "converged": True,
         "is_default": False
     }
@@ -244,111 +532,12 @@ async def upload_model_file(file: UploadFile = File(...)):
         "metrics": {
             "buses": len(net.bus),
             "branches": len(net.line),
-            "total_installed_mw": round(float(net.gen.p_mw.sum() if len(net.gen) > 0 else 1000), 1),
-            "total_demand_mw": round(float(net.load.p_mw.sum() if len(net.load) > 0 else 800), 1)
+            "total_installed_mw": round(installed_mw, 1),
+            "total_demand_mw": round(demand_mw, 1)
         }
     }
 
-# --- Steady-State Load Flow ---
-class SimulationRequest(BaseModel):
-    load_multiplier: Optional[float] = 1.0
-    tripped_lines: Optional[List[int]] = []
-
-@app.post("/api/simulate/power-flow")
-def run_power_flow(req: SimulationRequest):
-    try:
-        base_net, active_name = get_active_net_and_name()
-        net = copy.deepcopy(base_net)
-
-        if req.load_multiplier != 1.0 and len(net.load) > 0:
-            net.load["p_mw"] *= req.load_multiplier
-            net.load["q_mvar"] *= req.load_multiplier
-
-        for line_id in req.tripped_lines:
-            if line_id in net.line.index:
-                net.line.at[line_id, "in_service"] = False
-
-        try:
-            pp.runpp(net, algorithm="nr", max_iteration=35, tolerance_mva=1e-3, numba=False)
-            converged = bool(net.converged)
-        except Exception:
-            converged = False
-
-        if not converged:
-            return {
-                "converged": False,
-                "message": "Power flow diverged. Potential critical voltage collapse or islanding.",
-                "buses": [],
-                "lines": []
-            }
-
-        buses = []
-        for idx, row in net.bus.iterrows():
-            geo_x = net.bus_geodata.at[idx, "x"] if (hasattr(net, "bus_geodata") and idx in net.bus_geodata.index) else 250.0
-            geo_y = net.bus_geodata.at[idx, "y"] if (hasattr(net, "bus_geodata") and idx in net.bus_geodata.index) else 250.0
-            vm_pu = float(net.res_bus.at[idx, "vm_pu"]) if hasattr(net, "res_bus") and idx in net.res_bus.index else 1.0
-            va_deg = float(net.res_bus.at[idx, "va_degree"]) if hasattr(net, "res_bus") and idx in net.res_bus.index else 0.0
-            p_mw = float(net.res_bus.at[idx, "p_mw"]) if hasattr(net, "res_bus") and idx in net.res_bus.index else 0.0
-            q_mvar = float(net.res_bus.at[idx, "q_mvar"]) if hasattr(net, "res_bus") and idx in net.res_bus.index else 0.0
-
-            buses.append({
-                "id": int(idx),
-                "name": str(row.get("name", f"Bus {idx}")),
-                "zone": str(row.get("zone", "Substation")),
-                "x": geo_x,
-                "y": geo_y,
-                "v_pu": round(clean_float(vm_pu, 1.0), 3),
-                "va_deg": round(clean_float(va_deg, 0.0), 2),
-                "p_mw": round(clean_float(p_mw, 0.0), 1),
-                "q_mvar": round(clean_float(q_mvar, 0.0), 1),
-            })
-
-        lines = []
-        for idx, row in net.line.iterrows():
-            is_in = bool(row["in_service"])
-            loading = round(clean_float(net.res_line.at[idx, "loading_percent"], 0.0), 1) if is_in and hasattr(net, "res_line") and idx in net.res_line.index else 0.0
-            flow = round(clean_float(net.res_line.at[idx, "p_from_mw"], 0.0), 1) if is_in and hasattr(net, "res_line") and idx in net.res_line.index else 0.0
-            ploss = round(clean_float(net.res_line.at[idx, "pl_mw"], 0.0), 2) if is_in and hasattr(net, "res_line") and idx in net.res_line.index else 0.0
-
-            lines.append({
-                "id": int(idx),
-                "name": str(row.get("name", f"Line {row['from_bus']}-{row['to_bus']}")),
-                "from_bus": int(row["from_bus"]),
-                "to_bus": int(row["to_bus"]),
-                "in_service": is_in,
-                "loading_percent": loading,
-                "flow_mw": flow,
-                "losses_mw": ploss
-            })
-
-        gen_sum = float(net.res_gen.p_mw.sum()) if hasattr(net, "res_gen") and len(net.res_gen) > 0 else 0.0
-        ext_sum = float(net.res_ext_grid.p_mw.sum()) if hasattr(net, "res_ext_grid") and len(net.res_ext_grid) > 0 else 0.0
-        total_gen = round(clean_float(gen_sum + ext_sum, 0.0), 1)
-        total_load = round(clean_float(net.res_load.p_mw.sum() if hasattr(net, "res_load") and len(net.res_load) > 0 else 0.0), 1)
-        total_losses = round(clean_float(net.res_line.pl_mw.sum() if hasattr(net, "res_line") and len(net.res_line) > 0 else 0.0), 1)
-
-        imbalance = total_gen - total_load - total_losses
-        frequency = round(50.0 + (imbalance / 3500.0), 2)
-
-        return {
-            "converged": True,
-            "model_name": active_name,
-            "frequency": frequency,
-            "total_gen_mw": total_gen,
-            "total_load_mw": total_load,
-            "total_losses_mw": total_losses,
-            "buses": buses,
-            "lines": lines
-        }
-    except Exception as e:
-        return {
-            "converged": False,
-            "message": f"Execution error: {str(e)}",
-            "buses": [],
-            "lines": []
-        }
-
-# --- Market Dispatch & LMP ---
+# --- Market Dispatch ---
 class MarketSimulationRequest(BaseModel):
     load_multiplier: Optional[float] = 1.0
     gas_price_factor: Optional[float] = 1.0
@@ -393,7 +582,6 @@ def run_market_dispatch(req: MarketSimulationRequest):
             "hourly_cost_ngn": round(hourly_plant_cost, 2),
         })
 
-    # Slack generation at Egbin
     slack_p = 591.2 * req.load_multiplier
     slack_cost = slack_p * gas_cost
     total_hourly_cost_ngn += slack_cost
@@ -437,7 +625,7 @@ def run_market_dispatch(req: MarketSimulationRequest):
         "buses_lmp": buses_lmp
     }
 
-# --- User Approvals & Admin ---
+# --- User Management & Reports ---
 @app.get("/api/admin/users")
 def get_users():
     return registered_users
@@ -458,24 +646,6 @@ def reject_user(user_id: str):
             return {"status": "success", "user": u}
     raise HTTPException(status_code=404, detail="User not found")
 
-@app.get("/api/models")
-def list_models():
-    return list(model_registry.values())
-
-@app.post("/api/models/{model_id}/activate")
-def activate_model(model_id: str):
-    global active_model_id
-    if model_id not in model_registry:
-        raise HTTPException(status_code=404, detail="Model not found")
-    active_model_id = model_id
-    return {"status": "success", "active_model_id": active_model_id}
-
-@app.post("/api/grid/reset")
-def reset_to_baseline():
-    global active_model_id
-    active_model_id = "nig-10-bus"
-    return {"status": "success", "active_model_id": active_model_id}
-
 @app.get("/api/reports/export-csv")
 def export_grid_report():
     base_net, active_name = get_active_net_and_name()
@@ -484,9 +654,9 @@ def export_grid_report():
     writer.writerow(["NATIONAL POWER SYSTEM MODELLING & SIMULATION PLATFORM"])
     writer.writerow(["Model", active_name])
     writer.writerow([])
-    writer.writerow(["Bus ID", "Substation Name", "Voltage (pu)", "Compliance"])
+    writer.writerow(["Bus ID", "Substation Name", "Nominal kV", "Voltage (pu)", "Compliance"])
     for idx, row in base_net.bus.iterrows():
-        writer.writerow([idx, row.get("name", f"Bus {idx}"), 1.0, "COMPLIANT"])
+        writer.writerow([idx, row.get("name", f"Bus {idx}"), row.get("vn_kv", 330.0), 1.0, "COMPLIANT"])
     output.seek(0)
     return StreamingResponse(
         iter([output.getvalue()]),
