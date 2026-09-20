@@ -1,26 +1,19 @@
-"use client";
+'use client';
 
-import React, { useState, useEffect } from "react";
-import { Header } from "@/components/layout/Header";
-import { Sidebar } from "@/components/layout/Sidebar";
-import { SingleLineDiagram } from "@/components/diagram/SingleLineDiagram";
-import { HomeTab } from "@/components/tabs/HomeTab";
-import { GridStabilityTab } from "@/components/tabs/GridStabilityTab";
-import { DynamicsTab } from "@/components/tabs/DynamicsTab";
-import { MarketTab } from "@/components/tabs/MarketTab";
-import { UploadTab } from "@/components/tabs/UploadTab";
-import { ReportsTab } from "@/components/tabs/ReportsTab";
-import { AdminTab } from "@/components/tabs/AdminTab";
-import { AboutTab } from "@/components/tabs/AboutTab";
-import { api } from "@/services/api";
-import {
-  SimResult,
-  DynamicSimResult,
-  MarketResult,
-  GridModelMeta,
-  UserAccount,
-  BusData,
-} from "@/types/grid";
+import React, { useState, useEffect } from 'react';
+import { Header } from '@/components/layout/Header';
+import { Sidebar } from '@/components/layout/Sidebar';
+import { SingleLineDiagram } from '@/components/diagram/SingleLineDiagram';
+import { HomeTab } from '@/components/tabs/HomeTab';
+import { GridStabilityTab } from '@/components/tabs/GridStabilityTab';
+import { DynamicsTab } from '@/components/tabs/DynamicsTab';
+import { MarketTab } from '@/components/tabs/MarketTab';
+import { UploadTab } from '@/components/tabs/UploadTab';
+import { ReportsTab } from '@/components/tabs/ReportsTab';
+import { AdminTab } from '@/components/tabs/AdminTab';
+import { AboutTab } from '@/components/tabs/AboutTab';
+import { api } from '@/services/api';
+import { SimResult, DynamicSimResult, MarketResult, GridModelMeta, UserAccount, BusData } from '@/types/grid';
 import {
   Home,
   Grid,
@@ -31,14 +24,12 @@ import {
   FileText,
   ShieldCheck,
   Info,
-} from "lucide-react";
+} from 'lucide-react';
 
 export default function PowerPlatformDashboard() {
-  const [activeTab, setActiveTab] = useState("Home");
+  const [activeTab, setActiveTab] = useState('Home');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-
-  //const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://national-power-backend.onrender.com';
 
   // Grid Simulation State
   const [loadMultiplier, setLoadMultiplier] = useState(1.0);
@@ -66,15 +57,15 @@ export default function PowerPlatformDashboard() {
   const [users, setUsers] = useState<UserAccount[]>([]);
 
   const navItems = [
-    { id: "Home", label: "Dashboard", icon: Home },
-    { id: "Grid Models", label: "Grid Stability Models", icon: Grid },
-    { id: "Dynamics", label: "Time-Domain & PSS", icon: Activity },
-    { id: "Market Simulations", label: "Market Simulations", icon: DollarSign },
-    { id: "Data Upload", label: "Upload & Ingestion", icon: UploadCloud },
-    { id: "Visualization", label: "Single-Line Diagram", icon: Layers },
-    { id: "Reports", label: "Reports & Publications", icon: FileText },
-    { id: "Admin Panel", label: "Admin & Approvals", icon: ShieldCheck },
-    { id: "About Us", label: "About Us (ML4PS)", icon: Info },
+    { id: 'Home', label: 'Dashboard', icon: Home },
+    { id: 'Grid Models', label: 'Grid Stability Models', icon: Grid },
+    { id: 'Dynamics', label: 'Time-Domain & PSS', icon: Activity },
+    { id: 'Market Simulations', label: 'Market Simulations', icon: DollarSign },
+    { id: 'Data Upload', label: 'Upload & Ingestion', icon: UploadCloud },
+    { id: 'Visualization', label: 'Single-Line Diagram', icon: Layers },
+    { id: 'Reports', label: 'Reports & Publications', icon: FileText },
+    { id: 'Admin Panel', label: 'Admin & Approvals', icon: ShieldCheck },
+    { id: 'About Us', label: 'About Us (ML4PS)', icon: Info },
   ];
 
   const refreshData = async () => {
@@ -88,11 +79,9 @@ export default function PowerPlatformDashboard() {
       setModels(modelList);
       setUsers(userList);
       setResults(simRes);
-      setDivergedNotice(
-        !simRes.converged ? simRes.message || "Diverged" : null,
-      );
+      setDivergedNotice(!simRes.converged ? simRes.message || 'Calculation diverged' : null);
     } catch {
-      // Backend offline notice handled gracefully
+      // Backend status handled gracefully
     } finally {
       setLoading(false);
     }
@@ -109,9 +98,7 @@ export default function PowerPlatformDashboard() {
     try {
       const simRes = await api.runPowerFlow(loadMultiplier, trippedLines);
       setResults(simRes);
-      setDivergedNotice(
-        !simRes.converged ? simRes.message || "Diverged" : null,
-      );
+      setDivergedNotice(!simRes.converged ? simRes.message || 'Calculation diverged' : null);
     } finally {
       setLoading(false);
     }
@@ -120,11 +107,7 @@ export default function PowerPlatformDashboard() {
   const runDyn = async () => {
     setDynLoading(true);
     try {
-      const data = await api.runDynamics(
-        dynDisturbance,
-        enableGovernor,
-        enablePSS,
-      );
+      const data = await api.runDynamics(dynDisturbance, enableGovernor, enablePSS);
       setDynResult(data);
     } finally {
       setDynLoading(false);
@@ -134,12 +117,7 @@ export default function PowerPlatformDashboard() {
   const runMkt = async () => {
     setMarketLoading(true);
     try {
-      const data = await api.runMarket(
-        loadMultiplier,
-        gasPriceFactor,
-        hydroAvailability,
-        trippedLines,
-      );
+      const data = await api.runMarket(loadMultiplier, gasPriceFactor, hydroAvailability, trippedLines);
       setMarketResults(data);
     } finally {
       setMarketLoading(false);
@@ -172,14 +150,12 @@ export default function PowerPlatformDashboard() {
     const file = e.target.files?.[0];
     if (!file) return;
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append('file', file);
     setUploadLoading(true);
     setUploadNotice(null);
     try {
       const res = await api.uploadModel(formData);
-      setUploadNotice(
-        `Model '${res.filename}' parsed successfully (${res.format} / ${res.voltage_level}).`,
-      );
+      setUploadNotice(`Model '${res.filename}' parsed successfully (${res.format} / ${res.voltage_level}).`);
       refreshData();
     } catch (err: any) {
       setUploadNotice(`Upload Error: ${err.message}`);
@@ -209,11 +185,11 @@ export default function PowerPlatformDashboard() {
 
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 flex flex-col justify-between">
           <div>
-            {activeTab === "Home" && <HomeTab onNavigate={setActiveTab} />}
+            {activeTab === 'Home' && <HomeTab onNavigate={setActiveTab} />}
 
-            {activeTab === "Grid Models" && (
+            {activeTab === 'Grid Models' && (
               <GridStabilityTab
-                modelName={results?.model_name || "Nig 10-Bus Benchmark"}
+                modelName={results?.model_name || 'Nig 10-Bus Benchmark'}
                 divergedNotice={divergedNotice}
                 loadMultiplier={loadMultiplier}
                 setLoadMultiplier={setLoadMultiplier}
@@ -224,10 +200,13 @@ export default function PowerPlatformDashboard() {
                 lines={results?.lines || []}
                 trippedLines={trippedLines}
                 toggleLine={handleToggleLine}
+                models={models}
+                onActivateModel={handleActivateModel}
+                onNavigateTab={setActiveTab}
               />
             )}
 
-            {activeTab === "Dynamics" && (
+            {activeTab === 'Dynamics' && (
               <DynamicsTab
                 dynDisturbance={dynDisturbance}
                 setDynDisturbance={setDynDisturbance}
@@ -241,7 +220,7 @@ export default function PowerPlatformDashboard() {
               />
             )}
 
-            {activeTab === "Market Simulations" && (
+            {activeTab === 'Market Simulations' && (
               <MarketTab
                 gasPriceFactor={gasPriceFactor}
                 setGasPriceFactor={setGasPriceFactor}
@@ -253,7 +232,7 @@ export default function PowerPlatformDashboard() {
               />
             )}
 
-            {activeTab === "Data Upload" && (
+            {activeTab === 'Data Upload' && (
               <UploadTab
                 uploadNotice={uploadNotice}
                 uploadLoading={uploadLoading}
@@ -267,7 +246,7 @@ export default function PowerPlatformDashboard() {
               />
             )}
 
-            {activeTab === "Visualization" && (
+            {activeTab === 'Visualization' && (
               <SingleLineDiagram
                 buses={results?.buses || []}
                 lines={results?.lines || []}
@@ -276,12 +255,13 @@ export default function PowerPlatformDashboard() {
                 selectedBus={selectedBus}
                 setSelectedBus={setSelectedBus}
                 onReset={handleReset}
+                modelName={results?.model_name || ''}
               />
             )}
 
-            {activeTab === "Reports" && <ReportsTab results={results} />}
+            {activeTab === 'Reports' && <ReportsTab results={results} />}
 
-            {activeTab === "Admin Panel" && (
+            {activeTab === 'Admin Panel' && (
               <AdminTab
                 users={users}
                 onApprove={async (id) => {
@@ -297,12 +277,11 @@ export default function PowerPlatformDashboard() {
               />
             )}
 
-            {activeTab === "About Us" && <AboutTab />}
+            {activeTab === 'About Us' && <AboutTab />}
           </div>
 
           <footer className="mt-8 pt-3 border-t border-slate-200 text-center text-[11px] text-slate-500">
-            Copyright 2026 National Power System Modelling & Simulation Platform
-            | Machine Learning 4 Power Systems (ML4PS) | FUT Minna
+            Copyright 2026 National Power System Modelling & Simulation Platform | Machine Learning 4 Power Systems (ML4PS) | FUT Minna
           </footer>
         </main>
       </div>
