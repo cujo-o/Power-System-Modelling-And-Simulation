@@ -1,63 +1,76 @@
 import copy
 import pandapower as pp
+from services.power_flow import clean_float
 
-def solve_market_dispatch(base_net: pp.pandapowerNet, load_multiplier: float, gas_price_factor: float, hydro_availability: float):
+def solve_market_dispatch(base_net: pp.pandapowerNet = None, load_multiplier: float = 1.0, gas_price_factor: float = 1.0, hydro_availability: float = 1.0):
+    if base_net is None or (len(base_net.gen) == 0 and len(base_net.ext_grid) == 0):
+        return {
+            "converged": True,
+            "market_clearing_price_ngn": 0.0,
+            "total_dispatched_mw": 0.0,
+            "total_hourly_cost_ngn": 0.0,
+            "hydro_share_percent": 0.0,
+            "thermal_share_percent": 0.0,
+            "merit_order": [],
+            "buses_lmp": []
+        }
+
     net = copy.deepcopy(base_net)
-    hydro_cost = round(19500.0 / max(0.2, hydro_availability), 2)
-    gas_cost = round(48000.0 * max(0.5, gas_price_factor), 2)
-
-    gen_market_profiles = {
-        "Kainji Hydro": {"type": "Hydro", "cost": hydro_cost * 0.95, "p_max": 760.0 * hydro_availability},
-        "Jebba Hydro": {"type": "Hydro", "cost": hydro_cost * 1.00, "p_max": 621.0 * hydro_availability},
-        "Shiroro Hydro": {"type": "Hydro", "cost": hydro_cost * 1.05, "p_max": 600.0 * hydro_availability},
-        "Delta IV Gas": {"type": "Gas Turbine", "cost": gas_cost * 0.92, "p_max": 890.0},
-        "Afam VI Gas": {"type": "Gas Turbine", "cost": gas_cost * 0.94, "p_max": 650.0},
-        "Egbin PS (Slack)": {"type": "Gas Steam", "cost": gas_cost * 1.00, "p_max": 1320.0},
-    }
+    hydro_base_cost = round(19500.0 / max(0.2, hydro_availability), 2)
+    gas_base_cost = round(48000.0 * max(0.5, gas_price_factor), 2)
 
     generators_dispatch = []
     total_hourly_cost_ngn = 0.0
 
+    # Dispatch standard generators
     for idx, row in net.gen.iterrows():
-        name = row.get("name", f"Gen {idx}")
-        profile = gen_market_profiles.get(name, {"type": "Thermal", "cost": gas_cost, "p_max": 500.0})
-        dispatched_mw = float(row.get("p_mw", 200.0)) * load_multiplier
-        hourly_plant_cost = dispatched_mw * profile["cost"]
-        total_hourly_cost_ngn += hourly_plant_cost
+        name = str(row.get("name", f"Generator {idx}"))
+        is_hydro = "hydro" in name.lower() or "gs" in name.lower() and "thermal" not in name.lower()
+        marginal_cost = hydro_base_cost if is_hydro else gas_base_cost
+        gen_type = "Hydro" if is_hydro else "Thermal Gas"
+
+        p_rated = float(row.get("max_p_mw", row.get("p_mw", 100.0) * 1.5))
+        dispatched_mw = float(row.get("p_mw", 50.0)) * load_multiplier
+        hourly_cost = dispatched_mw * marginal_cost
+        total_hourly_cost_ngn += hourly_cost
 
         generators_dispatch.append({
             "id": int(idx),
             "name": name,
-            "type": profile["type"],
-            "marginal_cost": profile["cost"],
+            "type": gen_type,
+            "marginal_cost": marginal_cost,
             "dispatched_mw": round(dispatched_mw, 1),
-            "max_mw": round(profile["p_max"], 1),
-            "capacity_utilization": round((dispatched_mw / max(1.0, profile["p_max"])) * 100.0, 1),
-            "hourly_cost_ngn": round(hourly_plant_cost, 2),
+            "max_mw": round(p_rated, 1),
+            "capacity_utilization": round((dispatched_mw / max(1.0, p_rated)) * 100.0, 1),
+            "hourly_cost_ngn": round(hourly_cost, 2),
         })
 
-    slack_p = 591.2 * load_multiplier
-    slack_cost = slack_p * gas_cost
-    total_hourly_cost_ngn += slack_cost
-    generators_dispatch.append({
-        "id": 999,
-        "name": "Egbin PS (Slack/Base)",
-        "type": "Gas Steam",
-        "marginal_cost": gas_cost,
-        "dispatched_mw": round(slack_p, 1),
-        "max_mw": 1320.0,
-        "capacity_utilization": round((slack_p / 1320.0) * 100.0, 1),
-        "hourly_cost_ngn": round(slack_cost, 2),
-    })
+    # Dispatch external slack grid
+    for idx, row in net.ext_grid.iterrows():
+        name = str(row.get("name", f"Slack Infeed {idx}"))
+        dispatched_mw = 350.0 * load_multiplier
+        hourly_cost = dispatched_mw * gas_base_cost
+        total_hourly_cost_ngn += hourly_cost
+
+        generators_dispatch.append({
+            "id": 900 + int(idx),
+            "name": name,
+            "type": "Base/Slack Thermal",
+            "marginal_cost": gas_base_cost,
+            "dispatched_mw": round(dispatched_mw, 1),
+            "max_mw": 1200.0,
+            "capacity_utilization": round((dispatched_mw / 1200.0) * 100.0, 1),
+            "hourly_cost_ngn": round(hourly_cost, 2),
+        })
 
     generators_dispatch.sort(key=lambda g: g["marginal_cost"])
     total_dispatched = sum(g["dispatched_mw"] for g in generators_dispatch)
-    clearing_price = max([g["marginal_cost"] for g in generators_dispatch]) if generators_dispatch else gas_cost
+    clearing_price = max([g["marginal_cost"] for g in generators_dispatch]) if generators_dispatch else gas_base_cost
 
     buses_lmp = []
     for idx, row in net.bus.iterrows():
         zone = str(row.get("zone", "Transmission"))
-        adder = clearing_price * 0.06 if "South" in zone else -clearing_price * 0.03
+        adder = clearing_price * 0.05 if "South" in zone else -clearing_price * 0.03
         buses_lmp.append({
             "id": int(idx),
             "name": str(row.get("name", f"Bus {idx}")),

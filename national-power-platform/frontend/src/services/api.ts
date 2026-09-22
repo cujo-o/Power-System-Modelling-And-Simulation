@@ -7,6 +7,25 @@ export const api = {
     const res = await fetch(`${API_BASE}/api/models`);
     return res.json();
   },
+  async loadPayload(data: {
+    id: string;
+    name: string;
+    voltage_level?: string;
+    domain?: string;
+    platform?: string;
+    network_payload: string;
+  }) {
+    const res = await fetch(`${API_BASE}/api/models/load-payload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to hydrate model from Supabase');
+    }
+    return res.json();
+  },
   async activateModel(id: string) {
     const res = await fetch(`${API_BASE}/api/models/${id}/activate`, { method: 'POST' });
     return res.json();
@@ -60,6 +79,10 @@ export const api = {
       method: 'POST',
       body: formData,
     });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Model parsing failed');
+    }
     return res.json();
   },
   async getUsers(): Promise<UserAccount[]> {

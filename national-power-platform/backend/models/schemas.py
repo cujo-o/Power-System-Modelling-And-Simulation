@@ -19,6 +19,14 @@ class MarketSimulationRequest(BaseModel):
     hydro_availability: Optional[float] = 1.0
     tripped_lines: Optional[List[int]] = []
 
+class LoadPayloadRequest(BaseModel):
+    id: str
+    name: str
+    voltage_level: Optional[str] = "330kV"
+    domain: Optional[str] = "Static & Dynamic"
+    platform: Optional[str] = "MATPOWER"
+    network_payload: str
+
 class UserRegisterRequest(BaseModel):
     name: str
     email: str

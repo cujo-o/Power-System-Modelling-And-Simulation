@@ -1,6 +1,5 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from services.grid_builder import build_nig_10_bus, build_case330, build_case132
 from routers.simulations import get_sim_router
 from routers.models import get_model_router
 from routers.admin import get_admin_router
@@ -15,52 +14,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-state = {"active_id": "nig-10-bus"}
-
-model_registry = {
-    "nig-10-bus": {
-        "id": "nig-10-bus",
-        "name": "Nig 10-Bus Benchmark Grid",
-        "voltage_level": "330kV",
-        "domain": "Static & Dynamic",
-        "platform": "MATPOWER / PSAT",
-        "net": build_nig_10_bus(),
-        "buses": 10,
-        "branches": 10,
-        "total_installed_mw": 2690.0,
-        "total_demand_mw": 1386.9,
-        "converged": True,
-        "is_default": True
-    },
-    "case-330kv-63": {
-        "id": "case-330kv-63",
-        "name": "Nigeria 330kV Grid (63-Bus NISO Equivalent)",
-        "voltage_level": "330kV",
-        "domain": "Static & Dynamic",
-        "platform": "DIgSILENT / MATPOWER",
-        "net": build_case330(),
-        "buses": 63,
-        "branches": 110,
-        "total_installed_mw": 4850.0,
-        "total_demand_mw": 3397.7,
-        "converged": True,
-        "is_default": False
-    },
-    "case-132kv-369": {
-        "id": "case-132kv-369",
-        "name": "NISO 132/330 kV Integrated Grid (369 Buses)",
-        "voltage_level": "132kV",
-        "domain": "Static Power Flow",
-        "platform": "MATPOWER / PSAT",
-        "net": build_case132(),
-        "buses": 369,
-        "branches": 516,
-        "total_installed_mw": 13337.6,
-        "total_demand_mw": 5799.6,
-        "converged": True,
-        "is_default": False
-    }
-}
+# Shared in-memory active cache
+state = {"active_id": None}
+model_registry = {}
 
 users_db = [
     {
@@ -92,27 +48,15 @@ users_db = [
         "password": "ML4PS-NISO",
         "temp_password": "ML4PS-NISO",
         "registered_at": "2026-09-04 14:22"
-    },
-    {
-        "id": "usr-3",
-        "name": "Dr. K. A. Bello",
-        "email": "kabello@abu.edu.ng",
-        "institution": "Ahmadu Bello University",
-        "department": "Electrical Engineering",
-        "role": "Researcher",
-        "reason": "Comparative voltage stability research for North-West region",
-        "referee": "Dean of Engineering, ABU",
-        "research_tags": "132kV Sub-Transmission, PSS",
-        "status": "PENDING",
-        "password": None,
-        "temp_password": None,
-        "registered_at": "2026-09-18 09:30"
     }
 ]
 
 def get_active():
-    entry = model_registry.get(state["active_id"], model_registry["nig-10-bus"])
-    return entry["net"], entry["name"]
+    active_id = state["active_id"]
+    if active_id and active_id in model_registry:
+        entry = model_registry[active_id]
+        return entry["net"], entry["name"]
+    return None, "No Active Model (Upload a case file)"
 
 app.include_router(get_sim_router(model_registry, get_active))
 app.include_router(get_model_router(model_registry, state))

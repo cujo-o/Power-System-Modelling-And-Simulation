@@ -1,63 +1,11 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 import pandapower as pp
+from models.schemas import LoadPayloadRequest
 from services.parser import parse_and_register_file
-from services.grid_builder import build_case330, build_nig_10_bus, build_case132
-
+from services.power_flow import solve_power_flow
 
 def get_model_router(model_registry: dict, state_holder: dict):
     router = APIRouter(tags=["Models"])
-
-    # Pre-register standard NISO benchmark models
-    if "nig-10-bus" not in model_registry:
-        m10 = build_nig_10_bus()
-        model_registry["nig-10-bus"] = {
-            "id": "nig-10-bus",
-            "name": "Nig 10-Bus Benchmark Grid",
-            "voltage_level": "330kV",
-            "domain": "Static & Dynamic",
-            "platform": "MATPOWER / PSAT",
-            "net": m10,
-            "buses": len(m10.bus),
-            "branches": len(m10.line),
-            "total_installed_mw": 2690.0,
-            "total_demand_mw": 1386.9,
-            "converged": True,
-            "is_default": True
-        }
-
-    if "case-330kv-63" not in model_registry:
-        m330 = build_case330()
-        model_registry["case-330kv-63"] = {
-            "id": "case-330kv-63",
-            "name": "Nigeria 330kV NISO Grid (63 Buses)",
-            "voltage_level": "330kV",
-            "domain": "Static & Dynamic",
-            "platform": "DIgSILENT / MATPOWER",
-            "net": m330,
-            "buses": len(m330.bus),
-            "branches": len(m330.line),
-            "total_installed_mw": 4850.0,
-            "total_demand_mw": 3397.7,
-            "converged": True,
-            "is_default": False
-        }
-
-    if "case-132kv-369" not in model_registry:
-        m132 = build_case132()
-        model_registry["case-132kv-369"] = {
-            "id": "case-132kv-369",
-            "name": "NISO 132/330 kV Integrated Grid (369 Buses)",
-            "voltage_level": "132kV",
-            "domain": "Static Power Flow",
-            "platform": "MATPOWER / PSAT",
-            "net": m132,
-            "buses": len(m132.bus),
-            "branches": len(m132.line),
-            "total_installed_mw": 13337.6,
-            "total_demand_mw": 5799.6,
-            "converged": True,
-            "is_default": False
-        }
 
     @router.get("/api/models")
     def list_models():
@@ -73,33 +21,61 @@ def get_model_router(model_registry: dict, state_holder: dict):
                 "total_installed_mw": m["total_installed_mw"],
                 "total_demand_mw": m["total_demand_mw"],
                 "converged": m["converged"],
-                "is_default": m.get("is_default", False),
+                "is_default": False,
                 "is_active": (m["id"] == state_holder["active_id"])
             }
             for m in model_registry.values()
         ]
 
+    @router.post("/api/models/load-payload")
+    def load_model_from_payload(req: LoadPayloadRequest):
+        """Restores a network topology from Supabase JSON string into active backend RAM."""
+        try:
+            net = pp.from_json_string(req.network_payload)
+            sol = solve_power_flow(net, load_multiplier=1.0)
+            
+            installed_mw = float(net.gen.p_mw.sum()) if len(net.gen) > 0 else 0.0
+            if len(net.ext_grid) > 0:
+                installed_mw += 1000.0
+            demand_mw = float(net.load.p_mw.sum()) if len(net.load) > 0 else 0.0
+
+            model_registry[req.id] = {
+                "id": req.id,
+                "name": req.name,
+                "voltage_level": req.voltage_level,
+                "domain": req.domain,
+                "platform": req.platform,
+                "net": net,
+                "buses": len(net.bus),
+                "branches": len(net.line),
+                "total_installed_mw": round(installed_mw, 1),
+                "total_demand_mw": round(demand_mw, 1),
+                "converged": sol["converged"],
+                "is_default": False
+            }
+            state_holder["active_id"] = req.id
+            return {"status": "success", "active_model_id": req.id, "name": req.name}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to restore model from payload: {str(e)}")
+
     @router.post("/api/models/{model_id}/activate")
     def activate_model(model_id: str):
         if model_id not in model_registry:
-            raise HTTPException(status_code=404, detail="Model not found.")
+            raise HTTPException(status_code=404, detail="Model not currently in server cache. Please rehydrate from Supabase.")
         state_holder["active_id"] = model_id
         return {"status": "success", "active_model_id": model_id, "name": model_registry[model_id]["name"]}
 
     @router.delete("/api/models/{model_id}")
     def delete_model(model_id: str):
-        if model_id not in model_registry:
-            raise HTTPException(status_code=404, detail="Model not found.")
-        if model_registry[model_id].get("is_default"):
-            raise HTTPException(status_code=400, detail="Cannot delete default baseline.")
-        del model_registry[model_id]
+        if model_id in model_registry:
+            del model_registry[model_id]
         if state_holder["active_id"] == model_id:
-            state_holder["active_id"] = "nig-10-bus"
+            state_holder["active_id"] = next(iter(model_registry.keys()), None)
         return {"status": "success", "active_model_id": state_holder["active_id"]}
 
     @router.post("/api/grid/reset")
     def reset_grid():
-        state_holder["active_id"] = "nig-10-bus"
+        state_holder["active_id"] = next(iter(model_registry.keys()), None)
         return {"status": "success", "active_model_id": state_holder["active_id"]}
 
     @router.post("/api/upload/model")
@@ -122,7 +98,8 @@ def get_model_router(model_registry: dict, state_holder: dict):
                     "branches": entry["branches"],
                     "total_installed_mw": entry["total_installed_mw"],
                     "total_demand_mw": entry["total_demand_mw"]
-                }
+                },
+                "converged": entry["converged"]
             }
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Failed to parse model: {str(e)}")
