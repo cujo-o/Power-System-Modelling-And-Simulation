@@ -1,6 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from services.grid_builder import build_nig_10_bus, build_case330
+
+try:
+    from services.grid_builder import build_nig_10_bus, build_case330
+except (ImportError, ModuleNotFoundError):
+    from nigeria_cases import build_nig_10_bus, build_case330
+
 from routers.simulations import get_sim_router
 from routers.models import get_model_router
 from routers.admin import get_admin_router
@@ -40,7 +45,7 @@ model_registry = {
         "platform": "DIgSILENT / MATPOWER",
         "net": build_case330(),
         "buses": 63,
-        "branches": 29,
+        "branches": 110,
         "total_installed_mw": 4850.0,
         "total_demand_mw": 3397.7,
         "converged": True,
@@ -56,8 +61,8 @@ users_db = [
         "institution": "FUT Minna (ML4PS Group)",
         "department": "Electrical & Electronics Engineering",
         "role": "Taskforce Administrator",
-        "reason": "National grid simulation lead researcher",
-        "referee": "Prof. ML4PS Lead",
+        "reason": "Lead researcher",
+        "referee": "Prof. Lead",
         "research_tags": "330kV, UFLS, Dynamics",
         "status": "APPROVED",
         "password": "ML4PS-ADMIN",
