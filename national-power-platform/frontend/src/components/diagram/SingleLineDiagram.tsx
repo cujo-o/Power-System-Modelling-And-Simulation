@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import { BusData, LineData } from '@/types/grid';
 import {
   ZoomIn,
@@ -8,12 +8,10 @@ import {
   Maximize2,
   Zap,
   RotateCcw,
-  MapPin,
   Layers,
+  MapPin,
   Printer,
-  ChevronRight,
-  ShieldAlert,
-  Sliders,
+  Sparkles,
 } from 'lucide-react';
 
 interface DiagramProps {
@@ -27,32 +25,151 @@ interface DiagramProps {
   modelName: string;
 }
 
-// Fixed schematic for the textbook Nig 10-Bus benchmark
-const NIG10_PRESET: Record<number, { x: number; y: number }> = {
-  0: { x: 140, y: 120 }, // Kainji GS
-  1: { x: 320, y: 120 }, // Jebba TS/GS
-  2: { x: 540, y: 120 }, // Shiroro GS
-  3: { x: 740, y: 120 }, // Katampe (Abuja)
-  4: { x: 320, y: 280 }, // Osogbo NCC Hub
-  7: { x: 580, y: 280 }, // Benin TS
-  5: { x: 140, y: 440 }, // Ikeja West
-  6: { x: 320, y: 440 }, // Egbin PS (Slack)
-  8: { x: 580, y: 440 }, // Afam VI GS
-  9: { x: 740, y: 440 }, // Delta IV GS
-};
+interface Point {
+  x: number;
+  y: number;
+}
 
-// Regional anchor points across Nigeria
-const REGIONAL_GEOGRAPHIC_ANCHORS: Record<string, { cx: number; cy: number }> = {
-  'North-West': { cx: 480, cy: 160 },
-  'North-Central': { cx: 460, cy: 340 },
-  'North-East': { cx: 860, cy: 240 },
-  'South-West': { cx: 220, cy: 520 },
-  'Mid-West': { cx: 420, cy: 560 },
-  'South-South': { cx: 580, cy: 680 },
-  'South-East': { cx: 580, cy: 540 },
-  'Transmission': { cx: 480, cy: 400 },
-  'Substation': { cx: 480, cy: 400 },
-};
+/**
+ * Procedural Force-Directed Graph Layout Engine.
+ * Automatically untangles and positions ANY uploaded electrical grid.
+ */
+function computeProceduralLayout(
+  buses: BusData[],
+  lines: LineData[],
+  preferGeo: boolean
+): { positions: Record<number, Point>; viewBox: string } {
+  if (!buses || buses.length === 0) {
+    return { positions: {}, viewBox: '0 0 1000 700' };
+  }
+
+  const positions: Record<number, Point> = {};
+  const busMap = new Map<number, BusData>();
+  buses.forEach((b) => busMap.set(b.id, b));
+
+  // 1. Check if model has pre-existing distinct coordinates
+  const hasDistinctCoords =
+    buses.filter((b) => typeof b.x === 'number' && typeof b.y === 'number' && (b.x !== 0 || b.y !== 0)).length >=
+    buses.length * 0.7;
+
+  // Check variance so we don't use identical fallback coordinates
+  let xVariance = 0;
+  let yVariance = 0;
+  if (hasDistinctCoords) {
+    const meanX = buses.reduce((acc, b) => acc + (b.x || 0), 0) / buses.length;
+    const meanY = buses.reduce((acc, b) => acc + (b.y || 0), 0) / buses.length;
+    xVariance = buses.reduce((acc, b) => acc + Math.pow((b.x || 0) - meanX, 2), 0) / buses.length;
+    yVariance = buses.reduce((acc, b) => acc + Math.pow((b.y || 0) - meanY, 2), 0) / buses.length;
+  }
+
+  const canUseModelCoords = hasDistinctCoords && xVariance > 100 && yVariance > 100;
+
+  if (canUseModelCoords && preferGeo) {
+    // Directly scale existing geographic coordinates
+    buses.forEach((b) => {
+      positions[b.id] = { x: b.x || 250, y: b.y || 250 };
+    });
+  } else {
+    // 2. Procedural Spring-Embedder Simulation
+    // Arrange initially along a circle/spiral
+    const n = buses.length;
+    const radius = Math.max(220, Math.sqrt(n) * 65);
+    const cx = 500;
+    const cy = 380;
+
+    buses.forEach((b, i) => {
+      const angle = (2 * Math.PI * i) / n;
+      positions[b.id] = {
+        x: cx + radius * Math.cos(angle) + (Math.random() - 0.5) * 20,
+        y: cy + radius * Math.sin(angle) + (Math.random() - 0.5) * 20,
+      };
+    });
+
+    // Run force-directed iterations (Repulsion + Spring Attraction)
+    const iterations = Math.min(100, Math.max(45, Math.floor(1200 / Math.max(10, n))));
+    const kRepel = Math.max(120, Math.min(300, 1800 / Math.sqrt(n))); // Ideal distance
+    const kRepelSq = kRepel * kRepel;
+
+    for (let iter = 0; iter < iterations; iter++) {
+      const disp: Record<number, Point> = {};
+      buses.forEach((b) => (disp[b.id] = { x: 0, y: 0 }));
+
+      // Coulomb Repulsion between all bus pairs
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          const idA = buses[i].id;
+          const idB = buses[j].id;
+          const pA = positions[idA];
+          const pB = positions[idB];
+
+          const dx = pA.x - pB.x;
+          const dy = pA.y - pB.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1.0;
+
+          if (dist < kRepel * 2.8) {
+            const force = (kRepelSq / dist) * 0.45;
+            const fx = (dx / dist) * force;
+            const fy = (dy / dist) * force;
+
+            disp[idA].x += fx;
+            disp[idA].y += fy;
+            disp[idB].x -= fx;
+            disp[idB].y -= fy;
+          }
+        }
+      }
+
+      // Hooke's Law Spring Attraction along transmission lines
+      lines.forEach((line) => {
+        const pFrom = positions[line.from_bus];
+        const pTo = positions[line.to_bus];
+        if (!pFrom || !pTo) return;
+
+        const dx = pTo.x - pFrom.x;
+        const dy = pTo.y - pFrom.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1.0;
+
+        const springForce = ((dist * dist) / kRepel) * 0.08;
+        const fx = (dx / dist) * springForce;
+        const fy = (dy / dist) * springForce;
+
+        disp[line.from_bus].x += fx;
+        disp[line.from_bus].y += fy;
+        disp[line.to_bus].x -= fx;
+        disp[line.to_bus].y -= fy;
+      });
+
+      // Apply displacements with temperature cooling
+      const temp = (1.0 - iter / iterations) * 22;
+      buses.forEach((b) => {
+        const d = disp[b.id];
+        const dLen = Math.sqrt(d.x * d.x + d.y * d.y) || 1.0;
+        const cap = Math.min(dLen, temp);
+
+        positions[b.id].x += (d.x / dLen) * cap;
+        positions[b.id].y += (d.y / dLen) * cap;
+      });
+    }
+  }
+
+  // 3. Compute dynamic SVG ViewBox to fit the procedural layout
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  Object.values(positions).forEach((p) => {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  });
+
+  const pad = 120;
+  const w = Math.max(900, maxX - minX + pad * 2);
+  const h = Math.max(550, maxY - minY + pad * 2);
+
+  return {
+    positions,
+    viewBox: `${minX - pad} ${minY - pad} ${w} ${h}`,
+  };
+}
 
 export const SingleLineDiagram: React.FC<DiagramProps> = ({
   buses,
@@ -68,11 +185,10 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
   const [zoomLevel, setZoomLevel] = useState(1.0);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
 
-  // Mouse Drag State
+  // Mouse & Touch Drag States
   const [isMouseDown, setIsMouseDown] = useState(false);
   const [mouseStart, setMouseStart] = useState({ x: 0, y: 0 });
 
-  // Mobile Touch Gesture State (Pinch-to-Zoom & Pan)
   const touchState = useRef<{
     initialDist: number;
     initialZoom: number;
@@ -87,104 +203,14 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
     isPinching: false,
   });
 
-  const isNig10 = modelName.toLowerCase().includes('10-bus') || buses.length <= 10;
+  // Execute procedural graph layout dynamically for ANY uploaded model
+  const { positions: nodePositions, viewBox } = useMemo(() => {
+    return computeProceduralLayout(buses, lines, viewMode === 'geographic');
+  }, [buses, lines, viewMode]);
 
-  // Procedural Force-Relaxation Layout Algorithm
-  const { nodePositions, viewBox } = useMemo(() => {
-    if (buses.length === 0) {
-      return { nodePositions: {}, viewBox: '0 0 1000 700' };
-    }
-
-    // Nig 10-Bus Schematic Preset
-    if (isNig10 && viewMode === 'schematic') {
-      const positions: Record<number, { x: number; y: number }> = {};
-      buses.forEach((b) => {
-        positions[b.id] = NIG10_PRESET[b.id] || { x: 200 + (b.id % 4) * 180, y: 120 + Math.floor(b.id / 4) * 160 };
-      });
-      return { nodePositions: positions, viewBox: '40 30 840 520' };
-    }
-
-    // Procedural Layout for Arbitrary Grid Sizes (63-bus, 369-bus, custom upload)
-    const positions: Record<number, { x: number; y: number }> = {};
-    const zoneBuckets: Record<string, number> = {};
-
-    buses.forEach((b, idx) => {
-      if (viewMode === 'geographic') {
-        const anchor = REGIONAL_GEOGRAPHIC_ANCHORS[b.zone] || { cx: 500, cy: 400 };
-        const countInZone = zoneBuckets[b.zone] || 0;
-        zoneBuckets[b.zone] = countInZone + 1;
-        const angle = (countInZone * 137.5 * Math.PI) / 180;
-        const radius = 45 + Math.sqrt(countInZone) * 55;
-        positions[b.id] = {
-          x: anchor.cx + radius * Math.cos(angle),
-          y: anchor.cy + radius * Math.sin(angle),
-        };
-      } else {
-        // Structured Topological Matrix
-        const cols = Math.max(5, Math.ceil(Math.sqrt(buses.length * 1.5)));
-        const col = idx % cols;
-        const row = Math.floor(idx / cols);
-        positions[b.id] = {
-          x: 120 + col * 180 + (row % 2 === 1 ? 40 : 0),
-          y: 100 + row * 130,
-        };
-      }
-    });
-
-    // Iterative Collision Avoidance Loop
-    const minDx = 140;
-    const minDy = 90;
-    const iterations = viewMode === 'geographic' ? 45 : 25;
-
-    for (let iter = 0; iter < iterations; iter++) {
-      for (let i = 0; i < buses.length; i++) {
-        for (let j = i + 1; j < buses.length; j++) {
-          const idA = buses[i].id;
-          const idB = buses[j].id;
-          const posA = positions[idA];
-          const posB = positions[idB];
-          if (!posA || !posB) continue;
-
-          const dx = posB.x - posA.x;
-          const dy = posB.y - posA.y;
-          const absDx = Math.abs(dx);
-          const absDy = Math.abs(dy);
-
-          if (absDx < minDx && absDy < minDy) {
-            const overlapX = (minDx - absDx) * 0.5;
-            const overlapY = (minDy - absDy) * 0.5;
-            const signX = dx >= 0 ? 1 : -1;
-            const signY = dy >= 0 ? 1 : -1;
-
-            posA.x -= overlapX * signX;
-            posA.y -= overlapY * signY;
-            posB.x += overlapX * signX;
-            posB.y += overlapY * signY;
-          }
-        }
-      }
-    }
-
-    // Compute dynamic bounding box
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    Object.values(positions).forEach((p) => {
-      if (p.x < minX) minX = p.x;
-      if (p.x > maxX) maxX = p.x;
-      if (p.y < minY) minY = p.y;
-      if (p.y > maxY) maxY = p.y;
-    });
-
-    const pad = 120;
-    const width = Math.max(800, maxX - minX + pad * 2);
-    const height = Math.max(500, maxY - minY + pad * 2);
-    const vb = `${minX - pad} ${minY - pad} ${width} ${height}`;
-
-    return { nodePositions: positions, viewBox: vb };
-  }, [buses, lines, viewMode, isNig10]);
-
-  // Zoom / Pan Controls
-  const handleZoomIn = () => setZoomLevel((z) => Math.min(z + 0.25, 4.0));
-  const handleZoomOut = () => setZoomLevel((z) => Math.max(z - 0.25, 0.35));
+  // Zoom & Pan Handlers
+  const handleZoomIn = () => setZoomLevel((z) => Math.min(z + 0.25, 4.5));
+  const handleZoomOut = () => setZoomLevel((z) => Math.max(z - 0.25, 0.3));
   const handleReset = () => {
     setZoomLevel(1.0);
     setPanOffset({ x: 0, y: 0 });
@@ -194,10 +220,9 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     const delta = e.deltaY < 0 ? 0.15 : -0.15;
-    setZoomLevel((z) => Math.min(Math.max(z + delta, 0.35), 4.0));
+    setZoomLevel((z) => Math.min(Math.max(z + delta, 0.3), 4.5));
   };
 
-  // Mouse Handlers
   const handleMouseDown = (e: React.MouseEvent) => {
     setIsMouseDown(true);
     setMouseStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
@@ -208,7 +233,7 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
   };
   const handleMouseUp = () => setIsMouseDown(false);
 
-  // Mobile Touch Handlers (Pinch to Zoom & Touch Pan)
+  // Native Mobile Pinch-to-Zoom & Pan Handlers
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 1) {
       touchState.current.isPinching = false;
@@ -237,8 +262,7 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
       const currentDist = Math.hypot(dx, dy);
       if (touchState.current.initialDist > 0) {
         const ratio = currentDist / touchState.current.initialDist;
-        const newZoom = Math.min(Math.max(touchState.current.initialZoom * ratio, 0.35), 4.0);
-        setZoomLevel(newZoom);
+        setZoomLevel(Math.min(Math.max(touchState.current.initialZoom * ratio, 0.3), 4.5));
       }
     }
   };
@@ -247,7 +271,7 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
     touchState.current.isPinching = false;
   };
 
-  // Connected corridors for the inspector
+  // Connected lines for the inspector side panel
   const selectedBusLines = useMemo(() => {
     if (!selectedBus) return [];
     return lines.filter((l) => l.from_bus === selectedBus.id || l.to_bus === selectedBus.id);
@@ -255,21 +279,25 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
 
   return (
     <div className="space-y-4 max-w-6xl mx-auto">
-      {/* Top Diagram Toolbar */}
+      {/* Toolbar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-bold text-[#500b50]">
-            Interactive Single-Line Diagram & Vector Map
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-bold text-[#500b50]">
+              Interactive Single-Line Diagram
+            </h2>
+            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-[#500b50] flex items-center gap-1">
+              <Sparkles className="h-3 w-3" />
+              <span>Procedural Layout</span>
+            </span>
+          </div>
           <p className="text-xs text-slate-500">
-            {viewMode === 'schematic'
-              ? 'Procedural CAD Busbar layout with generator and load feeder connections.'
-              : 'Geographic regional map across Nigerian geopolitical zones.'}
+            {buses.length} Substations | {lines.length} Transmission Branches | Dynamic connectivity without fixed mappings.
           </p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Dual View Mode Toggle */}
+          {/* View Mode Toggle */}
           <div className="flex rounded border border-slate-300 bg-white p-0.5 text-xs shadow-xs">
             <button
               onClick={() => setViewMode('schematic')}
@@ -295,7 +323,7 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
             </button>
           </div>
 
-          {/* Zoom and Pan Controls */}
+          {/* Zoom and Pan Toolbar */}
           <div className="flex items-center rounded border border-slate-300 bg-white p-0.5 text-xs shadow-xs">
             <button
               onClick={handleZoomIn}
@@ -334,7 +362,7 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-        {/* Vector CAD Viewport (Touch-Enabled for Mobile) */}
+        {/* Dynamic Procedural SVG Canvas */}
         <div
           className="lg:col-span-2 rounded-lg border border-slate-800 bg-[#0c1427] p-4 relative overflow-hidden flex flex-col items-center justify-center shadow-md select-none"
           style={{ touchAction: 'none' }}
@@ -359,7 +387,7 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
             </defs>
 
             <g transform={`translate(${panOffset.x}, ${panOffset.y}) scale(${zoomLevel})`}>
-              {/* Transmission Corridors */}
+              {/* Transmission Corridors dynamically connected from from_bus to to_bus */}
               {lines.map((line) => {
                 const pFrom = nodePositions[line.from_bus];
                 const pTo = nodePositions[line.to_bus];
@@ -376,7 +404,7 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
                   : '#10b981';
 
                 return (
-                  <g key={line.id} className="cursor-pointer group" onClick={() => toggleLine(line.id)}>
+                  <g key={`line-${line.id}`} className="cursor-pointer group" onClick={() => toggleLine(line.id)}>
                     <line
                       x1={pFrom.x}
                       y1={pFrom.y}
@@ -388,7 +416,7 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
                       className="transition-colors group-hover:stroke-white"
                     />
 
-                    {/* Circuit Breaker Box */}
+                    {/* N-1 Breaker Box at branch center */}
                     <g transform={`translate(${midX}, ${midY})`} className="transition-transform group-hover:scale-125">
                       <rect
                         x="-6"
@@ -402,9 +430,9 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
                       />
                     </g>
 
-                    {/* Power Flow MW Badge */}
+                    {/* Active Power Flow MW Badge */}
                     {!isTripped && (
-                      <g transform={`translate(${midX}, ${midY - 13})`}>
+                      <g transform={`translate(${midX}, ${midY - 12})`}>
                         <rect x="-24" y="-8" width="48" height="15" rx="3" fill="#090e1a" stroke="#334155" strokeWidth="1" />
                         <text x="0" y="3.5" fill="#f8fafc" fontSize="8" fontFamily="monospace" fontWeight="bold" textAnchor="middle">
                           {line.flow_mw} MW
@@ -415,7 +443,7 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
                 );
               })}
 
-              {/* Substations, Generators and Loads */}
+              {/* Substations, Generators, and Load Feeders */}
               {buses.map((bus) => {
                 const pos = nodePositions[bus.id];
                 if (!pos) return null;
@@ -438,7 +466,7 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
 
                 return (
                   <g
-                    key={bus.id}
+                    key={`bus-${bus.id}`}
                     transform={`translate(${pos.x}, ${pos.y})`}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -446,7 +474,7 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
                     }}
                     className="cursor-pointer group"
                   >
-                    {/* Synchronous Generator Symbol */}
+                    {/* Synchronous Generator Feeder Symbol */}
                     {hasGen && viewMode === 'schematic' && (
                       <g transform="translate(0, -28)">
                         <line x1="0" y1="24" x2="0" y2="10" stroke="#94a3b8" strokeWidth="1.5" />
@@ -469,14 +497,14 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
                       </g>
                     )}
 
-                    {/* Substation Busbar */}
+                    {/* Substation Bus Body */}
                     {viewMode === 'schematic' ? (
                       <>
                         <rect
                           x="-32"
-                          y="-4"
+                          y="-4.5"
                           width="64"
-                          height="8"
+                          height="9"
                           rx="2"
                           fill={isSelected ? '#38bdf8' : busColor}
                           stroke="#0a0f1d"
@@ -484,15 +512,29 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
                           filter={isSelected ? 'url(#bus-glow)' : undefined}
                           className="transition-all group-hover:brightness-125"
                         />
-                        <text x="0" y={hasLoad && !hasGen ? -10 : 20} fill="#f8fafc" fontSize="8.5" fontFamily="monospace" fontWeight="bold" textAnchor="middle">
+                        <text
+                          x="0"
+                          y={hasLoad && !hasGen ? -10 : 20}
+                          fill="#f8fafc"
+                          fontSize="8.5"
+                          fontFamily="monospace"
+                          fontWeight="bold"
+                          textAnchor="middle"
+                        >
                           {bus.name.split(' ')[0]}
                         </text>
-                        <text x="0" y={hasLoad && !hasGen ? -20 : 30} fill={busColor} fontSize="7.5" fontFamily="monospace" textAnchor="middle">
+                        <text
+                          x="0"
+                          y={hasLoad && !hasGen ? -20 : 30}
+                          fill={busColor}
+                          fontSize="7.5"
+                          fontFamily="monospace"
+                          textAnchor="middle"
+                        >
                           {bus.v_pu.toFixed(2)} pu
                         </text>
                       </>
                     ) : (
-                      // Geographic Circular Node
                       <>
                         <circle
                           r={isSelected ? 10 : 6.5}
@@ -514,7 +556,7 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
           </svg>
         </div>
 
-        {/* Substation Inspector Side Panel with Direct Breaker Controls */}
+        {/* Substation Inspector Side Panel */}
         <div className="rounded-lg border border-slate-200 bg-white p-5 flex flex-col justify-between shadow-xs">
           <div>
             <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-3">
@@ -568,18 +610,18 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
                   </div>
                 </div>
 
-                {/* Connected Corridors with Inline Breaker Toggles */}
+                {/* Connected Corridors with Inline Breaker Control */}
                 {selectedBusLines.length > 0 && (
                   <div className="pt-2">
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
-                      Connected Corridors ({selectedBusLines.length})
+                      Connected Branches ({selectedBusLines.length})
                     </span>
                     <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
                       {selectedBusLines.map((l) => {
                         const isTripped = trippedLines.includes(l.id);
                         return (
                           <div
-                            key={l.id}
+                            key={`connected-${l.id}`}
                             className="flex items-center justify-between p-2 rounded border border-slate-100 bg-slate-50 text-[11px]"
                           >
                             <span className="font-medium text-slate-800 truncate max-w-[130px]" title={l.name}>
@@ -607,16 +649,14 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
               </div>
             ) : (
               <div className="h-44 flex items-center justify-center text-center text-xs text-slate-400 border border-dashed border-slate-200 rounded p-4">
-                Click on any node in the diagram to inspect live bus telemetry and connected lines.
+                Click on any busbar in the diagram to inspect live bus telemetry and connected lines.
               </div>
             )}
           </div>
 
           <div className="mt-4 pt-3 border-t border-slate-200 text-[10px] text-slate-400 flex justify-between items-center">
             <span>Pinch/Scroll to Zoom</span>
-            <span className="text-[#500b50] font-bold">
-              {viewMode === 'schematic' ? '● Procedural CAD' : '● Regional Geo Map'}
-            </span>
+            <span className="text-[#500b50] font-bold">● Active Telemetry</span>
           </div>
         </div>
       </div>
