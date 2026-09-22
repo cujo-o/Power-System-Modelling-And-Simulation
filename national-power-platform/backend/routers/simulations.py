@@ -1,8 +1,14 @@
 from fastapi import APIRouter
-from models.schemas import SimulationRequest, DynamicSimRequest, MarketSimulationRequest
+from models.schemas import (
+    SimulationRequest,
+    DynamicSimRequest,
+    MarketSimulationRequest,
+    CascadeSimulationRequest
+)
 from services.power_flow import solve_power_flow
 from services.dynamics import simulate_transient_swing
 from services.market import solve_market_dispatch
+from services.cascade import run_cascading_simulation
 
 def get_sim_router(model_registry: dict, get_active_fn):
     router = APIRouter(prefix="/api/simulate", tags=["Simulations"])
@@ -10,15 +16,56 @@ def get_sim_router(model_registry: dict, get_active_fn):
     @router.post("/power-flow")
     def run_power_flow(req: SimulationRequest):
         net, name = get_active_fn()
-        res = solve_power_flow(net, req.load_multiplier, req.tripped_lines)
+        res = solve_power_flow(
+            base_net=net,
+            load_multiplier=req.load_multiplier,
+            target_power_factor=req.target_power_factor,
+            slack_voltage_pu=req.slack_voltage_pu,
+            shunt_mvar_compensation=req.shunt_mvar_compensation,
+            thermal_derating_factor=req.thermal_derating_factor,
+            tripped_lines=req.tripped_lines,
+            new_buses=req.new_buses,
+            new_lines=req.new_lines,
+            new_generators=req.new_generators
+        )
         res["model_name"] = name
         return res
 
+    @router.post("/cascade")
+    def run_cascade(req: CascadeSimulationRequest):
+        net, _ = get_active_fn()
+        return run_cascading_simulation(
+            base_net=net,
+            initial_tripped_lines=req.initial_tripped_lines,
+            overload_threshold_percent=req.overload_threshold_percent,
+            max_cascade_steps=req.max_cascade_steps,
+            load_multiplier=req.load_multiplier,
+            slack_voltage_pu=req.slack_voltage_pu,
+            target_power_factor=req.target_power_factor
+        )
+
     @router.post("/dynamics")
     def run_dynamic_sim(req: DynamicSimRequest):
+        net, _ = get_active_fn()
+        base_load = float(net.load.p_mw.sum()) if net and len(net.load) > 0 else 3800.0
+        base_cap = float(net.gen.p_mw.sum()) if net and len(net.gen) > 0 else 5200.0
+        if net and len(net.ext_grid) > 0:
+            base_cap += 1200.0
+
         return simulate_transient_swing(
-            req.disturbance_mw, req.inertia_constant_H, req.enable_governor,
-            req.droop_R, req.enable_pss, req.pss_gain_K
+            disturbance_mw=req.disturbance_mw,
+            inertia_constant_H=req.inertia_constant_H,
+            damping_D=req.damping_coefficient_D,
+            enable_governor=req.enable_governor,
+            droop_R=req.droop_R,
+            Tg=req.governor_time_constant_Tg,
+            Tt=req.turbine_time_constant_Tt,
+            enable_pss=req.enable_pss,
+            pss_gain_K=req.pss_gain_K,
+            enable_ufls=req.enable_ufls,
+            sim_duration_s=req.sim_duration_s,
+            base_load_mw=base_load,
+            base_gen_capacity_mw=base_cap
         )
 
     @router.post("/market-dispatch")

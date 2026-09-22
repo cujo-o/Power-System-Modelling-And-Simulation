@@ -14,7 +14,15 @@ import { AdminTab } from '@/components/tabs/AdminTab';
 import { AboutTab } from '@/components/tabs/AboutTab';
 import { api } from '@/services/api';
 import { supabase } from '@/lib/supabase';
-import { SimResult, DynamicSimResult, MarketResult, GridModelMeta, UserAccount, BusData } from '@/types/grid';
+import {
+  SimResult,
+  DynamicSimResult,
+  MarketResult,
+  GridModelMeta,
+  UserAccount,
+  BusData,
+  PowerFlowVariables,
+} from '@/types/grid';
 import {
   Home,
   Grid,
@@ -37,12 +45,12 @@ export default function PowerPlatformDashboard() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Authentication State
+  // User State
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
 
-  // Auth Form Inputs
+  // Auth Inputs
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [regName, setRegName] = useState('');
@@ -51,23 +59,33 @@ export default function PowerPlatformDashboard() {
   const [regDepartment, setRegDepartment] = useState('');
   const [regReason, setRegReason] = useState('');
   const [regReferee, setRegReferee] = useState('');
-  const [regTags, setRegTags] = useState('330kV, Power Flow');
+  const [regTags, setRegTags] = useState('330kV, Planning');
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSuccessMsg, setAuthSuccessMsg] = useState<string | null>(null);
   const [authSubmitting, setAuthSubmitting] = useState(false);
 
-  // Grid Simulation State
-  const [loadMultiplier, setLoadMultiplier] = useState(1.0);
+  // Engineering Variables Deck & Planning State
+  const [pfVariables, setPfVariables] = useState<PowerFlowVariables>({
+    loadMultiplier: 1.0,
+    targetPowerFactor: 0.90,
+    slackVoltagePu: 1.05,
+    shuntMvarCompensation: 0.0,
+    thermalDeratingFactor: 1.0,
+    newBuses: [],
+    newLines: [],
+    newGenerators: [],
+  });
+
   const [trippedLines, setTrippedLines] = useState<number[]>([]);
   const [results, setResults] = useState<SimResult | null>(null);
   const [selectedBus, setSelectedBus] = useState<BusData | null>(null);
   const [divergedNotice, setDivergedNotice] = useState<string | null>(null);
 
-  // Persistent Models State from Supabase
+  // Supabase Models State
   const [models, setModels] = useState<GridModelMeta[]>([]);
   const [activeModelId, setActiveModelId] = useState<string | null>(null);
 
-  // Dynamic & Market State
+  // Dynamics & Market State
   const [dynDisturbance, setDynDisturbance] = useState(450.0);
   const [enableGovernor, setEnableGovernor] = useState(true);
   const [enablePSS, setEnablePSS] = useState(true);
@@ -83,6 +101,22 @@ export default function PowerPlatformDashboard() {
   const [uploadLoading, setUploadLoading] = useState(false);
   const [users, setUsers] = useState<UserAccount[]>([]);
 
+  const handleCascadeTrigger = async (initialTripped: number[], threshold: number) => {
+    return await api.runCascade({
+      initial_tripped_lines: initialTripped,
+      overload_threshold_percent: threshold,
+      max_cascade_steps: 8,
+      load_multiplier: pfVariables.loadMultiplier,
+      slack_voltage_pu: pfVariables.slackVoltagePu,
+    });
+  };
+
+  const handleApplyCascadeTrips = (trippedList: number[]) => {
+    setTrippedLines(trippedList);
+    api.runPowerFlow(pfVariables, trippedList).then(setResults);
+    setActiveTab('Visualization');
+  };
+
   const navItems = [
     { id: 'Home', label: 'Dashboard', icon: Home },
     { id: 'Grid Models', label: 'Grid Stability Models', icon: Grid },
@@ -95,7 +129,7 @@ export default function PowerPlatformDashboard() {
     { id: 'About Us', label: 'About Us (ML4PS)', icon: Info },
   ];
 
-  // 1. Initial User Session
+  // User session
   useEffect(() => {
     const saved = localStorage.getItem('ml4ps_user');
     if (saved) {
@@ -118,7 +152,7 @@ export default function PowerPlatformDashboard() {
     }
   }, []);
 
-  // 2. Fetch Persistent Models from Supabase on Load and Hydrate Backend
+  // Sync models with Supabase
   const syncWithSupabase = async () => {
     setLoading(true);
     try {
@@ -147,7 +181,6 @@ export default function PowerPlatformDashboard() {
 
         setModels(mappedModels);
 
-        // Hydrate active model into backend RAM if not already hydrated
         const targetModel = activeModelId
           ? dbModels.find((m: any) => m.id === activeModelId) || dbModels[0]
           : dbModels[0];
@@ -163,8 +196,7 @@ export default function PowerPlatformDashboard() {
             network_payload: targetModel.network_payload,
           });
 
-          // Run solvers
-          const simRes = await api.runPowerFlow(loadMultiplier, trippedLines);
+          const simRes = await api.runPowerFlow(pfVariables, trippedLines);
           setResults(simRes);
           setDivergedNotice(!simRes.converged ? simRes.message || 'Diverged' : null);
         }
@@ -190,7 +222,7 @@ export default function PowerPlatformDashboard() {
   const runSim = async () => {
     setLoading(true);
     try {
-      const simRes = await api.runPowerFlow(loadMultiplier, trippedLines);
+      const simRes = await api.runPowerFlow(pfVariables, trippedLines);
       setResults(simRes);
       setDivergedNotice(!simRes.converged ? simRes.message || 'Calculation diverged' : null);
     } finally {
@@ -198,10 +230,26 @@ export default function PowerPlatformDashboard() {
     }
   };
 
-  const runDyn = async () => {
+  const runDyn = async (params?: {
+    disturbance_mw: number;
+    inertia_constant_H: number;
+    enable_governor: boolean;
+    droop_R: number;
+    enable_pss: boolean;
+    pss_gain_K: number;
+    enable_ufls: boolean;
+  }) => {
     setDynLoading(true);
     try {
-      const data = await api.runDynamics(dynDisturbance, enableGovernor, enablePSS);
+      const data = await api.runDynamics({
+        disturbance_mw: params?.disturbance_mw ?? dynDisturbance,
+        inertia_constant_H: params?.inertia_constant_H ?? 4.5,
+        enable_governor: params?.enable_governor ?? enableGovernor,
+        droop_R: params?.droop_R ?? 0.05,
+        enable_pss: params?.enable_pss ?? enablePSS,
+        pss_gain_K: params?.pss_gain_K ?? 25.0,
+        enable_ufls: params?.enable_ufls ?? true,
+      });
       setDynResult(data);
     } finally {
       setDynLoading(false);
@@ -211,7 +259,7 @@ export default function PowerPlatformDashboard() {
   const runMkt = async () => {
     setMarketLoading(true);
     try {
-      const data = await api.runMarket(loadMultiplier, gasPriceFactor, hydroAvailability, trippedLines);
+      const data = await api.runMarket(pfVariables.loadMultiplier, gasPriceFactor, hydroAvailability, trippedLines);
       setMarketResults(data);
     } finally {
       setMarketLoading(false);
@@ -223,10 +271,9 @@ export default function PowerPlatformDashboard() {
       ? trippedLines.filter((l) => l !== id)
       : [...trippedLines, id];
     setTrippedLines(next);
-    api.runPowerFlow(loadMultiplier, next).then(setResults);
+    api.runPowerFlow(pfVariables, next).then(setResults);
   };
 
-  // 3. Activate Model: Hydrates from Supabase into Render RAM
   const handleActivateModel = async (id: string) => {
     setLoading(true);
     try {
@@ -247,7 +294,6 @@ export default function PowerPlatformDashboard() {
           network_payload: dbModel.network_payload,
         });
         setTrippedLines([]);
-        setLoadMultiplier(1.0);
         setSelectedBus(null);
         await syncWithSupabase();
         await runSim();
@@ -260,7 +306,6 @@ export default function PowerPlatformDashboard() {
     }
   };
 
-  // 4. File Upload: Parses via backend, then saves payload permanently into Supabase
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!currentUser) {
       setShowAuthModal(true);
@@ -275,10 +320,8 @@ export default function PowerPlatformDashboard() {
     setUploadNotice(null);
 
     try {
-      // Step A: Parse through backend
       const res = await api.uploadModel(formData);
 
-      // Step B: Persist to Supabase grid_models table
       const { error: dbError } = await supabase.from('grid_models').insert({
         id: res.model_id,
         name: res.filename,
@@ -292,7 +335,7 @@ export default function PowerPlatformDashboard() {
         total_demand_mw: res.metrics.total_demand_mw,
         converged: res.converged,
         network_payload: res.network_payload,
-        user_id: currentUser?.id || null,
+        user_id: currentUser ? String(currentUser.id) : null,
       });
 
       if (dbError) throw dbError;
@@ -310,7 +353,6 @@ export default function PowerPlatformDashboard() {
     }
   };
 
-  // 5. Delete Model from Supabase & Backend
   const handleDeleteModel = async (id: string) => {
     if (!confirm('Are you sure you want to permanently delete this model from Supabase?')) return;
     try {
@@ -324,7 +366,16 @@ export default function PowerPlatformDashboard() {
 
   const handleReset = async () => {
     setTrippedLines([]);
-    setLoadMultiplier(1.0);
+    setPfVariables({
+      loadMultiplier: 1.0,
+      targetPowerFactor: 0.90,
+      slackVoltagePu: 1.05,
+      shuntMvarCompensation: 0.0,
+      thermalDeratingFactor: 1.0,
+      newBuses: [],
+      newLines: [],
+      newGenerators: [],
+    });
     setSelectedBus(null);
     if (activeModelId) {
       handleActivateModel(activeModelId);
@@ -416,8 +467,8 @@ export default function PowerPlatformDashboard() {
               <GridStabilityTab
                 modelName={results?.model_name || 'No Active Model'}
                 divergedNotice={divergedNotice}
-                loadMultiplier={loadMultiplier}
-                setLoadMultiplier={setLoadMultiplier}
+                pfVariables={pfVariables}
+                setPfVariables={setPfVariables}
                 runSimulation={runSim}
                 onReset={handleReset}
                 loading={loading}
@@ -428,20 +479,16 @@ export default function PowerPlatformDashboard() {
                 models={models}
                 onActivateModel={handleActivateModel}
                 onNavigateTab={setActiveTab}
+                onCascadeTrigger={handleCascadeTrigger}
+                onApplyCascadeTrips={handleApplyCascadeTrips}
               />
             )}
 
             {activeTab === 'Dynamics' && (
               <DynamicsTab
-                dynDisturbance={dynDisturbance}
-                setDynDisturbance={setDynDisturbance}
-                enableGovernor={enableGovernor}
-                setEnableGovernor={setEnableGovernor}
-                enablePSS={enablePSS}
-                setEnablePSS={setEnablePSS}
-                runDynamicSimulation={runDyn}
-                dynLoading={dynLoading}
                 dynResult={dynResult}
+                dynLoading={dynLoading}
+                onRunSimulation={runDyn}
               />
             )}
 
@@ -475,7 +522,7 @@ export default function PowerPlatformDashboard() {
 
             {activeTab === 'Visualization' && (
               <>
-                {busesWithPositionsOrEmpty(results?.buses).length === 0 ? (
+                {!results || results.buses.length === 0 ? (
                   <div className="h-96 rounded-lg border-2 border-dashed border-slate-300 bg-white flex flex-col items-center justify-center p-6 text-center">
                     <FolderOpen className="h-12 w-12 text-slate-400 mb-3" />
                     <h3 className="text-sm font-bold text-slate-800">No Active Grid Topology</h3>
@@ -714,7 +761,7 @@ export default function PowerPlatformDashboard() {
                       type="text"
                       value={regTags}
                       onChange={(e) => setRegTags(e.target.value)}
-                      placeholder="e.g. 330kV, UFLS, LMP"
+                      placeholder="e.g. 330kV, Planning, UFLS"
                       className="w-full rounded border border-slate-300 px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#500b50]"
                     />
                   </div>
@@ -734,8 +781,4 @@ export default function PowerPlatformDashboard() {
       )}
     </div>
   );
-}
-
-function busesWithPositionsOrEmpty(buses?: BusData[]) {
-  return buses || [];
 }

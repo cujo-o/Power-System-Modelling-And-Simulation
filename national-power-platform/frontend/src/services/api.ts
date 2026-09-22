@@ -1,4 +1,12 @@
-import { SimResult, DynamicSimResult, MarketResult, GridModelMeta, UserAccount } from '@/types/grid';
+import {
+  SimResult,
+  DynamicSimResult,
+  MarketResult,
+  GridModelMeta,
+  UserAccount,
+  PowerFlowVariables,
+  CascadeResult,
+} from '@/types/grid';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://national-power-backend.onrender.com';
 
@@ -22,7 +30,7 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || 'Failed to hydrate model from Supabase');
+      throw new Error(err.detail || 'Failed to load model payload');
     }
     return res.json();
   },
@@ -38,25 +46,62 @@ export const api = {
     const res = await fetch(`${API_BASE}/api/grid/reset`, { method: 'POST' });
     return res.json();
   },
-  async runPowerFlow(multiplier: number, outages: number[]): Promise<SimResult> {
+  async runPowerFlow(vars: PowerFlowVariables, outages: number[]): Promise<SimResult> {
     const res = await fetch(`${API_BASE}/api/simulate/power-flow`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ load_multiplier: multiplier, tripped_lines: outages }),
+      body: JSON.stringify({
+        load_multiplier: vars.loadMultiplier,
+        target_power_factor: vars.targetPowerFactor,
+        slack_voltage_pu: vars.slackVoltagePu,
+        shunt_mvar_compensation: vars.shuntMvarCompensation,
+        thermal_derating_factor: vars.thermalDeratingFactor,
+        tripped_lines: outages,
+        new_buses: vars.newBuses,
+        new_lines: vars.newLines,
+        new_generators: vars.newGenerators,
+      }),
     });
     return res.json();
   },
-  async runDynamics(disturbance: number, governor: boolean, pss: boolean): Promise<DynamicSimResult> {
+  async runCascade(data: {
+    initial_tripped_lines: number[];
+    overload_threshold_percent: number;
+    max_cascade_steps?: number;
+    load_multiplier: number;
+    slack_voltage_pu: number;
+  }): Promise<CascadeResult> {
+    const res = await fetch(`${API_BASE}/api/simulate/cascade`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return res.json();
+  },
+ async runDynamics(data: {
+    disturbance_mw: number;
+    inertia_constant_H: number;
+    damping_coefficient_D?: number;
+    enable_governor: boolean;
+    droop_R: number;
+    enable_pss: boolean;
+    pss_gain_K: number;
+    enable_ufls: boolean;
+    sim_duration_s?: number;
+  }): Promise<DynamicSimResult> {
     const res = await fetch(`${API_BASE}/api/simulate/dynamics`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        disturbance_mw: disturbance,
-        inertia_constant_H: 4.5,
-        enable_governor: governor,
-        droop_R: 0.05,
-        enable_pss: pss,
-        pss_gain_K: 25.0,
+        disturbance_mw: data.disturbance_mw,
+        inertia_constant_H: data.inertia_constant_H,
+        damping_coefficient_D: data.damping_coefficient_D || 1.8,
+        enable_governor: data.enable_governor,
+        droop_R: data.droop_R,
+        enable_pss: data.enable_pss,
+        pss_gain_K: data.pss_gain_K,
+        enable_ufls: data.enable_ufls,
+        sim_duration_s: data.sim_duration_s || 12.0,
       }),
     });
     return res.json();

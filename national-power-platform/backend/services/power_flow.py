@@ -1,5 +1,6 @@
 import copy
 import math
+import numpy as np
 import pandapower as pp
 import pandapower.topology as top
 from config import settings
@@ -11,14 +12,40 @@ def clean_float(val, fallback: float = 0.0) -> float:
     except Exception:
         return fallback
 
-def solve_power_flow(base_net: pp.pandapowerNet = None, load_multiplier: float = 1.0, tripped_lines: list = None):
+# Conductor standard catalog for transmission planning
+CONDUCTOR_CATALOG = {
+    "Bison 330kV": {"r": 0.035, "x": 0.320, "c": 11.2, "max_i": 1.25},
+    "Bear 330kV": {"r": 0.045, "x": 0.340, "c": 10.5, "max_i": 1.01},
+    "Panther 132kV": {"r": 0.095, "x": 0.380, "c": 9.8, "max_i": 0.70},
+    "Wolf 132kV": {"r": 0.145, "x": 0.400, "c": 9.2, "max_i": 0.55},
+    "Bear 132kV": {"r": 0.085, "x": 0.360, "c": 10.0, "max_i": 0.65}
+}
+
+def solve_power_flow(
+    base_net: pp.pandapowerNet = None,
+    load_multiplier: float = 1.0,
+    target_power_factor: float = 0.90,
+    slack_voltage_pu: float = 1.05,
+    shunt_mvar_compensation: float = 0.0,
+    thermal_derating_factor: float = 1.0,
+    tripped_lines: list = None,
+    new_buses: list = None,
+    new_lines: list = None,
+    new_generators: list = None
+):
     if tripped_lines is None:
         tripped_lines = []
+    if new_buses is None:
+        new_buses = []
+    if new_lines is None:
+        new_lines = []
+    if new_generators is None:
+        new_generators = []
 
     if base_net is None or len(base_net.bus) == 0:
         return {
             "converged": False,
-            "message": "No active grid model loaded. Please upload a network model to simulate.",
+            "message": "No active grid model loaded. Upload a network case to simulate.",
             "frequency": 50.0,
             "total_gen_mw": 0.0,
             "total_load_mw": 0.0,
@@ -29,28 +56,91 @@ def solve_power_flow(base_net: pp.pandapowerNet = None, load_multiplier: float =
 
     net = copy.deepcopy(base_net)
 
-    # 1. Scale Load & Generation
-    if load_multiplier != 1.0 and len(net.load) > 0:
-        net.load["p_mw"] *= load_multiplier
-        net.load["q_mvar"] *= load_multiplier
+    # 1. Apply Planning Elements (Dynamic Grid Expansion)
+    bus_index_offset = int(net.bus.index.max()) + 1 if len(net.bus) > 0 else 1
+    added_bus_ids = {}
 
-    # 2. Apply N-1 Line Trips
+    for i, nb in enumerate(new_buses):
+        new_id = bus_index_offset + i
+        added_bus_ids[nb.name] = new_id
+        # Estimate position near regional anchor
+        pp.create_bus(
+            net,
+            vn_kv=nb.vn_kv,
+            name=nb.name,
+            zone=nb.zone,
+            index=new_id,
+            geodata=(450.0 + (i * 40), 350.0 + (i * 40))
+        )
+        if nb.p_mw > 0:
+            pp.create_load(net, bus=new_id, p_mw=nb.p_mw, q_mvar=nb.q_mvar, name=f"Load {nb.name}")
+
+    for nl in new_lines:
+        fb = added_bus_ids.get(str(nl.from_bus), nl.from_bus)
+        tb = added_bus_ids.get(str(nl.to_bus), nl.to_bus)
+        if fb in net.bus.index and tb in net.bus.index:
+            cond = CONDUCTOR_CATALOG.get(nl.conductor_type, CONDUCTOR_CATALOG["Bison 330kV"])
+            pp.create_line_from_parameters(
+                net,
+                from_bus=fb,
+                to_bus=tb,
+                length_km=max(1.0, nl.length_km),
+                r_ohm_per_km=cond["r"],
+                x_ohm_per_km=cond["x"],
+                c_nf_per_km=cond["c"],
+                max_i_ka=cond["max_i"] * max(0.5, thermal_derating_factor),
+                name=nl.name
+            )
+
+    for ng in new_generators:
+        gb = added_bus_ids.get(str(ng.bus), ng.bus)
+        if gb in net.bus.index:
+            pp.create_gen(
+                net,
+                bus=gb,
+                p_mw=ng.p_mw,
+                vm_pu=ng.vm_pu,
+                name=ng.name,
+                min_p_mw=0.0,
+                max_p_mw=ng.p_max_mw
+            )
+
+    # 2. Apply Engineering Variables (Load, Power Factor, Slack Voltage, Shunt, Thermal Derating)
+    if len(net.load) > 0:
+        net.load["p_mw"] *= max(0.1, load_multiplier)
+        if 0.70 <= target_power_factor <= 1.0:
+            tan_phi = math.tan(math.acos(target_power_factor))
+            net.load["q_mvar"] = net.load["p_mw"] * tan_phi
+        else:
+            net.load["q_mvar"] *= max(0.1, load_multiplier)
+
+    if len(net.line) > 0 and thermal_derating_factor != 1.0:
+        net.line["max_i_ka"] *= max(0.5, min(1.5, thermal_derating_factor))
+
+    # Apply Shunt Compensation (Inject MVAR into high-demand central nodes)
+    if shunt_mvar_compensation != 0.0 and len(net.bus) > 0:
+        target_shunt_bus = net.load.p_mw.idxmax() if len(net.load) > 0 else net.bus.index[0]
+        actual_bus = net.load.at[target_shunt_bus, "bus"] if len(net.load) > 0 else target_shunt_bus
+        pp.create_shunt(net, bus=actual_bus, q_mvar=-shunt_mvar_compensation, name="Switched Shunt Compensation")
+
+    # 3. Apply N-1 Line Trips
     for line_id in tripped_lines:
         if line_id in net.line.index:
             net.line.at[line_id, "in_service"] = False
 
-    # 3. Ensure a Reference Slack Bus Exists
+    # 4. Enforce Slack Bus Setpoint
     if len(net.ext_grid) == 0:
         if len(net.gen) > 0:
             slack_gen_idx = net.gen.p_mw.idxmax()
             slack_bus = int(net.gen.at[slack_gen_idx, "bus"])
-            slack_vm = float(net.gen.at[slack_gen_idx, "vm_pu"]) if "vm_pu" in net.gen.columns else 1.05
-            pp.create_ext_grid(net, bus=slack_bus, vm_pu=slack_vm, name="Auto Slack Generator")
+            pp.create_ext_grid(net, bus=slack_bus, vm_pu=slack_voltage_pu, name="Auto Slack Infeed")
             net.gen.drop(slack_gen_idx, inplace=True)
         elif len(net.bus) > 0:
-            pp.create_ext_grid(net, bus=net.bus.index[0], vm_pu=1.03, name="Auto Slack Bus")
+            pp.create_ext_grid(net, bus=net.bus.index[0], vm_pu=slack_voltage_pu, name="Auto Slack Bus")
+    else:
+        net.ext_grid["vm_pu"] = slack_voltage_pu
 
-    # 4. Detect Islanding or Radials
+    # 5. Radial & Island Isolation
     try:
         unsupplied = top.unsupplied_buses(net)
         if len(unsupplied) > 0:
@@ -58,7 +148,7 @@ def solve_power_flow(base_net: pp.pandapowerNet = None, load_multiplier: float =
     except Exception:
         pass
 
-    # 5. Multi-Pass Numerical Solver
+    # 6. Multi-Pass Numerical Solver
     converged = False
     solver_notice = "AC Newton-Raphson Solved."
 
@@ -81,10 +171,10 @@ def solve_power_flow(base_net: pp.pandapowerNet = None, load_multiplier: float =
         try:
             pp.rundcpp(net, numba=False)
             converged = True
-            solver_notice = "Radial stress detected. Solved via DC Linearized Load Flow."
+            solver_notice = "Grid stressed. Solved via DC Linearized Load Flow."
         except Exception as e:
             converged = False
-            solver_notice = f"System diverged: {str(e)}"
+            solver_notice = f"System non-convergence: {str(e)}"
 
     gen_buses = set(net.gen.bus) if len(net.gen) > 0 else set()
     if len(net.ext_grid) > 0:
@@ -92,9 +182,9 @@ def solve_power_flow(base_net: pp.pandapowerNet = None, load_multiplier: float =
     load_buses = set(net.load.bus) if len(net.load) > 0 else set()
 
     buses = []
-    for idx, row in base_net.bus.iterrows():
-        gx = float(base_net.bus_geodata.at[idx, "x"]) if hasattr(base_net, "bus_geodata") and idx in base_net.bus_geodata.index else 250.0
-        gy = float(base_net.bus_geodata.at[idx, "y"]) if hasattr(base_net, "bus_geodata") and idx in base_net.bus_geodata.index else 250.0
+    for idx, row in net.bus.iterrows():
+        gx = float(net.bus_geodata.at[idx, "x"]) if hasattr(net, "bus_geodata") and idx in net.bus_geodata.index else 250.0
+        gy = float(net.bus_geodata.at[idx, "y"]) if hasattr(net, "bus_geodata") and idx in net.bus_geodata.index else 250.0
 
         vm_pu = 1.0
         va_deg = 0.0
@@ -107,7 +197,7 @@ def solve_power_flow(base_net: pp.pandapowerNet = None, load_multiplier: float =
             p_mw = clean_float(net.res_bus.at[idx, "p_mw"], 0.0)
             q_mvar = clean_float(net.res_bus.at[idx, "q_mvar"], 0.0)
 
-        if idx in net.bus.index and not bool(net.bus.at[idx, "in_service"]):
+        if not bool(net.bus.at[idx, "in_service"]):
             vm_pu = 0.0
 
         buses.append({
@@ -126,7 +216,7 @@ def solve_power_flow(base_net: pp.pandapowerNet = None, load_multiplier: float =
         })
 
     lines = []
-    for idx, row in base_net.line.iterrows():
+    for idx, row in net.line.iterrows():
         is_in = bool(row["in_service"]) and (idx not in tripped_lines)
         loading = 0.0
         flow = 0.0
