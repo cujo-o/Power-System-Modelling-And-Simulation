@@ -1,22 +1,23 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 import pandapower as pp
 from services.parser import parse_and_register_file
-from services.grid_builder import build_case330, build_nig_10_bus
+from services.grid_builder import build_case330, build_nig_10_bus, build_case132
 
 def get_model_router(model_registry: dict, state_holder: dict):
     router = APIRouter(tags=["Models"])
 
-    # Register built-ins explicitly
+    # Register default models
     if "nig-10-bus" not in model_registry:
+        m10 = build_nig_10_bus()
         model_registry["nig-10-bus"] = {
             "id": "nig-10-bus",
             "name": "Nig 10-Bus Benchmark Grid",
             "voltage_level": "330kV",
             "domain": "Static & Dynamic",
             "platform": "MATPOWER / PSAT",
-            "net": build_nig_10_bus(),
-            "buses": 10,
-            "branches": 10,
+            "net": m10,
+            "buses": len(m10.bus),
+            "branches": len(m10.line),
             "total_installed_mw": 2690.0,
             "total_demand_mw": 1386.9,
             "converged": True,
@@ -24,15 +25,16 @@ def get_model_router(model_registry: dict, state_holder: dict):
         }
 
     if "case-330kv-63" not in model_registry:
+        m330 = build_case330()
         model_registry["case-330kv-63"] = {
             "id": "case-330kv-63",
             "name": "Nigeria 330kV NISO Grid (63 Buses)",
             "voltage_level": "330kV",
             "domain": "Static & Dynamic",
             "platform": "DIgSILENT / MATPOWER",
-            "net": build_case330(),
-            "buses": 63,
-            "branches": 29,
+            "net": m330,
+            "buses": len(m330.bus),
+            "branches": len(m330.line),
             "total_installed_mw": 4850.0,
             "total_demand_mw": 3397.7,
             "converged": True,
@@ -40,15 +42,16 @@ def get_model_router(model_registry: dict, state_holder: dict):
         }
 
     if "case-132kv-369" not in model_registry:
+        m132 = build_case132()
         model_registry["case-132kv-369"] = {
             "id": "case-132kv-369",
             "name": "NISO 132/330 kV Integrated Grid (369 Buses)",
             "voltage_level": "132kV",
             "domain": "Static Power Flow",
             "platform": "MATPOWER / PSAT",
-            "net": build_case330(),
-            "buses": 369,
-            "branches": 516,
+            "net": m132,
+            "buses": len(m132.bus),
+            "branches": len(m132.line),
             "total_installed_mw": 13337.6,
             "total_demand_mw": 5799.6,
             "converged": True,
@@ -101,24 +104,26 @@ def get_model_router(model_registry: dict, state_holder: dict):
     @router.post("/api/upload/model")
     @router.post("/api/upload/matpower")
     async def upload_model(file: UploadFile = File(...)):
-        raw = await file.read()
-        content = raw.decode("utf-8", errors="ignore")
-        entry = parse_and_register_file(file.filename, content)
-        model_registry[entry["id"]] = entry
-        state_holder["active_id"] = entry["id"]
-        return {
-            "status": "success",
-            "model_id": entry["id"],
-            "filename": entry["name"],
-            "format": entry["platform"],
-            "voltage_level": entry["voltage_level"],
-            "network_payload": pp.to_json(entry["net"]),
-            "metrics": {
-                "buses": entry["buses"],
-                "branches": entry["branches"],
-                "total_installed_mw": entry["total_installed_mw"],
-                "total_demand_mw": entry["total_demand_mw"]
+        raw_bytes = await file.read()
+        try:
+            entry = parse_and_register_file(file.filename, raw_bytes)
+            model_registry[entry["id"]] = entry
+            state_holder["active_id"] = entry["id"]
+            return {
+                "status": "success",
+                "model_id": entry["id"],
+                "filename": entry["name"],
+                "format": entry["platform"],
+                "voltage_level": entry["voltage_level"],
+                "network_payload": pp.to_json(entry["net"]),
+                "metrics": {
+                    "buses": entry["buses"],
+                    "branches": entry["branches"],
+                    "total_installed_mw": entry["total_installed_mw"],
+                    "total_demand_mw": entry["total_demand_mw"]
+                }
             }
-        }
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Failed to parse model: {str(e)}")
 
     return router
