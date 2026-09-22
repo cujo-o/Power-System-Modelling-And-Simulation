@@ -30,7 +30,7 @@ def solve_power_flow(base_net: pp.pandapowerNet, load_multiplier: float, tripped
     if not converged:
         return {
             "converged": False,
-            "message": "Power flow diverged. Potential critical voltage collapse or electrical islanding.",
+            "message": "Power flow diverged under the current contingency state.",
             "buses": [],
             "lines": [],
             "frequency": 49.20,
@@ -38,6 +38,12 @@ def solve_power_flow(base_net: pp.pandapowerNet, load_multiplier: float, tripped
             "total_load_mw": 0.0,
             "total_losses_mw": 0.0
         }
+
+    # Identify which buses hold generators or loads
+    gen_buses = set(net.gen.bus) if len(net.gen) > 0 else set()
+    if len(net.ext_grid) > 0:
+        gen_buses = gen_buses.union(set(net.ext_grid.bus))
+    load_buses = set(net.load.bus) if len(net.load) > 0 else set()
 
     buses = []
     for idx, row in net.bus.iterrows():
@@ -47,17 +53,21 @@ def solve_power_flow(base_net: pp.pandapowerNet, load_multiplier: float, tripped
         va_deg = float(net.res_bus.at[idx, "va_degree"]) if hasattr(net, "res_bus") and idx in net.res_bus.index else 0.0
         p_mw = float(net.res_bus.at[idx, "p_mw"]) if hasattr(net, "res_bus") and idx in net.res_bus.index else 0.0
         q_mvar = float(net.res_bus.at[idx, "q_mvar"]) if hasattr(net, "res_bus") and idx in net.res_bus.index else 0.0
+        vn_kv = float(row.get("vn_kv", 330.0))
 
         buses.append({
             "id": int(idx),
             "name": str(row.get("name", f"Bus {idx}")),
             "zone": str(row.get("zone", "Substation")),
+            "vn_kv": vn_kv,
             "x": gx,
             "y": gy,
             "v_pu": round(clean_float(vm_pu, 1.0), 3),
             "va_deg": round(clean_float(va_deg, 0.0), 2),
             "p_mw": round(clean_float(p_mw, 0.0), 1),
             "q_mvar": round(clean_float(q_mvar, 0.0), 1),
+            "is_gen": (idx in gen_buses),
+            "is_load": (idx in load_buses)
         })
 
     lines = []

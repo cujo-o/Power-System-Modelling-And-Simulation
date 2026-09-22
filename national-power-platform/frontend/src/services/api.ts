@@ -11,6 +11,10 @@ export const api = {
     const res = await fetch(`${API_BASE}/api/models/${id}/activate`, { method: 'POST' });
     return res.json();
   },
+  async deleteModel(id: string) {
+    const res = await fetch(`${API_BASE}/api/models/${id}`, { method: 'DELETE' });
+    return res.json();
+  },
   async resetGrid() {
     const res = await fetch(`${API_BASE}/api/grid/reset`, { method: 'POST' });
     return res.json();
@@ -62,16 +66,52 @@ export const api = {
     const res = await fetch(`${API_BASE}/api/admin/users`);
     return res.json();
   },
+  async registerUser(data: {
+    name: string;
+    email: string;
+    institution: string;
+    department: string;
+    reason: string;
+    referee?: string;
+    research_tags?: string;
+  }) {
+    const res = await fetch(`${API_BASE}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Registration failed');
+    }
+    return res.json();
+  },
+  async loginUser(email: string, password: string): Promise<{ status: string; user: UserAccount }> {
+    const res = await fetch(`${API_BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Login failed');
+    }
+    return res.json();
+  },
   async approveUser(id: string) {
     const res = await fetch(`${API_BASE}/api/admin/users/${id}/approve`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Approval failed');
+    }
     return res.json();
   },
   async rejectUser(id: string) {
     const res = await fetch(`${API_BASE}/api/admin/users/${id}/reject`, { method: 'POST' });
-    return res.json();
-  },
-  async deleteModel(id: string) {
-    const res = await fetch(`${API_BASE}/api/models/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Rejection failed');
+    }
     return res.json();
   },
 };

@@ -2,12 +2,15 @@ export interface BusData {
   id: number;
   name: string;
   zone: string;
+  vn_kv?: number;
   x?: number;
   y?: number;
   v_pu: number;
   va_deg: number;
   p_mw: number;
   q_mvar: number;
+  is_gen?: boolean;
+  is_load?: boolean;
 }
 
 export interface LineData {
@@ -51,8 +54,14 @@ export interface UserAccount {
   name: string;
   email: string;
   institution: string;
+  department?: string;
   role: string;
+  reason?: string;
+  referee?: string;
+  research_tags?: string;
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  password?: string;
+  temp_password?: string;
   registered_at: string;
 }
 

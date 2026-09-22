@@ -40,7 +40,7 @@ model_registry = {
         "platform": "DIgSILENT / MATPOWER",
         "net": build_case330(),
         "buses": 63,
-        "branches": 17,
+        "branches": 29,
         "total_installed_mw": 4850.0,
         "total_demand_mw": 3397.7,
         "converged": True,
@@ -49,9 +49,51 @@ model_registry = {
 }
 
 users_db = [
-    {"id": "usr-1", "name": "Opeyemi Ibrahim Abubakar", "email": "operator@futminna.edu.ng", "institution": "FUT Minna (ML4PS Group)", "role": "Lead Systems Engineer", "status": "APPROVED", "registered_at": "2026-09-01 10:14"},
-    {"id": "usr-2", "name": "Engr. Saliu Adamu", "email": "saliu.adamu@niso.gov.ng", "institution": "National Independent System Operator (NISO)", "role": "Grid Controller", "status": "APPROVED", "registered_at": "2026-09-04 14:22"},
-    {"id": "usr-3", "name": "Dr. K. A. Bello", "email": "kabello@abu.edu.ng", "institution": "Ahmadu Bello University", "role": "Power Systems Researcher", "status": "PENDING", "registered_at": "2026-09-18 09:30"}
+    {
+        "id": "usr-1",
+        "name": "Opeyemi Ibrahim Abubakar",
+        "email": "operator@futminna.edu.ng",
+        "institution": "FUT Minna (ML4PS Group)",
+        "department": "Electrical & Electronics Engineering",
+        "role": "Taskforce Administrator",
+        "reason": "National grid simulation lead researcher",
+        "referee": "Prof. ML4PS Lead",
+        "research_tags": "330kV, UFLS, Dynamics",
+        "status": "APPROVED",
+        "password": "ML4PS-ADMIN",
+        "temp_password": "ML4PS-ADMIN",
+        "registered_at": "2026-09-01 10:14"
+    },
+    {
+        "id": "usr-2",
+        "name": "Engr. Saliu Adamu",
+        "email": "saliu.adamu@niso.gov.ng",
+        "institution": "National Independent System Operator (NISO)",
+        "department": "Grid Operations Control",
+        "role": "Grid Controller",
+        "reason": "NISO regional dispatch oversight",
+        "referee": "TCN NCC Osogbo",
+        "research_tags": "Contingency, SCADA, Real-Time",
+        "status": "APPROVED",
+        "password": "ML4PS-NISO",
+        "temp_password": "ML4PS-NISO",
+        "registered_at": "2026-09-04 14:22"
+    },
+    {
+        "id": "usr-3",
+        "name": "Dr. K. A. Bello",
+        "email": "kabello@abu.edu.ng",
+        "institution": "Ahmadu Bello University",
+        "department": "Electrical Engineering",
+        "role": "Researcher",
+        "reason": "Comparative voltage stability research for North-West region",
+        "referee": "Dean of Engineering, ABU",
+        "research_tags": "132kV Sub-Transmission, PSS",
+        "status": "PENDING",
+        "password": None,
+        "temp_password": None,
+        "registered_at": "2026-09-18 09:30"
+    }
 ]
 
 def get_active():

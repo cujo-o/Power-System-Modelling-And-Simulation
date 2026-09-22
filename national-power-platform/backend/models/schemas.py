@@ -19,6 +19,15 @@ class MarketSimulationRequest(BaseModel):
     hydro_availability: Optional[float] = 1.0
     tripped_lines: Optional[List[int]] = []
 
-class UserApprovalRequest(BaseModel):
-    user_id: str
-    status: str  # APPROVED | REJECTED
+class UserRegisterRequest(BaseModel):
+    name: str
+    email: str
+    institution: str
+    department: Optional[str] = "Electrical & Electronics Engineering"
+    reason: str
+    referee: Optional[str] = None
+    research_tags: Optional[str] = "Power Flow, Grid Code"
+
+class UserLoginRequest(BaseModel):
+    email: str
+    password: str
