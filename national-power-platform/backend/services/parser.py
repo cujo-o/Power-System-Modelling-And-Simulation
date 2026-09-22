@@ -8,76 +8,20 @@ import numpy as np
 import pandas as pd
 import pandapower as pp
 from services.power_flow import solve_power_flow
+from services.grid_builder import build_case330, build_nig_10_bus, parse_matpower_standalone
 
 try:
     from pandapower.converter.pypower.from_ppc import from_ppc
 except ImportError:
     from pandapower.converter.pypower import from_ppc
 
-def parse_matpower_text(content: str) -> dict:
-    """Extracts bus, gen, and branch matrices from any standard MATPOWER or PSAT .m case."""
-    clean_lines = [line.split('%')[0].strip() for line in content.splitlines() if line.split('%')[0].strip()]
-    text = "\n".join(clean_lines)
-
-    base_mva_match = re.search(r'(?:mpc\.)?baseMVA\s*=\s*([0-9.]+)', text, re.IGNORECASE)
-    base_mva = float(base_mva_match.group(1)) if base_mva_match else 100.0
-
-    def extract_matrix(name: str) -> np.ndarray:
-        pattern = rf'(?:mpc\.)?{name}\s*=\s*\[(.*?)\]\s*;'
-        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
-        if not match:
-            return np.empty((0, 0))
-        raw_block = match.group(1).strip()
-        rows = []
-        for row_str in raw_block.replace(';', '\n').split('\n'):
-            row_str = row_str.strip()
-            if not row_str:
-                continue
-            vals = [float(x) for x in re.split(r'[\s,]+', row_str) if x]
-            if vals:
-                rows.append(vals)
-        return np.array(rows, dtype=float)
-
-    bus = extract_matrix('bus')
-    gen = extract_matrix('gen')
-    branch = extract_matrix('branch')
-
-    if len(bus) == 0:
-        raise ValueError("Could not find a valid 'bus' matrix in the provided MATPOWER case.")
-
-    # Check for LOAD_SCALE
-    scale_match = re.search(r'LOAD_SCALE\s*=\s*([0-9.]+)', content, re.IGNORECASE)
-    if scale_match:
-        scale = float(scale_match.group(1))
-        if bus.shape[1] >= 4:
-            bus[:, 2:4] *= scale
-        if gen.shape[1] >= 2:
-            gen[:, 1] *= scale
-
-    # Extract bus names if present
-    bus_names = []
-    name_match = re.search(r'(?:mpc\.)?bus_name\s*=\s*\{(.*?)\}\s*;', content, re.DOTALL | re.IGNORECASE)
-    if name_match:
-        for item in name_match.group(1).split(';'):
-            cleaned = item.replace("'", "").replace('"', '').strip()
-            if cleaned:
-                bus_names.append(cleaned)
-
-    return {
-        'version': '2',
-        'baseMVA': base_mva,
-        'bus': bus,
-        'gen': gen if len(gen) > 0 else np.empty((0, 10)),
-        'branch': branch if len(branch) > 0 else np.empty((0, 11)),
-        'bus_names': bus_names,
-    }
 
 def parse_excel_case(raw_bytes: bytes) -> pp.pandapowerNet:
     xls = pd.ExcelFile(io.BytesIO(raw_bytes))
     net = pp.create_empty_network(f_hz=50.0, sn_mva=100.0)
 
     if "buses" not in xls.sheet_names:
-        raise ValueError("Excel grid model must contain a 'buses' sheet.")
+        raise ValueError("Excel file must contain a 'buses' sheet.")
 
     df_bus = pd.read_excel(xls, "buses")
     bus_map = {}
@@ -126,8 +70,8 @@ def parse_excel_case(raw_bytes: bytes) -> pp.pandapowerNet:
 
     return net
 
+
 def parse_and_register_file(filename: str, raw_bytes: bytes) -> dict:
-    """Main ingestion hub for any user-uploaded power system file."""
     ext = filename.split(".")[-1].lower() if "." in filename else ""
     net = None
     platform = "MATPOWER"
@@ -136,9 +80,8 @@ def parse_and_register_file(filename: str, raw_bytes: bytes) -> dict:
     if ext in ["m", "raw", "json", "aux"]:
         content = raw_bytes.decode("utf-8", errors="ignore")
 
-    # 1. Detect Format & Parse Model
     if ext == "m":
-        ppc_dict = parse_matpower_text(content)
+        ppc_dict = parse_matpower_standalone(content)
         net = from_ppc(ppc_dict, f_hz=50.0)
         if ppc_dict.get("bus_names") and len(ppc_dict["bus_names"]) == len(net.bus):
             net.bus["name"] = ppc_dict["bus_names"]
@@ -163,9 +106,8 @@ def parse_and_register_file(filename: str, raw_bytes: bytes) -> dict:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
     else:
-        raise ValueError(f"Unsupported file format '.{ext}'. Supported: .m, .json, .xlsx, .raw")
+        raise ValueError(f"Unsupported format '.{ext}'. Use .m, .json, .xlsx, or .raw")
 
-    # 2. Assign Default Geometric Layout if Geodata Missing
     if not hasattr(net, "bus_geodata") or net.bus_geodata is None or net.bus_geodata.empty:
         net.bus_geodata = pd.DataFrame(columns=["x", "y"], index=net.bus.index)
         n = len(net.bus)
@@ -176,15 +118,12 @@ def parse_and_register_file(filename: str, raw_bytes: bytes) -> dict:
             net.bus_geodata.loc[b_idx, "x"] = float(150 + col * 180 + (row % 2) * 40)
             net.bus_geodata.loc[b_idx, "y"] = float(100 + row * 140)
 
-    # 3. Detect Primary Voltage Level
     voltage_level = "330kV"
     if "vn_kv" in net.bus.columns:
         mean_kv = float(net.bus["vn_kv"].mean())
         voltage_level = "132kV" if mean_kv < 220.0 else "330kV"
 
-    # 4. Verify Immediate Power Flow Solvability
     sol = solve_power_flow(net, load_multiplier=1.0)
-
     model_id = str(uuid.uuid4())[:8]
     installed_mw = float(net.gen.p_mw.sum()) if len(net.gen) > 0 else 0.0
     if len(net.ext_grid) > 0:

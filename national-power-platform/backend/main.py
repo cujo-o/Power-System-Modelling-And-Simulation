@@ -1,11 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-try:
-    from services.grid_builder import build_nig_10_bus, build_case330
-except (ImportError, ModuleNotFoundError):
-    from nigeria_cases import build_nig_10_bus, build_case330
-
+from services.grid_builder import build_nig_10_bus, build_case330, build_case132
 from routers.simulations import get_sim_router
 from routers.models import get_model_router
 from routers.admin import get_admin_router
@@ -20,14 +15,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Shared State
 state = {"active_id": "nig-10-bus"}
+
 model_registry = {
     "nig-10-bus": {
         "id": "nig-10-bus",
         "name": "Nig 10-Bus Benchmark Grid",
         "voltage_level": "330kV",
-        "domain": "Steady-State & Dynamic",
+        "domain": "Static & Dynamic",
         "platform": "MATPOWER / PSAT",
         "net": build_nig_10_bus(),
         "buses": 10,
@@ -41,13 +36,27 @@ model_registry = {
         "id": "case-330kv-63",
         "name": "Nigeria 330kV Grid (63-Bus NISO Equivalent)",
         "voltage_level": "330kV",
-        "domain": "Steady-State & Dynamic",
+        "domain": "Static & Dynamic",
         "platform": "DIgSILENT / MATPOWER",
         "net": build_case330(),
         "buses": 63,
         "branches": 110,
         "total_installed_mw": 4850.0,
         "total_demand_mw": 3397.7,
+        "converged": True,
+        "is_default": False
+    },
+    "case-132kv-369": {
+        "id": "case-132kv-369",
+        "name": "NISO 132/330 kV Integrated Grid (369 Buses)",
+        "voltage_level": "132kV",
+        "domain": "Static Power Flow",
+        "platform": "MATPOWER / PSAT",
+        "net": build_case132(),
+        "buses": 369,
+        "branches": 516,
+        "total_installed_mw": 13337.6,
+        "total_demand_mw": 5799.6,
         "converged": True,
         "is_default": False
     }

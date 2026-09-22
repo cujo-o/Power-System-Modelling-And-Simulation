@@ -3,10 +3,11 @@ import pandapower as pp
 from services.parser import parse_and_register_file
 from services.grid_builder import build_case330, build_nig_10_bus, build_case132
 
+
 def get_model_router(model_registry: dict, state_holder: dict):
     router = APIRouter(tags=["Models"])
 
-    # Register default models
+    # Pre-register standard NISO benchmark models
     if "nig-10-bus" not in model_registry:
         m10 = build_nig_10_bus()
         model_registry["nig-10-bus"] = {
