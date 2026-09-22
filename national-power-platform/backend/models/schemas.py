@@ -1,6 +1,13 @@
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 
+class MultiMachineSimRequest(BaseModel):
+    fault_bus_id: Optional[int] = 12           # Bus where 3-phase fault occurs (default: Osogbo NCC Hub)
+    fault_start_time_s: Optional[float] = 1.0  # Time of fault inception (s)
+    fault_duration_ms: Optional[float] = 160.0 # Protection operating time / breaker clearing (ms)
+    sim_duration_s: Optional[float] = 4.0      # Simulation horizon (s)
+    calc_cct: Optional[bool] = True            # Automatically solve for Critical Clearing Time (ms)
+
 class UFLSStageConfig(BaseModel):
     stage: int
     frequency_threshold_hz: float
@@ -8,17 +15,17 @@ class UFLSStageConfig(BaseModel):
     time_delay_ms: float = 100.0
 
 class DynamicSimRequest(BaseModel):
-    disturbance_mw: float = 450.0             # Sudden generation drop or load step (MW)
-    inertia_constant_H: float = 4.5           # Equivalent system inertia constant (seconds)
-    damping_coefficient_D: float = 1.8        # Load damping factor (%/Hz)
-    enable_governor: bool = True              # Primary frequency response
-    droop_R: float = 0.05                     # Speed governor regulation droop (4-5%)
-    governor_time_constant_Tg: float = 0.2    # Servo valve time constant (s)
-    turbine_time_constant_Tt: float = 0.5     # Reheat/mechanical time constant (s)
-    enable_pss: bool = True                   # Power System Stabilizer
-    pss_gain_K: float = 25.0                  # PSS washout/lead-lag gain
-    enable_ufls: bool = True                  # Automatic Under-Frequency Load Shedding
-    sim_duration_s: float = 12.0              # Simulation time span
+    disturbance_mw: float = 450.0
+    inertia_constant_H: float = 4.5
+    damping_coefficient_D: float = 1.8
+    enable_governor: bool = True
+    droop_R: float = 0.05
+    governor_time_constant_Tg: float = 0.2
+    turbine_time_constant_Tt: float = 0.5
+    enable_pss: bool = True
+    pss_gain_K: float = 25.0
+    enable_ufls: bool = True
+    sim_duration_s: float = 12.0
 
 class CascadeSimulationRequest(BaseModel):
     initial_tripped_lines: List[int] = []

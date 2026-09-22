@@ -185,3 +185,30 @@ export interface GridModelMeta {
   is_default: boolean;
   is_active: boolean;
 }
+
+export interface GeneratorRotorResult {
+  id: string;
+  name: string;
+  bus_id: number;
+  color: string;
+  is_slack: boolean;
+  H: number;
+  rotor_angle_deg: number[];
+  relative_angle_deg: number[];
+  max_angle_deg: number;
+  min_angle_deg: number;
+}
+
+export interface MultiMachineResult {
+  status: 'STABLE' | 'UNSTABLE_POLE_SLIP' | 'NO_MODEL';
+  fault_bus_id: number;
+  fault_bus_name: string;
+  fault_duration_ms: number;
+  cct_ms: number;
+  cct_cycles: number;
+  is_transiently_stable: boolean;
+  unstable_generator?: string;
+  time: number[];
+  generators: GeneratorRotorResult[];
+  statutory_protection_limit_ms: number;
+}

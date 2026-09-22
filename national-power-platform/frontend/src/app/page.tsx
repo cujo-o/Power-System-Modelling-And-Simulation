@@ -430,6 +430,17 @@ export default function PowerPlatformDashboard() {
     localStorage.removeItem('ml4ps_user');
   };
 
+  const handleRunMultiMachine = async (params: {
+    fault_bus_id: number;
+    fault_duration_ms: number;
+  }) => {
+    return await api.runMultiMachine({
+      fault_bus_id: params.fault_bus_id,
+      fault_duration_ms: params.fault_duration_ms,
+      calc_cct: true,
+    });
+  };
+
   return (
     <div className="flex h-screen w-full flex-col bg-[#f7f5f9] font-sans text-slate-800 antialiased overflow-hidden">
       <Header
@@ -489,6 +500,8 @@ export default function PowerPlatformDashboard() {
                 dynResult={dynResult}
                 dynLoading={dynLoading}
                 onRunSimulation={runDyn}
+                buses={results?.buses || []}
+                onRunMultiMachine={handleRunMultiMachine}
               />
             )}
 
@@ -551,7 +564,15 @@ export default function PowerPlatformDashboard() {
               </>
             )}
 
-            {activeTab === 'Reports' && <ReportsTab results={results} />}
+            {activeTab === 'Reports' && (
+              <ReportsTab
+                results={results}
+                modelName={results?.model_name || (models.find((m) => m.id === activeModelId)?.name || 'Active Grid Case')}
+                currentUser={currentUser}
+                pfVariables={pfVariables}
+                dynResult={dynResult}
+              />
+            )}
 
             {activeTab === 'Admin Panel' && (
               <AdminTab

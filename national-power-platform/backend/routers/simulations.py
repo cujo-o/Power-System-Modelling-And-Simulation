@@ -3,12 +3,14 @@ from models.schemas import (
     SimulationRequest,
     DynamicSimRequest,
     MarketSimulationRequest,
-    CascadeSimulationRequest
+    CascadeSimulationRequest,
+    MultiMachineSimRequest
 )
 from services.power_flow import solve_power_flow
 from services.dynamics import simulate_transient_swing
 from services.market import solve_market_dispatch
 from services.cascade import run_cascading_simulation
+from services.multi_machine import simulate_multi_machine
 
 def get_sim_router(model_registry: dict, get_active_fn):
     router = APIRouter(prefix="/api/simulate", tags=["Simulations"])
@@ -66,6 +68,18 @@ def get_sim_router(model_registry: dict, get_active_fn):
             sim_duration_s=req.sim_duration_s,
             base_load_mw=base_load,
             base_gen_capacity_mw=base_cap
+        )
+
+    @router.post("/multi-machine")
+    def run_multi_machine_sim(req: MultiMachineSimRequest):
+        net, _ = get_active_fn()
+        return simulate_multi_machine(
+            base_net=net,
+            fault_bus_id=req.fault_bus_id,
+            fault_start_s=req.fault_start_time_s,
+            fault_duration_ms=req.fault_duration_ms,
+            sim_duration_s=req.sim_duration_s,
+            calc_cct=req.calc_cct
         )
 
     @router.post("/market-dispatch")

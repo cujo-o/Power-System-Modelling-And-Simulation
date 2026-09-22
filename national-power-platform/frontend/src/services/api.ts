@@ -6,6 +6,7 @@ import {
   UserAccount,
   PowerFlowVariables,
   CascadeResult,
+  MultiMachineResult,
 } from '@/types/grid';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://national-power-backend.onrender.com';
@@ -180,6 +181,20 @@ export const api = {
       const err = await res.json();
       throw new Error(err.detail || 'Rejection failed');
     }
+    return res.json();
+  },
+  async runMultiMachine(data: {
+    fault_bus_id: number;
+    fault_duration_ms: number;
+    fault_start_time_s?: number;
+    sim_duration_s?: number;
+    calc_cct?: boolean;
+  }): Promise<MultiMachineResult> {
+    const res = await fetch(`${API_BASE}/api/simulate/multi-machine`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
     return res.json();
   },
 };
