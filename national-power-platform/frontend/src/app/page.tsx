@@ -472,8 +472,6 @@ export default function PowerPlatformDashboard() {
       <Header
         mobileMenuOpen={mobileMenuOpen}
         setMobileMenuOpen={setMobileMenuOpen}
-        desktopCollapsed={desktopCollapsed}
-        setDesktopCollapsed={setDesktopCollapsed}
         currentUser={currentUser}
         onLoginClick={() => {
           setAuthMode("login");
@@ -495,6 +493,7 @@ export default function PowerPlatformDashboard() {
             setShowAuthModal(true);
           }}
           desktopCollapsed={desktopCollapsed}
+          setDesktopCollapsed={setDesktopCollapsed}
           mobileMenuOpen={mobileMenuOpen}
           setMobileMenuOpen={setMobileMenuOpen}
         />

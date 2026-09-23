@@ -1,14 +1,12 @@
 'use client';
 
 import React from 'react';
-import { Menu, X, LogOut, LogIn, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Menu, X, LogOut, LogIn } from 'lucide-react';
 import { UserAccount } from '@/types/grid';
 
 interface HeaderProps {
   mobileMenuOpen: boolean;
   setMobileMenuOpen: (val: boolean) => void;
-  desktopCollapsed: boolean;
-  setDesktopCollapsed: (val: boolean) => void;
   currentUser: UserAccount | null;
   onLoginClick: () => void;
   onLogoutClick: () => void;
@@ -17,30 +15,19 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   mobileMenuOpen,
   setMobileMenuOpen,
-  desktopCollapsed,
-  setDesktopCollapsed,
   currentUser,
   onLoginClick,
   onLogoutClick,
 }) => (
   <header className="flex h-16 w-full items-center justify-between border-b border-slate-200/80 bg-white px-4 md:px-6 z-30 select-none shadow-xs shrink-0">
     <div className="flex items-center gap-3">
-      {/* Mobile Drawer Toggle */}
+      {/* Mobile Drawer Toggle (Shown only on small screens) */}
       <button
         onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
         className="flex md:hidden h-9 w-9 items-center justify-center rounded-lg bg-[#500b50] text-white hover:bg-[#680f68] transition"
-        aria-label="Toggle Mobile Menu"
+        aria-label="Toggle Navigation Menu"
       >
         {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-      </button>
-
-      {/* Desktop Sidebar Collapse Toggle */}
-      <button
-        onClick={() => setDesktopCollapsed(!desktopCollapsed)}
-        className="hidden md:flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:text-[#500b50] hover:bg-slate-50 transition"
-        title={desktopCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
-      >
-        {desktopCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
       </button>
 
       {/* Brand & Crest */}
@@ -91,7 +78,7 @@ export const Header: React.FC<HeaderProps> = ({
           className="flex items-center gap-2 rounded-lg bg-[#500b50] text-white px-4 py-2 text-xs font-bold hover:bg-[#680f68] transition shadow-xs"
         >
           <LogIn className="h-4 w-4" />
-          <span>Sign In</span>
+          <span>Operator Sign In</span>
         </button>
       )}
     </div>
