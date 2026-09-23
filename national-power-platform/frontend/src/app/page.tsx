@@ -125,7 +125,7 @@ export default function PowerPlatformDashboard() {
     { id: 'Data Upload', label: 'Upload & Ingestion', icon: UploadCloud },
     { id: 'Visualization', label: 'Single-Line Diagram', icon: Layers },
     { id: 'Reports', label: 'Reports & Publications', icon: FileText },
-    { id: 'Admin Panel', label: 'Admin & Approvals', icon: ShieldCheck },
+    { id: 'Admin Panel', label: 'Organization & Leadership', icon: ShieldCheck },
     { id: 'About Us', label: 'About Us (ML4PS)', icon: Info },
   ];
 
@@ -574,22 +574,7 @@ export default function PowerPlatformDashboard() {
               />
             )}
 
-            {activeTab === 'Admin Panel' && (
-              <AdminTab
-                users={users}
-                onApprove={async (id) => {
-                  const res = await api.approveUser(id);
-                  const updated = await api.getUsers();
-                  setUsers(updated);
-                  return res;
-                }}
-                onReject={async (id) => {
-                  await api.rejectUser(id);
-                  const updated = await api.getUsers();
-                  setUsers(updated);
-                }}
-              />
-            )}
+       {activeTab === 'Admin Panel' && <AdminTab />}
 
             {activeTab === 'About Us' && <AboutTab />}
           </div>

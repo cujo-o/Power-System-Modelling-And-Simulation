@@ -1,180 +1,290 @@
 'use client';
-import React, { useState } from 'react';
-import { UserAccount } from '@/types/grid';
-import { Check, X, ShieldCheck, Key, Copy, CheckCheck, Clock, UserCheck } from 'lucide-react';
 
-interface AdminTabProps {
-  users: UserAccount[];
-  onApprove: (id: string) => Promise<{ generated_password?: string }>;
-  onReject: (id: string) => Promise<void>;
+import React from 'react';
+import Image from 'next/image';
+import {
+  Award,
+  BookOpen,
+  Mail,
+  Building,
+  Cpu,
+  Layers,
+  Zap,
+  Globe,
+  ExternalLink,
+} from 'lucide-react';
+
+interface TeamMember {
+  id: string;
+  name: string;
+  salutation: string;
+  role: string;
+  designation: string;
+  department: string;
+  institution: string;
+  specialization: string[];
+  imageSrc: string;
+  badgeType: 'Principal Investigator' | 'Co-Investigator' | 'Senior Researcher' | 'Project Lead';
 }
 
-export const AdminTab: React.FC<AdminTabProps> = ({ users, onApprove, onReject }) => {
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [approvingId, setApprovingId] = useState<string | null>(null);
-  const [latestApproval, setLatestApproval] = useState<{ name: string; password: string } | null>(null);
+const TASKFORCE_COUNCIL: TeamMember[] = [
+  {
+    id: 'lead-pi',
+    name: 'Prof. Lead Principal Investigator',
+    salutation: 'FUT Minna Research Council',
+    role: 'Lead Principal Investigator & Project Patron',
+    designation: 'Professor of Electrical & Power Systems Engineering',
+    department: 'Department of Electrical & Electronics Engineering',
+    institution: 'Federal University of Technology, Minna',
+    specialization: ['Power System Dynamics', 'Grid Governance', 'NERC Grid Code Standards'],
+    imageSrc: '/team/member_lead_prof.jpg',
+    badgeType: 'Principal Investigator',
+  },
+  {
+    id: 'co-pi-1',
+    name: 'Dr. / Engr. Project Co-Investigator',
+    salutation: 'Lead System Architect',
+    role: 'Co-Principal Investigator (Grid Stability)',
+    designation: 'Associate Professor / Senior Research Fellow',
+    department: 'Department of Electrical & Electronics Engineering',
+    institution: 'Federal University of Technology, Minna',
+    specialization: ['AC Optimal Power Flow', 'Transmission Planning', 'Voltage Stability'],
+    imageSrc: '/team/member_pi_engr.jpg',
+    badgeType: 'Co-Investigator',
+  },
+  {
+    id: 'co-pi-2',
+    name: 'Dr. Lead Dynamic Researcher',
+    salutation: 'Control & Stability Specialist',
+    role: 'Lead Research Fellow (Transient Dynamics)',
+    designation: 'Senior Lecturer / Control Systems Analyst',
+    department: 'School of Infrastructure, Process Engineering & Technology',
+    institution: 'Federal University of Technology, Minna',
+    specialization: ['Under-Frequency Load Shedding (UFLS)', 'PSS Damping', 'RoCoF Tracking'],
+    imageSrc: '/team/member_dr_amina.jpg',
+    badgeType: 'Co-Investigator',
+  },
+  {
+    id: 'industry-liaison',
+    name: 'Engr. Grid Operations Advisor',
+    salutation: 'Industry Technical Advisor',
+    role: 'Principal Operations Specialist & NISO Liaison',
+    designation: 'Senior Power Systems Operations Consultant',
+    department: 'National Control Centre (NCC) Liaison Division',
+    institution: 'NESI Transmission & System Operations Partner',
+    specialization: ['330kV Bulk Operations', 'Contingency Analysis', 'SCADA Integration'],
+    imageSrc: '/team/member_engr_saliu.jpg',
+    badgeType: 'Project Lead',
+  },
+  {
+    id: 'researcher-lead',
+    name: 'Dr. Systems Modeling Analyst',
+    salutation: 'Mathematical & AI Modeler',
+    role: 'Senior Research Fellow (Machine Learning)',
+    designation: 'Research Fellow in Computational Power Engineering',
+    department: 'Department of Electrical & Electronics Engineering',
+    institution: 'Federal University of Technology, Minna',
+    specialization: ['Machine Learning for Power Flow', 'Fast Decoupled Algorithms', 'Data Modeling'],
+    imageSrc: '/team/member_researcher_lead.jpg',
+    badgeType: 'Senior Researcher',
+  },
+  {
+    id: 'hardware-lead',
+    name: 'Engr. Research Fellow & Simulation Architect',
+    salutation: 'Substation & Network Engineer',
+    role: 'Senior Simulation & Architecture Fellow',
+    designation: 'Power Systems Simulation Specialist',
+    department: 'Machine Learning 4 Power Systems (ML4PS) Lab',
+    institution: 'Federal University of Technology, Minna',
+    specialization: ['Single-Line CAD Synthesis', 'Relay Coordination', 'Grid Expansion'],
+    imageSrc: '/team/member_dr_bello.jpg',
+    badgeType: 'Senior Researcher',
+  },
+];
 
-  const handleCopy = (id: string, text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2500);
-  };
-
-  const handleApproveClick = async (u: UserAccount) => {
-    setApprovingId(u.id);
-    try {
-      const res = await onApprove(u.id);
-      if (res?.generated_password) {
-        setLatestApproval({ name: u.name, password: res.generated_password });
-      }
-    } finally {
-      setApprovingId(null);
-    }
-  };
-
+export const AdminTab: React.FC = () => {
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
-      <div className="flex justify-between items-center border-b border-slate-200 pb-3">
-        <div>
-          <h2 className="text-lg font-bold text-[#500b50]">Taskforce Administrator & Access Requests</h2>
-          <p className="text-xs text-slate-500">
-            Review applicant background, research justifications, and grant secure simulation credentials.
-          </p>
-        </div>
-        <span className="px-3 py-1 rounded bg-[#500b50] text-white text-xs font-bold shadow-xs">
-          Admin Privilege: Active
-        </span>
-      </div>
+    <div className="space-y-8 max-w-6xl mx-auto">
+      {/* INSTITUTIONAL BANNER WITH ML4PS LOGO */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs relative overflow-hidden">
+        <div className="absolute right-0 top-0 w-96 h-96 bg-gradient-to-br from-[#500b50]/5 to-transparent rounded-full blur-3xl pointer-events-none" />
 
-      {/* Success Notification on password generation */}
-      {latestApproval && (
-        <div className="p-4 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-900 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Key className="h-5 w-5 text-emerald-700 shrink-0" />
-            <div>
-              <span className="text-xs font-bold block">
-                Access Granted for {latestApproval.name}!
+        <div className="flex flex-col md:flex-row items-center gap-6 relative z-10">
+          {/* Logo Showcase */}
+          <div className="h-28 w-28 sm:h-32 sm:w-32 rounded-2xl bg-white p-2.5 border border-slate-200 shadow-sm flex items-center justify-center shrink-0">
+            <img
+              src="/ml4ps-logo.png"
+              alt="Machine Learning for Power System (ML4PS) Logo"
+              className="w-full h-full object-contain"
+              onError={(e) => {
+                // Fallback icon placeholder if image path is not yet copied
+                e.currentTarget.style.display = 'none';
+              }}
+            />
+          </div>
+
+          <div className="text-center md:text-left space-y-1.5 flex-1">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold bg-[#f5eff6] text-[#500b50] border border-[#500b50]/20">
+              <Award className="h-3.5 w-3.5" />
+              <span>National Power System & Development Taskforce</span>
+            </div>
+
+            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+              Machine Learning 4 Power Systems (ML4PS) Research Group
+            </h1>
+
+            <p className="text-xs sm:text-sm text-slate-600 font-medium max-w-3xl leading-relaxed">
+              An institutional research consortium at the Federal University of Technology, Minna (FUT Minna), dedicated to indigenous power flow modeling, machine learning-driven dynamic transient stability, and high-fidelity operational simulation for the Nigerian Electricity Supply Industry (NESI).
+            </p>
+
+            <div className="pt-2 flex flex-wrap items-center justify-center md:justify-start gap-4 text-xs text-slate-500 font-mono">
+              <span className="flex items-center gap-1.5">
+                <Building className="h-3.5 w-3.5 text-[#500b50]" />
+                <span>SEET / EEE Department, FUT Minna</span>
               </span>
-              <span className="text-[11px] text-emerald-800">
-                Temporary Password: <strong className="font-mono bg-white px-2 py-0.5 rounded border border-emerald-300">{latestApproval.password}</strong> (Applicant can now sign in).
+              <span>•</span>
+              <span className="flex items-center gap-1.5">
+                <Zap className="h-3.5 w-3.5 text-emerald-600" />
+                <span>330kV Bulk & 132kV Sub-Transmission</span>
+              </span>
+              <span>•</span>
+              <span className="flex items-center gap-1.5">
+                <Globe className="h-3.5 w-3.5 text-purple-700" />
+                <span>Minna, Niger State, Nigeria</span>
               </span>
             </div>
           </div>
-          <button
-            onClick={() => handleCopy('latest', latestApproval.password)}
-            className="px-2.5 py-1 rounded bg-white border border-emerald-300 text-xs font-bold text-emerald-800 hover:bg-emerald-100 flex items-center gap-1"
+        </div>
+      </div>
+
+      {/* TEAM DIRECTORY HEADER */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 pb-3 gap-2">
+        <div>
+          <h2 className="text-base sm:text-lg font-bold text-[#500b50] flex items-center gap-2">
+            <Layers className="h-4 w-4 text-[#500b50]" />
+            <span>Taskforce Leadership & Research Council</span>
+          </h2>
+          <p className="text-xs text-slate-500">
+            Principal investigators, computational analysts, and power engineering researchers overseeing platform development.
+          </p>
+        </div>
+
+        <span className="px-3 py-1 rounded bg-slate-100 text-slate-700 text-xs font-mono font-bold border border-slate-200 w-fit">
+          {TASKFORCE_COUNCIL.length} Research Fellows
+        </span>
+      </div>
+
+      {/* DIRECTORY CARDS GRID */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        {TASKFORCE_COUNCIL.map((member) => (
+          <div
+            key={member.id}
+            className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between group hover:border-[#500b50]/40"
           >
-            {copiedId === 'latest' ? <CheckCheck className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            <span>{copiedId === 'latest' ? 'Copied' : 'Copy'}</span>
-          </button>
-        </div>
-      )}
+            <div>
+              {/* Member Photo & Badge Header */}
+              <div className="flex items-start gap-4">
+                <div className="relative h-20 w-20 sm:h-22 sm:w-22 rounded-xl overflow-hidden border-2 border-slate-100 bg-slate-100 shrink-0 shadow-inner group-hover:border-[#500b50]/30 transition">
+                  <img
+                    src={member.imageSrc}
+                    alt={member.name}
+                    className="w-full h-full object-cover object-top"
+                    onError={(e) => {
+                      // Fallback placeholder with initials if image not found
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
+                  <div className="absolute inset-0 bg-slate-200 flex items-center justify-center text-slate-500 font-bold text-lg -z-10">
+                    {member.name.split(' ').map((n) => n[0]).slice(0, 2).join('')}
+                  </div>
+                </div>
 
-      {/* Access Requests Table */}
-      <div className="rounded-lg border border-slate-200 bg-white overflow-hidden shadow-xs">
-        <div className="bg-[#500b50] text-white px-4 py-2.5 flex justify-between items-center text-xs font-bold">
-          <span>Registered Access Applications ({users.length})</span>
-          <span className="text-[11px] font-normal text-white/80">
-            Pending: {users.filter((u) => u.status === 'PENDING').length}
-          </span>
+                <div className="flex-1 min-w-0">
+                  <span
+                    className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider mb-1 ${
+                      member.badgeType === 'Principal Investigator'
+                        ? 'bg-purple-100 text-[#500b50] border border-[#500b50]/20'
+                        : member.badgeType === 'Co-Investigator'
+                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                        : member.badgeType === 'Project Lead'
+                        ? 'bg-amber-100 text-amber-900 border border-amber-200'
+                        : 'bg-slate-100 text-slate-700 border border-slate-200'
+                    }`}
+                  >
+                    {member.badgeType}
+                  </span>
+
+                  <h3 className="text-sm font-bold text-slate-900 truncate leading-snug group-hover:text-[#500b50] transition">
+                    {member.name}
+                  </h3>
+
+                  <p className="text-[11px] text-slate-500 font-medium line-clamp-1">
+                    {member.designation}
+                  </p>
+                </div>
+              </div>
+
+              {/* Roles & Department */}
+              <div className="mt-4 pt-3 border-t border-slate-100 space-y-1.5 text-xs">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
+                    Taskforce Appointment
+                  </span>
+                  <span className="font-semibold text-slate-800 block text-[11px]">
+                    {member.role}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
+                    Institutional Affiliation
+                  </span>
+                  <span className="text-slate-600 block text-[11px]">
+                    {member.department}
+                  </span>
+                  <span className="text-[#500b50] font-semibold block text-[10px]">
+                    {member.institution}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Specialization Tags */}
+            <div className="mt-4 pt-3 border-t border-slate-100">
+              <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider mb-1.5">
+                Core Research Focus
+              </span>
+              <div className="flex flex-wrap gap-1">
+                {member.specialization.map((spec, i) => (
+                  <span
+                    key={i}
+                    className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-50 text-slate-600 border border-slate-200"
+                  >
+                    {spec}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* FOOTER CALLOUT / INSTITUTIONAL ATTESTATION */}
+      <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-600">
+        <div className="flex items-center gap-3">
+          <BookOpen className="h-5 w-5 text-[#500b50] shrink-0" />
+          <div>
+            <span className="font-bold text-slate-900 block">
+              Machine Learning 4 Power Systems (ML4PS) Laboratory
+            </span>
+            <p className="text-[11px] text-slate-500">
+              School of Electrical Engineering & Technology, Federal University of Technology, Minna, P.M.B. 65, Minna, Niger State.
+            </p>
+          </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs min-w-[700px]">
-            <thead className="bg-slate-100 text-slate-600 border-b border-slate-200 font-semibold">
-              <tr>
-                <th className="p-3">Applicant & Affiliation</th>
-                <th className="p-3">Department</th>
-                <th className="p-3">Research Justification & Referee</th>
-                <th className="p-3">Status</th>
-                <th className="p-3">Assigned Password</th>
-                <th className="p-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-slate-700">
-              {users.map((u) => (
-                <tr key={u.id} className="hover:bg-slate-50 transition">
-                  <td className="p-3">
-                    <span className="font-bold text-slate-900 block text-sm">{u.name}</span>
-                    <span className="text-[11px] text-slate-500 font-mono">{u.email}</span>
-                    <span className="text-[10px] text-[#500b50] font-semibold block mt-0.5">
-                      {u.institution}
-                    </span>
-                  </td>
-                  <td className="p-3 text-slate-600 font-medium">
-                    {u.department || 'Electrical Engineering'}
-                  </td>
-                  <td className="p-3 max-w-[240px]">
-                    <p className="text-[11px] text-slate-800 line-clamp-2 italic" title={u.reason}>
-                      "{u.reason || 'General grid analysis'}"
-                    </p>
-                    <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-500">
-                      <span>Ref: <strong>{u.referee || 'None'}</strong></span>
-                      <span>•</span>
-                      <span className="text-purple-700 font-mono">{u.research_tags}</span>
-                    </div>
-                  </td>
-                  <td className="p-3">
-                    <span
-                      className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                        u.status === 'APPROVED'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : u.status === 'PENDING'
-                          ? 'bg-amber-100 text-amber-800'
-                          : 'bg-rose-100 text-rose-800'
-                      }`}
-                    >
-                      {u.status === 'APPROVED' && <Check className="h-3 w-3" />}
-                      {u.status === 'PENDING' && <Clock className="h-3 w-3" />}
-                      {u.status === 'REJECTED' && <X className="h-3 w-3" />}
-                      <span>{u.status}</span>
-                    </span>
-                  </td>
-                  <td className="p-3">
-                    {u.temp_password || u.password ? (
-                      <div className="flex items-center gap-1.5 font-mono">
-                        <span className="bg-slate-100 text-slate-900 px-2 py-0.5 rounded border border-slate-300 font-bold text-[11px]">
-                          {u.temp_password || u.password}
-                        </span>
-                        <button
-                          onClick={() => handleCopy(u.id, (u.temp_password || u.password)!)}
-                          className="p-1 hover:bg-slate-200 rounded text-slate-500"
-                          title="Copy Password"
-                        >
-                          {copiedId === u.id ? <CheckCheck className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="text-slate-400 font-mono text-[11px]">Not assigned</span>
-                    )}
-                  </td>
-                  <td className="p-3 text-right">
-                    {u.status === 'PENDING' ? (
-                      <div className="flex justify-end gap-1.5">
-                        <button
-                          onClick={() => handleApproveClick(u)}
-                          disabled={approvingId === u.id}
-                          className="flex items-center gap-1 bg-[#15803d] text-white px-2.5 py-1 rounded text-xs font-bold hover:bg-emerald-700 transition disabled:opacity-50"
-                        >
-                          <Check className="h-3 w-3" />
-                          <span>Approve</span>
-                        </button>
-                        <button
-                          onClick={() => onReject(u.id)}
-                          className="flex items-center gap-1 bg-rose-600 text-white px-2.5 py-1 rounded text-xs font-bold hover:bg-rose-700 transition"
-                        >
-                          <X className="h-3 w-3" />
-                          <span>Reject</span>
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="text-slate-400 font-mono text-[11px]">Completed</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="font-mono text-[10px] text-slate-400 bg-white px-3 py-1.5 rounded border border-slate-200 shrink-0">
+          Consortium Code: ML4PS-FUTM-2026
         </div>
       </div>
     </div>

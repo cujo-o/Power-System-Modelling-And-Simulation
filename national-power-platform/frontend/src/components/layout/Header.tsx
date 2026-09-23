@@ -1,6 +1,7 @@
 'use client';
+
 import React from 'react';
-import { Menu, X, LogOut, LogIn, UserCheck } from 'lucide-react';
+import { Menu, X, LogOut, LogIn } from 'lucide-react';
 import { UserAccount } from '@/types/grid';
 
 interface HeaderProps {
@@ -22,17 +23,32 @@ export const Header: React.FC<HeaderProps> = ({
     <div className="flex items-center gap-3">
       <button
         onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-        className="flex h-8 w-8 items-center justify-center rounded bg-[#500b50] text-white hover:bg-[#680f68] transition"
+        className="flex h-8 w-8 items-center justify-center rounded bg-[#500b50] text-white hover:bg-[#680f68] transition shrink-0"
+        aria-label="Toggle Navigation Menu"
       >
         {mobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
       </button>
-      <div>
-        <h1 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#500b50]">
-          National Power System Modelling & Simulation
-        </h1>
-        <p className="text-[10px] text-slate-500 font-medium">
-          National Power System & Development Taskforce | Machine Learning 4 Power Systems (ML4PS)
-        </p>
+
+      {/* Official ML4PS Crest & Title Block */}
+      <div className="flex items-center gap-2.5">
+        <img
+          src="/ml4ps-logo.png"
+          alt="ML4PS Logo"
+          className="h-8 w-8 sm:h-9 sm:w-9 object-contain rounded-md bg-white p-0.5 border border-slate-200 shadow-xs shrink-0"
+          onError={(e) => {
+            // Graceful fallback if image has not been moved to /public yet
+            e.currentTarget.style.display = 'none';
+          }}
+        />
+
+        <div className="leading-tight">
+          <h1 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-[#500b50]">
+            National Power System Modelling & Simulation
+          </h1>
+          <p className="text-[10px] text-slate-500 font-medium">
+            National Power System & Development Taskforce | Machine Learning 4 Power Systems (ML4PS)
+          </p>
+        </div>
       </div>
     </div>
 
