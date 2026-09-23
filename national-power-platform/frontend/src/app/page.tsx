@@ -1,19 +1,19 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect } from 'react';
-import { Header } from '@/components/layout/Header';
-import { Sidebar } from '@/components/layout/Sidebar';
-import { SingleLineDiagram } from '@/components/diagram/SingleLineDiagram';
-import { HomeTab } from '@/components/tabs/HomeTab';
-import { GridStabilityTab } from '@/components/tabs/GridStabilityTab';
-import { DynamicsTab } from '@/components/tabs/DynamicsTab';
-import { MarketTab } from '@/components/tabs/MarketTab';
-import { UploadTab } from '@/components/tabs/UploadTab';
-import { ReportsTab } from '@/components/tabs/ReportsTab';
-import { AdminTab } from '@/components/tabs/AdminTab';
-import { AboutTab } from '@/components/tabs/AboutTab';
-import { api } from '@/services/api';
-import { supabase } from '@/lib/supabase';
+import React, { useState, useEffect } from "react";
+import { Header } from "@/components/layout/Header";
+import { Sidebar } from "@/components/layout/Sidebar";
+import { SingleLineDiagram } from "@/components/diagram/SingleLineDiagram";
+import { HomeTab } from "@/components/tabs/HomeTab";
+import { GridStabilityTab } from "@/components/tabs/GridStabilityTab";
+import { DynamicsTab } from "@/components/tabs/DynamicsTab";
+import { MarketTab } from "@/components/tabs/MarketTab";
+import { UploadTab } from "@/components/tabs/UploadTab";
+import { ReportsTab } from "@/components/tabs/ReportsTab";
+import { AdminTab } from "@/components/tabs/AdminTab";
+import { AboutTab } from "@/components/tabs/AboutTab";
+import { api } from "@/services/api";
+import { supabase } from "@/lib/supabase";
 import {
   SimResult,
   DynamicSimResult,
@@ -22,7 +22,7 @@ import {
   UserAccount,
   BusData,
   PowerFlowVariables,
-} from '@/types/grid';
+} from "@/types/grid";
 import {
   Home,
   Grid,
@@ -38,36 +38,37 @@ import {
   Lock,
   CheckCircle2,
   FolderOpen,
-} from 'lucide-react';
+} from "lucide-react";
 
 export default function PowerPlatformDashboard() {
-  const [activeTab, setActiveTab] = useState('Home');
+  const [activeTab, setActiveTab] = useState("Home");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
   // User State
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
 
   // Auth Inputs
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [regName, setRegName] = useState('');
-  const [regEmail, setRegEmail] = useState('');
-  const [regInstitution, setRegInstitution] = useState('');
-  const [regDepartment, setRegDepartment] = useState('');
-  const [regReason, setRegReason] = useState('');
-  const [regReferee, setRegReferee] = useState('');
-  const [regTags, setRegTags] = useState('330kV, Planning');
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [regName, setRegName] = useState("");
+  const [regEmail, setRegEmail] = useState("");
+  const [regInstitution, setRegInstitution] = useState("");
+  const [regDepartment, setRegDepartment] = useState("");
+  const [regReason, setRegReason] = useState("");
+  const [regReferee, setRegReferee] = useState("");
+  const [regTags, setRegTags] = useState("330kV, Planning");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSuccessMsg, setAuthSuccessMsg] = useState<string | null>(null);
   const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [desktopCollapsed, setDesktopCollapsed] = useState(false);
 
   // Engineering Variables Deck & Planning State
   const [pfVariables, setPfVariables] = useState<PowerFlowVariables>({
     loadMultiplier: 1.0,
-    targetPowerFactor: 0.90,
+    targetPowerFactor: 0.9,
     slackVoltagePu: 1.05,
     shuntMvarCompensation: 0.0,
     thermalDeratingFactor: 1.0,
@@ -101,7 +102,10 @@ export default function PowerPlatformDashboard() {
   const [uploadLoading, setUploadLoading] = useState(false);
   const [users, setUsers] = useState<UserAccount[]>([]);
 
-  const handleCascadeTrigger = async (initialTripped: number[], threshold: number) => {
+  const handleCascadeTrigger = async (
+    initialTripped: number[],
+    threshold: number,
+  ) => {
     return await api.runCascade({
       initial_tripped_lines: initialTripped,
       overload_threshold_percent: threshold,
@@ -114,41 +118,45 @@ export default function PowerPlatformDashboard() {
   const handleApplyCascadeTrips = (trippedList: number[]) => {
     setTrippedLines(trippedList);
     api.runPowerFlow(pfVariables, trippedList).then(setResults);
-    setActiveTab('Visualization');
+    setActiveTab("Visualization");
   };
 
   const navItems = [
-    { id: 'Home', label: 'Dashboard', icon: Home },
-    { id: 'Grid Models', label: 'Grid Stability Models', icon: Grid },
-    { id: 'Dynamics', label: 'Time-Domain & PSS', icon: Activity },
-    { id: 'Market Simulations', label: 'Market Simulations', icon: DollarSign },
-    { id: 'Data Upload', label: 'Upload & Ingestion', icon: UploadCloud },
-    { id: 'Visualization', label: 'Single-Line Diagram', icon: Layers },
-    { id: 'Reports', label: 'Reports & Publications', icon: FileText },
-    { id: 'Admin Panel', label: 'Organization & Leadership', icon: ShieldCheck },
-    { id: 'About Us', label: 'About Us (ML4PS)', icon: Info },
+    { id: "Home", label: "Dashboard", icon: Home },
+    { id: "Grid Models", label: "Grid Stability Models", icon: Grid },
+    { id: "Dynamics", label: "Time-Domain & PSS", icon: Activity },
+    { id: "Market Simulations", label: "Market Simulations", icon: DollarSign },
+    { id: "Data Upload", label: "Upload & Ingestion", icon: UploadCloud },
+    { id: "Visualization", label: "Single-Line Diagram", icon: Layers },
+    { id: "Reports", label: "Reports & Publications", icon: FileText },
+    {
+      id: "Admin Panel",
+      label: "Organization & Leadership",
+      icon: ShieldCheck,
+    },
+    { id: "About Us", label: "About Us (ML4PS)", icon: Info },
   ];
 
   // User session
   useEffect(() => {
-    const saved = localStorage.getItem('ml4ps_user');
+    const saved = localStorage.getItem("ml4ps_user");
     if (saved) {
       try {
         setCurrentUser(JSON.parse(saved));
       } catch {}
     } else {
       const defaultAdmin: UserAccount = {
-        id: 'usr-1',
-        name: 'Opeyemi Ibrahim Abubakar',
-        email: 'operator@futminna.edu.ng',
-        institution: 'FUT Minna (ML4PS Group)',
-        department: 'Electrical & Electronics Engineering',
-        role: 'Taskforce Administrator',
-        status: 'APPROVED',
-        registered_at: '2026-09-01 10:14',
+        id: "usr-1",
+        name: "Opeyemi Ibrahim Abubakar",
+        email: "operator@futminna.edu.ng",
+        institution: "FUT Minna (ML4PS Group)",
+        department: "Electrical & Electronics Engineering",
+        role: "Taskforce Administrator",
+        status: "APPROVED",
+        registered_at: "2026-09-01 10:14",
       };
       setCurrentUser(defaultAdmin);
-      localStorage.setItem('ml4ps_user', JSON.stringify(defaultAdmin));
+      localStorage.setItem("ml4ps_user", JSON.stringify(defaultAdmin));
     }
   }, []);
 
@@ -157,27 +165,29 @@ export default function PowerPlatformDashboard() {
     setLoading(true);
     try {
       const { data: dbModels, error } = await supabase
-        .from('grid_models')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .from("grid_models")
+        .select("*")
+        .order("created_at", { ascending: false });
 
       if (error) throw error;
 
       if (dbModels && dbModels.length > 0) {
-        const mappedModels: GridModelMeta[] = dbModels.map((m: any, idx: number) => ({
-          id: m.id,
-          name: m.name,
-          voltage_level: m.voltage_level || '330kV',
-          domain: m.domain || 'Static & Dynamic',
-          platform: m.platform || m.format || 'MATPOWER',
-          buses: m.buses,
-          branches: m.branches,
-          total_installed_mw: Number(m.total_installed_mw),
-          total_demand_mw: Number(m.total_demand_mw),
-          converged: m.converged,
-          is_default: false,
-          is_active: activeModelId ? m.id === activeModelId : idx === 0,
-        }));
+        const mappedModels: GridModelMeta[] = dbModels.map(
+          (m: any, idx: number) => ({
+            id: m.id,
+            name: m.name,
+            voltage_level: m.voltage_level || "330kV",
+            domain: m.domain || "Static & Dynamic",
+            platform: m.platform || m.format || "MATPOWER",
+            buses: m.buses,
+            branches: m.branches,
+            total_installed_mw: Number(m.total_installed_mw),
+            total_demand_mw: Number(m.total_demand_mw),
+            converged: m.converged,
+            is_default: false,
+            is_active: activeModelId ? m.id === activeModelId : idx === 0,
+          }),
+        );
 
         setModels(mappedModels);
 
@@ -198,7 +208,9 @@ export default function PowerPlatformDashboard() {
 
           const simRes = await api.runPowerFlow(pfVariables, trippedLines);
           setResults(simRes);
-          setDivergedNotice(!simRes.converged ? simRes.message || 'Diverged' : null);
+          setDivergedNotice(
+            !simRes.converged ? simRes.message || "Diverged" : null,
+          );
         }
       } else {
         setModels([]);
@@ -209,7 +221,7 @@ export default function PowerPlatformDashboard() {
       const userList = await api.getUsers();
       setUsers(userList);
     } catch (err: any) {
-      console.warn('Sync notice:', err.message);
+      console.warn("Sync notice:", err.message);
     } finally {
       setLoading(false);
     }
@@ -224,7 +236,9 @@ export default function PowerPlatformDashboard() {
     try {
       const simRes = await api.runPowerFlow(pfVariables, trippedLines);
       setResults(simRes);
-      setDivergedNotice(!simRes.converged ? simRes.message || 'Calculation diverged' : null);
+      setDivergedNotice(
+        !simRes.converged ? simRes.message || "Calculation diverged" : null,
+      );
     } finally {
       setLoading(false);
     }
@@ -259,7 +273,12 @@ export default function PowerPlatformDashboard() {
   const runMkt = async () => {
     setMarketLoading(true);
     try {
-      const data = await api.runMarket(pfVariables.loadMultiplier, gasPriceFactor, hydroAvailability, trippedLines);
+      const data = await api.runMarket(
+        pfVariables.loadMultiplier,
+        gasPriceFactor,
+        hydroAvailability,
+        trippedLines,
+      );
       setMarketResults(data);
     } finally {
       setMarketLoading(false);
@@ -278,9 +297,9 @@ export default function PowerPlatformDashboard() {
     setLoading(true);
     try {
       const { data: dbModel } = await supabase
-        .from('grid_models')
-        .select('*')
-        .eq('id', id)
+        .from("grid_models")
+        .select("*")
+        .eq("id", id)
         .single();
 
       if (dbModel) {
@@ -300,7 +319,7 @@ export default function PowerPlatformDashboard() {
         await runMkt();
       }
     } catch {
-      alert('Failed to activate model.');
+      alert("Failed to activate model.");
     } finally {
       setLoading(false);
     }
@@ -315,19 +334,19 @@ export default function PowerPlatformDashboard() {
     if (!file) return;
 
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append("file", file);
     setUploadLoading(true);
     setUploadNotice(null);
 
     try {
       const res = await api.uploadModel(formData);
 
-      const { error: dbError } = await supabase.from('grid_models').insert({
+      const { error: dbError } = await supabase.from("grid_models").insert({
         id: res.model_id,
         name: res.filename,
         format: res.format,
         voltage_level: res.voltage_level,
-        domain: 'Static & Dynamic',
+        domain: "Static & Dynamic",
         platform: res.format,
         buses: res.metrics.buses,
         branches: res.metrics.branches,
@@ -340,7 +359,9 @@ export default function PowerPlatformDashboard() {
 
       if (dbError) throw dbError;
 
-      setUploadNotice(`Model '${res.filename}' parsed and stored permanently in Supabase.`);
+      setUploadNotice(
+        `Model '${res.filename}' parsed and stored permanently in Supabase.`,
+      );
       setActiveModelId(res.model_id);
       await syncWithSupabase();
       await runSim();
@@ -354,13 +375,18 @@ export default function PowerPlatformDashboard() {
   };
 
   const handleDeleteModel = async (id: string) => {
-    if (!confirm('Are you sure you want to permanently delete this model from Supabase?')) return;
+    if (
+      !confirm(
+        "Are you sure you want to permanently delete this model from Supabase?",
+      )
+    )
+      return;
     try {
-      await supabase.from('grid_models').delete().eq('id', id);
+      await supabase.from("grid_models").delete().eq("id", id);
       await api.deleteModel(id);
       await syncWithSupabase();
     } catch {
-      alert('Could not delete model.');
+      alert("Could not delete model.");
     }
   };
 
@@ -368,7 +394,7 @@ export default function PowerPlatformDashboard() {
     setTrippedLines([]);
     setPfVariables({
       loadMultiplier: 1.0,
-      targetPowerFactor: 0.90,
+      targetPowerFactor: 0.9,
       slackVoltagePu: 1.05,
       shuntMvarCompensation: 0.0,
       thermalDeratingFactor: 1.0,
@@ -390,11 +416,11 @@ export default function PowerPlatformDashboard() {
     try {
       const res = await api.loginUser(loginEmail, loginPassword);
       setCurrentUser(res.user);
-      localStorage.setItem('ml4ps_user', JSON.stringify(res.user));
+      localStorage.setItem("ml4ps_user", JSON.stringify(res.user));
       setShowAuthModal(false);
-      setLoginPassword('');
+      setLoginPassword("");
     } catch (err: any) {
-      setAuthError(err.message || 'Login failed');
+      setAuthError(err.message || "Login failed");
     } finally {
       setAuthSubmitting(false);
     }
@@ -419,7 +445,7 @@ export default function PowerPlatformDashboard() {
       const updatedUsers = await api.getUsers();
       setUsers(updatedUsers);
     } catch (err: any) {
-      setAuthError(err.message || 'Registration failed');
+      setAuthError(err.message || "Registration failed");
     } finally {
       setAuthSubmitting(false);
     }
@@ -427,7 +453,7 @@ export default function PowerPlatformDashboard() {
 
   const handleLogout = () => {
     setCurrentUser(null);
-    localStorage.removeItem('ml4ps_user');
+    localStorage.removeItem("ml4ps_user");
   };
 
   const handleRunMultiMachine = async (params: {
@@ -446,11 +472,11 @@ export default function PowerPlatformDashboard() {
       <Header
         mobileMenuOpen={mobileMenuOpen}
         setMobileMenuOpen={setMobileMenuOpen}
+        desktopCollapsed={desktopCollapsed}
+        setDesktopCollapsed={setDesktopCollapsed}
         currentUser={currentUser}
         onLoginClick={() => {
-          setAuthMode('login');
-          setAuthError(null);
-          setAuthSuccessMsg(null);
+          setAuthMode("login");
           setShowAuthModal(true);
         }}
         onLogoutClick={handleLogout}
@@ -465,18 +491,21 @@ export default function PowerPlatformDashboard() {
           loading={loading}
           currentUser={currentUser}
           onLoginClick={() => {
-            setAuthMode('login');
+            setAuthMode("login");
             setShowAuthModal(true);
           }}
+          desktopCollapsed={desktopCollapsed}
+          mobileMenuOpen={mobileMenuOpen}
+          setMobileMenuOpen={setMobileMenuOpen}
         />
 
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 flex flex-col justify-between">
           <div>
-            {activeTab === 'Home' && <HomeTab onNavigate={setActiveTab} />}
+            {activeTab === "Home" && <HomeTab onNavigate={setActiveTab} />}
 
-            {activeTab === 'Grid Models' && (
+            {activeTab === "Grid Models" && (
               <GridStabilityTab
-                modelName={results?.model_name || 'No Active Model'}
+                modelName={results?.model_name || "No Active Model"}
                 divergedNotice={divergedNotice}
                 pfVariables={pfVariables}
                 setPfVariables={setPfVariables}
@@ -495,7 +524,7 @@ export default function PowerPlatformDashboard() {
               />
             )}
 
-            {activeTab === 'Dynamics' && (
+            {activeTab === "Dynamics" && (
               <DynamicsTab
                 dynResult={dynResult}
                 dynLoading={dynLoading}
@@ -505,7 +534,7 @@ export default function PowerPlatformDashboard() {
               />
             )}
 
-            {activeTab === 'Market Simulations' && (
+            {activeTab === "Market Simulations" && (
               <MarketTab
                 gasPriceFactor={gasPriceFactor}
                 setGasPriceFactor={setGasPriceFactor}
@@ -517,7 +546,7 @@ export default function PowerPlatformDashboard() {
               />
             )}
 
-            {activeTab === 'Data Upload' && (
+            {activeTab === "Data Upload" && (
               <UploadTab
                 uploadNotice={uploadNotice}
                 uploadLoading={uploadLoading}
@@ -527,23 +556,26 @@ export default function PowerPlatformDashboard() {
                 onDelete={handleDeleteModel}
                 currentUser={currentUser}
                 onLoginClick={() => {
-                  setAuthMode('login');
+                  setAuthMode("login");
                   setShowAuthModal(true);
                 }}
               />
             )}
 
-            {activeTab === 'Visualization' && (
+            {activeTab === "Visualization" && (
               <>
                 {!results || results.buses.length === 0 ? (
                   <div className="h-96 rounded-lg border-2 border-dashed border-slate-300 bg-white flex flex-col items-center justify-center p-6 text-center">
                     <FolderOpen className="h-12 w-12 text-slate-400 mb-3" />
-                    <h3 className="text-sm font-bold text-slate-800">No Active Grid Topology</h3>
+                    <h3 className="text-sm font-bold text-slate-800">
+                      No Active Grid Topology
+                    </h3>
                     <p className="text-xs text-slate-500 max-w-sm mt-1">
-                      Upload a network case file (.m, .json, .xlsx, .raw) to generate and visualize the single-line diagram.
+                      Upload a network case file (.m, .json, .xlsx, .raw) to
+                      generate and visualize the single-line diagram.
                     </p>
                     <button
-                      onClick={() => setActiveTab('Data Upload')}
+                      onClick={() => setActiveTab("Data Upload")}
                       className="mt-4 px-4 py-2 rounded bg-[#500b50] text-white text-xs font-bold hover:bg-[#680f68]"
                     >
                       Go to Upload & Ingestion
@@ -558,29 +590,34 @@ export default function PowerPlatformDashboard() {
                     selectedBus={selectedBus}
                     setSelectedBus={setSelectedBus}
                     onReset={handleReset}
-                    modelName={results?.model_name || ''}
+                    modelName={results?.model_name || ""}
                   />
                 )}
               </>
             )}
 
-            {activeTab === 'Reports' && (
+            {activeTab === "Reports" && (
               <ReportsTab
                 results={results}
-                modelName={results?.model_name || (models.find((m) => m.id === activeModelId)?.name || 'Active Grid Case')}
+                modelName={
+                  results?.model_name ||
+                  models.find((m) => m.id === activeModelId)?.name ||
+                  "Active Grid Case"
+                }
                 currentUser={currentUser}
                 pfVariables={pfVariables}
                 dynResult={dynResult}
               />
             )}
 
-       {activeTab === 'Admin Panel' && <AdminTab />}
+            {activeTab === "Admin Panel" && <AdminTab />}
 
-            {activeTab === 'About Us' && <AboutTab />}
+            {activeTab === "About Us" && <AboutTab />}
           </div>
 
           <footer className="mt-8 pt-3 border-t border-slate-200 text-center text-[11px] text-slate-500">
-            Copyright 2026 National Power System Modelling & Simulation Platform | Machine Learning 4 Power Systems (ML4PS) | FUT Minna
+            Copyright 2026 National Power System Modelling & Simulation Platform
+            | Machine Learning 4 Power Systems (ML4PS) | FUT Minna
           </footer>
         </main>
       </div>
@@ -592,13 +629,18 @@ export default function PowerPlatformDashboard() {
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
               <div>
                 <h3 className="text-sm font-bold uppercase tracking-wider text-[#500b50]">
-                  {authMode === 'login' ? 'Operator Sign In' : 'Request Research Access'}
+                  {authMode === "login"
+                    ? "Operator Sign In"
+                    : "Request Research Access"}
                 </h3>
                 <p className="text-[10px] text-slate-500">
                   National Power System & Development Taskforce Security Gate
                 </p>
               </div>
-              <button onClick={() => setShowAuthModal(false)} className="text-slate-400 hover:text-slate-700">
+              <button
+                onClick={() => setShowAuthModal(false)}
+                className="text-slate-400 hover:text-slate-700"
+              >
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -618,31 +660,35 @@ export default function PowerPlatformDashboard() {
             <div className="flex rounded border border-slate-200 bg-slate-100 p-0.5 text-xs font-bold mt-4">
               <button
                 onClick={() => {
-                  setAuthMode('login');
+                  setAuthMode("login");
                   setAuthError(null);
                   setAuthSuccessMsg(null);
                 }}
                 className={`flex-1 py-1.5 rounded transition ${
-                  authMode === 'login' ? 'bg-white text-[#500b50] shadow-xs' : 'text-slate-600'
+                  authMode === "login"
+                    ? "bg-white text-[#500b50] shadow-xs"
+                    : "text-slate-600"
                 }`}
               >
                 Sign In
               </button>
               <button
                 onClick={() => {
-                  setAuthMode('register');
+                  setAuthMode("register");
                   setAuthError(null);
                   setAuthSuccessMsg(null);
                 }}
                 className={`flex-1 py-1.5 rounded transition ${
-                  authMode === 'register' ? 'bg-white text-[#500b50] shadow-xs' : 'text-slate-600'
+                  authMode === "register"
+                    ? "bg-white text-[#500b50] shadow-xs"
+                    : "text-slate-600"
                 }`}
               >
                 Request Access (Register)
               </button>
             </div>
 
-            {authMode === 'login' && (
+            {authMode === "login" && (
               <form onSubmit={handleLoginSubmit} className="mt-4 space-y-3">
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -683,15 +729,20 @@ export default function PowerPlatformDashboard() {
                   disabled={authSubmitting}
                   className="w-full rounded bg-[#500b50] py-2 text-xs font-bold text-white hover:bg-[#680f68] transition shadow-xs disabled:opacity-50 mt-2"
                 >
-                  {authSubmitting ? 'Authenticating...' : 'Sign In to Platform'}
+                  {authSubmitting ? "Authenticating..." : "Sign In to Platform"}
                 </button>
               </form>
             )}
 
-            {authMode === 'register' && (
-              <form onSubmit={handleRegisterSubmit} className="mt-4 space-y-2.5 max-h-[65vh] overflow-y-auto pr-1">
+            {authMode === "register" && (
+              <form
+                onSubmit={handleRegisterSubmit}
+                className="mt-4 space-y-2.5 max-h-[65vh] overflow-y-auto pr-1"
+              >
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">Full Name & Title</label>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Full Name & Title
+                  </label>
                   <input
                     type="text"
                     required
@@ -703,7 +754,9 @@ export default function PowerPlatformDashboard() {
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">Institutional Email</label>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Institutional Email
+                  </label>
                   <input
                     type="email"
                     required
@@ -716,7 +769,9 @@ export default function PowerPlatformDashboard() {
 
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">Institution</label>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Institution
+                    </label>
                     <input
                       type="text"
                       required
@@ -727,7 +782,9 @@ export default function PowerPlatformDashboard() {
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">Department</label>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Department
+                    </label>
                     <input
                       type="text"
                       value={regDepartment}
@@ -739,7 +796,9 @@ export default function PowerPlatformDashboard() {
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">Reason for Research Access</label>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Reason for Research Access
+                  </label>
                   <textarea
                     required
                     rows={2}
@@ -752,7 +811,9 @@ export default function PowerPlatformDashboard() {
 
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">Referee (Optional)</label>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Referee (Optional)
+                    </label>
                     <input
                       type="text"
                       value={regReferee}
@@ -762,7 +823,9 @@ export default function PowerPlatformDashboard() {
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">Research Focus Tags</label>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Research Focus Tags
+                    </label>
                     <input
                       type="text"
                       value={regTags}
@@ -778,7 +841,9 @@ export default function PowerPlatformDashboard() {
                   disabled={authSubmitting}
                   className="w-full rounded bg-[#500b50] py-2 text-xs font-bold text-white hover:bg-[#680f68] transition shadow-xs disabled:opacity-50 mt-2"
                 >
-                  {authSubmitting ? 'Submitting Application...' : 'Submit Request for Approval'}
+                  {authSubmitting
+                    ? "Submitting Application..."
+                    : "Submit Request for Approval"}
                 </button>
               </form>
             )}

@@ -1,16 +1,26 @@
 'use client';
+
 import React from 'react';
-import { User, RotateCcw, ShieldCheck, Lock } from 'lucide-react';
 import { UserAccount } from '@/types/grid';
+import { RotateCcw, User, LucideIcon } from 'lucide-react';
+
+interface NavItem {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+}
 
 interface SidebarProps {
-  navItems: { id: string; label: string; icon: any }[];
+  navItems: NavItem[];
   activeTab: string;
   setActiveTab: (tab: string) => void;
   onReset: () => void;
   loading: boolean;
   currentUser: UserAccount | null;
   onLoginClick: () => void;
+  desktopCollapsed: boolean;
+  mobileMenuOpen: boolean;
+  setMobileMenuOpen: (val: boolean) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -20,77 +30,93 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onReset,
   loading,
   currentUser,
-  onLoginClick,
-}) => (
-  <aside className="hidden md:flex w-64 bg-[#500b50] text-white p-3 flex-col justify-between shrink-0 select-none shadow-md">
-    <div className="space-y-4">
-      {/* Dynamic Profile Box */}
-      <div className="flex flex-col items-center pt-2 pb-3 border-b border-[#6f146f]/60 text-center">
-        <div className="h-12 w-12 rounded-full bg-white/20 p-1 flex items-center justify-center border border-white/50 mb-1.5 shadow-inner">
-          <User className="h-7 w-7 text-white" />
+  desktopCollapsed,
+  mobileMenuOpen,
+  setMobileMenuOpen,
+}) => {
+  return (
+    <>
+      {/* Mobile Backdrop */}
+      {mobileMenuOpen && (
+        <div
+          onClick={() => setMobileMenuOpen(false)}
+          className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-xs md:hidden"
+        />
+      )}
+
+      {/* Main Sidebar Element */}
+      <aside
+        className={`fixed md:static inset-y-0 left-0 z-50 flex flex-col justify-between bg-[#460946] text-white transition-all duration-300 ease-in-out shadow-xl md:shadow-none select-none ${
+          mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+        } ${desktopCollapsed ? 'md:w-20' : 'md:w-64'}`}
+      >
+        {/* Top: User Profile Badge */}
+        <div>
+          <div className={`p-4 border-b border-white/10 ${desktopCollapsed ? 'flex justify-center' : ''}`}>
+            {desktopCollapsed ? (
+              <div className="h-10 w-10 rounded-full bg-white/10 flex items-center justify-center text-white" title={currentUser?.name || 'Operator'}>
+                <User className="h-5 w-5" />
+              </div>
+            ) : (
+              <div className="flex items-center gap-3">
+                <div className="h-11 w-11 rounded-full bg-white/15 flex items-center justify-center text-white shrink-0">
+                  <User className="h-6 w-6" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-sm font-bold text-white truncate leading-snug">
+                    {currentUser?.name || 'Authorized Operator'}
+                  </h3>
+                  <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                    Active Session
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Navigation Links */}
+          <nav className="p-3 space-y-1.5 overflow-y-auto max-h-[calc(100vh-210px)]">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    setActiveTab(item.id);
+                    setMobileMenuOpen(false);
+                  }}
+                  title={desktopCollapsed ? item.label : undefined}
+                  className={`w-full flex items-center gap-3.5 px-3.5 py-3 rounded-xl text-sm font-bold transition-all ${
+                    isActive
+                      ? 'bg-emerald-600 text-white shadow-md'
+                      : 'text-white/80 hover:bg-white/10 hover:text-white'
+                  } ${desktopCollapsed ? 'justify-center px-0' : ''}`}
+                >
+                  <Icon className="h-5 w-5 shrink-0" />
+                  {!desktopCollapsed && <span className="truncate">{item.label}</span>}
+                </button>
+              );
+            })}
+          </nav>
         </div>
 
-        {currentUser ? (
-          <>
-            <span className="text-xs font-bold leading-tight truncate w-full px-2">
-              {currentUser.name}
-            </span>
-            <span className="text-[10px] text-white/70 font-mono mt-0.5 truncate max-w-full px-2">
-              {currentUser.institution}
-            </span>
-            <span className="mt-1.5 inline-block px-2 py-0.5 text-[9px] font-bold rounded-full bg-emerald-600 text-white shadow-xs">
-              {currentUser.role} (Active)
-            </span>
-          </>
-        ) : (
-          <>
-            <span className="text-xs font-bold leading-tight text-white/90">
-              Guest Researcher
-            </span>
-            <span className="text-[10px] text-white/60 font-mono mt-0.5">Read-Only Mode</span>
-            <button
-              onClick={onLoginClick}
-              className="mt-1.5 inline-flex items-center gap-1 px-2.5 py-0.5 text-[10px] font-bold rounded bg-amber-500/20 text-amber-200 border border-amber-300/30 hover:bg-amber-500/30 transition"
-            >
-              <Lock className="h-3 w-3" />
-              <span>Login for Access</span>
-            </button>
-          </>
-        )}
-      </div>
-
-      {/* Nav Menu */}
-      <nav className="space-y-1">
-        {navItems.map((tab) => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex w-full items-center gap-2.5 rounded px-3 py-2 text-xs transition ${
-                isActive
-                  ? 'bg-[#15803d] text-white font-bold shadow-xs'
-                  : 'text-white/80 hover:bg-white/10 hover:text-white'
-              }`}
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              <span className="truncate">{tab.label}</span>
-            </button>
-          );
-        })}
-      </nav>
-    </div>
-
-    <div className="pt-3 border-t border-[#6f146f]/60">
-      <button
-        onClick={onReset}
-        disabled={loading}
-        className="w-full flex items-center justify-center gap-1.5 rounded bg-white/10 hover:bg-white/20 py-2 text-xs font-medium text-white transition disabled:opacity-50"
-      >
-        <RotateCcw className="h-3.5 w-3.5 text-emerald-300" />
-        <span>Reset Grid Baseline</span>
-      </button>
-    </div>
-  </aside>
-);
+        {/* Bottom: Reset Action Button */}
+        <div className="p-3 border-t border-white/10">
+          <button
+            onClick={onReset}
+            disabled={loading}
+            title={desktopCollapsed ? 'Reset Grid Baseline' : undefined}
+            className={`w-full flex items-center gap-2 rounded-xl bg-white/10 py-2.5 px-3 text-xs font-bold text-white hover:bg-white/20 transition disabled:opacity-50 ${
+              desktopCollapsed ? 'justify-center px-0' : 'justify-center'
+            }`}
+          >
+            <RotateCcw className="h-4 w-4 shrink-0" />
+            {!desktopCollapsed && <span>Reset Baseline</span>}
+          </button>
+        </div>
+      </aside>
+    </>
+  );
+};
