@@ -10,7 +10,7 @@ import { DynamicsTab } from '@/components/tabs/DynamicsTab';
 import { MarketTab } from '@/components/tabs/MarketTab';
 import { UploadTab } from '@/components/tabs/UploadTab';
 import { ReportsTab } from '@/components/tabs/ReportsTab';
-import { AdminTab } from '@/components/tabs/AdminTab';
+import AdminTab from '@/components/tabs/AdminTab';
 import { AboutTab } from '@/components/tabs/AboutTab';
 import { api } from '@/services/api';
 import { supabase } from '@/lib/supabase';
