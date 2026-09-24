@@ -36,9 +36,18 @@ def get_active_net_and_name():
         return model_registry[first_id]["net"], model_registry[first_id]["name"]
     return None, "No Active Model"
 
+# Auth Router
 app.include_router(get_auth_router())
-app.include_router(get_model_router(model_registry, state))
-app.include_router(get_sim_router(model_registry, get_active_net_and_name))
+
+# Model Routers (Supports /api/models and /api/model)
+model_router = get_model_router(model_registry, state)
+app.include_router(model_router, prefix="/api/models")
+app.include_router(model_router, prefix="/api/model")
+
+# Simulation Routers (Supports both /api/simulate and /api/simulations)
+sim_router = get_sim_router(model_registry, get_active_net_and_name)
+app.include_router(sim_router, prefix="/api/simulate")
+app.include_router(sim_router, prefix="/api/simulations")
 
 @app.get("/")
 def root():
