@@ -132,7 +132,6 @@ export default function PowerPlatformDashboard() {
     }
   }, []);
 
-  // Comprehensive Model Activation & Immediate Power Flow Execution
   const handleActivateModel = async (id: string) => {
     setLoading(true);
     setDivergedNotice(null);
@@ -141,19 +140,30 @@ export default function PowerPlatformDashboard() {
         localStorage.setItem('nesi_active_model_id', id);
       }
 
-      await api.activateModel(id);
+      // 1. Fetch full payload from Supabase
+      const { data: modelData } = await supabase
+        .from('grid_models')
+        .select('*')
+        .eq('id', id)
+        .single();
 
-      const updatedList = await api.getModels();
+      // 2. If payload exists in Supabase, load it into backend memory first
+      if (modelData && modelData.network_payload) {
+        await api.loadPayload({
+          id: modelData.id,
+          name: modelData.name,
+          voltage_level: modelData.voltage_level,
+          domain: modelData.domain,
+          platform: modelData.platform,
+          network_payload: modelData.network_payload,
+        });
+      } else {
+        await api.activateModel(id);
+      }
+
       setActiveModelId(id);
 
-      // Reflect active state across the model list
-      setModels((prevModels) =>
-        prevModels.map((m) => ({
-          ...m,
-          is_active: m.id === id,
-        }))
-      );
-
+      // 3. Run power flow on the newly hydrated model
       const pfResult = await api.runPowerFlow(pfVariables, []);
       setResults(pfResult);
       setTrippedLines([]);
@@ -164,7 +174,6 @@ export default function PowerPlatformDashboard() {
       setLoading(false);
     }
   };
-
   // Safe Model Ingestion & Synchronization (Merges Backend and Supabase without wiping)
   const syncModels = async () => {
     setLoading(true);
