@@ -191,7 +191,6 @@ export interface MultiMachineResult {
   statutory_protection_limit_ms: number;
 
 }
-
 export interface UFLSEvent {
   stage: number;
   timestamp: number;
@@ -199,9 +198,20 @@ export interface UFLSEvent {
   shed_mw: number;
 }
 
+export interface DynamicMetrics {
+  nadir?: number;
+  nadir_hz?: number;
+  rocof?: number;
+  initial_rocof?: number;
+  settling_hz?: number;
+  total_shed_mw?: number;
+  stages_tripped?: number;
+  cct_ms?: number;
+  [key: string]: any;
+}
+
 export interface DynamicSimResult {
   time: number[];
-  // Both legacy and new telemetry key aliases supported
   f_unmitigated?: number[];
   f_protected?: number[];
   frequency_unmitigated?: number[];
@@ -216,4 +226,7 @@ export interface DynamicSimResult {
   ufls_events?: UFLSEvent[];
   cct_ms?: number;
   status?: string;
+  // Metrics object referenced by ReportsTab.tsx
+  metrics?: DynamicMetrics;
+  [key: string]: any;
 }

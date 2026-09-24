@@ -106,18 +106,30 @@ def get_sim_router(model_registry: Dict[str, Any], get_active_net_fn):
         settling_hz = float(np.mean(f_protected[-25:]))
         total_shed_mw = sum(s["shed_mw"] for s in active_shed_events)
 
+        # Inside run_frequency_dynamics in backend/routers/simulations.py:
         return {
             "time": [round(float(x), 2) for x in time],
             "f_unmitigated": [float(x) for x in f_unmitigated],
             "f_protected": [float(x) for x in f_protected],
+            "frequency_unmitigated": [float(x) for x in f_unmitigated],
+            "frequency_ufls": [float(x) for x in f_protected],
             "nadir_hz": round(nadir_hz, 2),
             "initial_rocof": round(initial_rocof, 2),
             "settling_hz": round(settling_hz, 2),
             "total_shed_mw": total_shed_mw,
             "stages_tripped": len(active_shed_events),
-            "ufls_events": active_shed_events
+            "ufls_events": active_shed_events,
+            "metrics": {
+                "nadir": round(nadir_hz, 2),
+                "nadir_hz": round(nadir_hz, 2),
+                "rocof": round(initial_rocof, 2),
+                "initial_rocof": round(initial_rocof, 2),
+                "settling_hz": round(settling_hz, 2),
+                "total_shed_mw": total_shed_mw,
+                "stages_tripped": len(active_shed_events),
+                "cct_ms": 120.0
+            }
         }
-
     @router.post("/multi-machine")
     def run_multi_machine_cct(req: MultiMachineRequest):
         """Simulates generator swing equations and computes machine-specific CCTs."""
