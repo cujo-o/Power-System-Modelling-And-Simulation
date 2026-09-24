@@ -30,6 +30,11 @@ def get_active_net_and_name():
     active_id = state.get("active_model_id")
     if active_id and active_id in model_registry:
         return model_registry[active_id]["net"], model_registry[active_id]["name"]
+    # Case-insensitive / filename lookup fallback
+    for k, v in model_registry.items():
+        if active_id and (k.lower() == str(active_id).lower() or v.get("name", "").lower() == str(active_id).lower()):
+            state["active_model_id"] = k
+            return v["net"], v["name"]
     if model_registry:
         first_id = list(model_registry.keys())[0]
         state["active_model_id"] = first_id
@@ -39,12 +44,12 @@ def get_active_net_and_name():
 # Auth Router
 app.include_router(get_auth_router())
 
-# Model Routers (Supports /api/models and /api/model)
+# Model Routers (handles /api/models/... and /api/model/...)
 model_router = get_model_router(model_registry, state)
 app.include_router(model_router, prefix="/api/models")
 app.include_router(model_router, prefix="/api/model")
 
-# Simulation Routers (Supports both /api/simulate and /api/simulations)
+# Simulation Routers (handles /api/simulate/... and /api/simulations/...)
 sim_router = get_sim_router(model_registry, get_active_net_and_name)
 app.include_router(sim_router, prefix="/api/simulate")
 app.include_router(sim_router, prefix="/api/simulations")
