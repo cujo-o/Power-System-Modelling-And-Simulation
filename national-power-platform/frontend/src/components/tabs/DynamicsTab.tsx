@@ -85,13 +85,20 @@ export const DynamicsTab: React.FC<Props> = ({
   };
 
   // Safe Property Resolvers
-  const unmitigatedSeries = dynResult?.f_unmitigated || dynResult?.frequency_unmitigated || [];
-  const protectedSeries = dynResult?.f_protected || dynResult?.frequency_ufls || [];
-  const nadirVal = dynResult?.nadir_hz ?? dynResult?.nadir ?? 50.0;
-  const rocofVal = dynResult?.initial_rocof ?? dynResult?.rocof ?? 0.0;
-  const settlingVal = dynResult?.settling_hz ?? 50.0;
-  const totalShedVal = dynResult?.total_shed_mw ?? 0;
-  const stagesTrippedVal = dynResult?.stages_tripped ?? 0;
+  const unmitigatedSeries: number[] =
+    dynResult?.f_unmitigated || dynResult?.frequency_unmitigated || [];
+  const protectedSeries: number[] =
+    dynResult?.f_protected || dynResult?.frequency_ufls || [];
+  const nadirVal: number =
+    dynResult?.nadir_hz ?? dynResult?.nadir ?? dynResult?.metrics?.nadir ?? 50.0;
+  const rocofVal: number =
+    dynResult?.initial_rocof ?? dynResult?.rocof ?? dynResult?.metrics?.rocof ?? 0.0;
+  const settlingVal: number =
+    dynResult?.settling_hz ?? dynResult?.metrics?.settling_hz ?? 50.0;
+  const totalShedVal: number =
+    dynResult?.total_shed_mw ?? dynResult?.metrics?.total_shed_mw ?? 0;
+  const stagesTrippedVal: number =
+    dynResult?.stages_tripped ?? dynResult?.metrics?.stages_tripped ?? 0;
   const uflsEvents = dynResult?.ufls_events || [];
 
   // Export Graph as SVG
@@ -169,7 +176,7 @@ export const DynamicsTab: React.FC<Props> = ({
     URL.revokeObjectURL(url);
   };
 
-  // SVG Coordinates
+  // SVG Coordinate Helpers
   const svgWidth = 850;
   const svgHeight = 280;
   const padLeft = 60;
@@ -519,8 +526,12 @@ export const DynamicsTab: React.FC<Props> = ({
                   )}
 
                   {uflsEvents.map((ev, idx) => {
-                    const cx = mapX(ev.timestamp, 12.0);
-                    const cy = mapFreqY(ev.threshold_hz);
+                    const tVal: number = Number(ev.timestamp ?? (ev as any).timestamp_s ?? 0);
+                    const threshVal: number = Number(ev.threshold_hz ?? (ev as any).frequency_at_trip ?? 48.8);
+                    const shedVal: number = Number(ev.shed_mw ?? (ev as any).mw_shed ?? 0);
+                    const cx = mapX(tVal, 12.0);
+                    const cy = mapFreqY(threshVal);
+
                     return (
                       <g key={idx}>
                         <circle cx={cx} cy={cy} r="5" fill="#f43f5e" stroke="#ffffff" strokeWidth="2" />
@@ -532,7 +543,7 @@ export const DynamicsTab: React.FC<Props> = ({
                           fontFamily="sans-serif"
                           fontWeight="bold"
                         >
-                          Stage {ev.stage} (-{ev.shed_mw}MW)
+                          Stage {ev.stage} (-{shedVal}MW)
                         </text>
                       </g>
                     );

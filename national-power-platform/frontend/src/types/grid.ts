@@ -21,6 +21,7 @@ export interface LineData {
   in_service: boolean;
   loading_percent: number;
   flow_mw: number;
+  p_mw: number;
   losses_mw: number;
 }
 
@@ -34,15 +35,6 @@ export interface SimResult {
   buses: BusData[];
   lines: LineData[];
   message?: string;
-}
-
-export interface UFLSEvent {
-  stage: number;
-  name: string;
-  timestamp_s: number;
-  frequency_at_trip: number;
-  mw_shed: number;
-  cumulative_shed_mw: number;
 }
 
 export interface CascadeStep {
@@ -125,7 +117,7 @@ export interface UserAccount {
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
   password?: string;
   temp_password?: string;
-  registered_at: string;
+  registered_at?: string;
 }
 
 export interface GeneratorDispatch {
@@ -189,19 +181,23 @@ export interface MultiMachineResult {
   time: number[];
   generators: GeneratorRotorResult[];
   statutory_protection_limit_ms: number;
-
 }
 export interface UFLSEvent {
   stage: number;
+  name?: string;
   timestamp: number;
+  timestamp_s?: number;
   threshold_hz: number;
+  frequency_at_trip?: number;
   shed_mw: number;
+  mw_shed?: number;
+  cumulative_shed_mw?: number;
 }
 
 export interface DynamicMetrics {
-  nadir?: number;
+  nadir: number;
   nadir_hz?: number;
-  rocof?: number;
+  rocof: number;
   initial_rocof?: number;
   settling_hz?: number;
   total_shed_mw?: number;
@@ -226,7 +222,6 @@ export interface DynamicSimResult {
   ufls_events?: UFLSEvent[];
   cct_ms?: number;
   status?: string;
-  // Metrics object referenced by ReportsTab.tsx
-  metrics?: DynamicMetrics;
+  metrics: DynamicMetrics;
   [key: string]: any;
 }
