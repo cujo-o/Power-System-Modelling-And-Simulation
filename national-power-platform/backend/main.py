@@ -1,40 +1,22 @@
+import os
+import sys
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# Ensure the backend root is in the Python search path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from routers.auth import get_auth_router
 from routers.models import get_model_router
 from routers.simulations import get_sim_router
-from routers.auth import get_auth_router
-# In backend/main.py (or startup event):
-from services.importers import parse_matpower_case # or your case parser function
 
-@app.on_event("startup")
-def seed_default_models():
-    """Seeds default Nigerian grid benchmarks into model_registry on container startup."""
-    default_cases = [
-        ("case10_nigeria_dynamic.m", "330kV", "Static & Dynamic", "PSAT"),
-        ("case330.m", "330kV", "Static Power Flow", "MATPOWER"),
-    ]
-    for filename, v_level, domain, platform in default_cases:
-        if filename not in model_registry:
-            try:
-                # Load from backend cases directory
-                net = parse_matpower_case(f"cases/{filename}")
-                model_registry[filename] = {
-                    "name": filename,
-                    "net": net,
-                    "voltage_level": v_level,
-                    "domain": domain,
-                    "platform": platform,
-                    "is_default": True
-                }
-            except Exception as e:
-                print(f"Notice: Could not pre-seed {filename}: {e}")
+app = FastAPI(
+    title="National Power System Simulation API",
+    description="Backend engine for Nigerian Electricity Supply Industry (NESI) 330/132 kV Grid",
+    version="2.0.0",
+)
 
-    # Set initial active model
-    if not state.get("active_model_id") and model_registry:
-        state["active_model_id"] = list(model_registry.keys())[0]
-
-app = FastAPI(title="National Power System Simulation API")
-
+# Enable CORS for frontend clients (Vercel & localhost)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -43,18 +25,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Shared in-memory registry & state
+# In-memory registry and state (starts completely empty)
 model_registry = {}
 state = {"active_model_id": None}
 
-# Include routers
+
+def get_active_net_and_name():
+    """Callback returning the currently active network for the simulation engine."""
+    active_id = state.get("active_model_id")
+    if active_id and active_id in model_registry:
+        return model_registry[active_id]["net"], model_registry[active_id]["name"]
+    if model_registry:
+        first_id = list(model_registry.keys())[0]
+        state["active_model_id"] = first_id
+        return model_registry[first_id]["net"], model_registry[first_id]["name"]
+    return None, "No Active Model"
+
+
+# Register API Routers
 app.include_router(get_auth_router())
 app.include_router(get_model_router(model_registry, state))
-app.include_router(get_sim_router(model_registry, lambda: (
-    model_registry[state["active_model_id"]]["net"] if state.get("active_model_id") and state["active_model_id"] in model_registry else None,
-    model_registry[state["active_model_id"]]["name"] if state.get("active_model_id") and state["active_model_id"] in model_registry else "No Model"
-)))
+app.include_router(get_sim_router(model_registry, get_active_net_and_name))
+
+
+@app.get("/")
+def root():
+    return {
+        "service": "National Power System Simulation API",
+        "status": "ONLINE",
+        "active_model": state.get("active_model_id"),
+        "models_count": len(model_registry),
+    }
+
 
 @app.get("/health")
 def health_check():
-    return {"status": "ONLINE", "active_model": state.get("active_model_id")}
+    return {
+        "status": "ONLINE",
+        "active_model": state.get("active_model_id"),
+    }
