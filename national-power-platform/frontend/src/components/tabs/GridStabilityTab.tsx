@@ -21,14 +21,14 @@ import {
   Trash2,
   GitBranch,
   Sliders,
-  Sparkles,
   ShieldAlert,
   Flame,
-  Layers,
   ArrowRight,
   FolderOpen,
   Check,
   Zap,
+  Power,
+  ShieldCheck,
 } from 'lucide-react';
 
 interface Props {
@@ -44,7 +44,7 @@ interface Props {
   trippedLines: number[];
   toggleLine: (id: number) => void;
   models: GridModelMeta[];
-  onActivateModel: (id: string) => void;
+  onActivateModel: (id: string) => Promise<void> | void;
   onNavigateTab: (tab: string) => void;
   onCascadeTrigger: (initialTripped: number[], threshold: number) => Promise<CascadeResult>;
   onApplyCascadeTrips: (trippedList: number[]) => void;
@@ -88,8 +88,10 @@ export const GridStabilityTab: React.FC<Props> = ({
   );
 
   const [simSubTab, setSimSubTab] = useState<'deck' | 'cascade' | 'planning'>('deck');
+  const [deckView, setDeckView] = useState<'buses' | 'lines'>('buses');
+  const [activatingId, setActivatingId] = useState<string | null>(null);
 
-  // Filter Bar
+  // Filters
   const [domainFilter, setDomainFilter] = useState<'ALL' | 'Static' | 'Dynamic'>('ALL');
   const [voltageFilter, setVoltageFilter] = useState<'ALL' | '330kV' | '132kV'>('ALL');
   const [platformFilter, setPlatformFilter] = useState<string>('ALL');
@@ -101,7 +103,7 @@ export const GridStabilityTab: React.FC<Props> = ({
   const [cascadeLoading, setCascadeLoading] = useState(false);
   const [cascadeResult, setCascadeResult] = useState<CascadeResult | null>(null);
 
-  // Planning
+  // Planning Inputs
   const [newBusName, setNewBusName] = useState('');
   const [newBusKv, setNewBusKv] = useState(330);
   const [newBusZone, setNewBusZone] = useState('North-Central');
@@ -132,22 +134,18 @@ export const GridStabilityTab: React.FC<Props> = ({
     return matchesDomain && matchesVoltage && matchesPlatform && matchesSearch;
   });
 
-  const handleSelectModel = (id: string) => {
-    onActivateModel(id);
-    setWorkflowStep('simulation_properties');
-    setSimSubTab('deck');
-  };
-
-  const handleRunCascade = async () => {
-    setCascadeLoading(true);
+  const handleActivateAndOpen = async (id: string) => {
+    setActivatingId(id);
     try {
-      const res = await onCascadeTrigger([initialTripLine], cascadeThreshold);
-      setCascadeResult(res);
+      await onActivateModel(id);
+      setWorkflowStep('simulation_properties');
+      setSimSubTab('deck');
     } finally {
-      setCascadeLoading(false);
+      setActivatingId(null);
     }
   };
 
+  // Auto-calculation on adding elements
   const handleAddBus = () => {
     if (!newBusName.trim()) return;
     const item: NewBusElement = {
@@ -163,6 +161,7 @@ export const GridStabilityTab: React.FC<Props> = ({
     }));
     setNewBusName('');
     setNewBusLoadP(0);
+    setTimeout(runSimulation, 50);
   };
 
   const handleAddLine = () => {
@@ -180,6 +179,7 @@ export const GridStabilityTab: React.FC<Props> = ({
       newLines: [...prev.newLines, item],
     }));
     setNewLineName('');
+    setTimeout(runSimulation, 50);
   };
 
   const handleAddGen = () => {
@@ -196,6 +196,32 @@ export const GridStabilityTab: React.FC<Props> = ({
       newGenerators: [...prev.newGenerators, item],
     }));
     setNewGenName('');
+    setTimeout(runSimulation, 50);
+  };
+
+  // Removal helpers that auto-recalculate flow
+  const handleRemoveBus = (index: number) => {
+    setPfVariables((prev) => ({
+      ...prev,
+      newBuses: prev.newBuses.filter((_, i) => i !== index),
+    }));
+    setTimeout(runSimulation, 50);
+  };
+
+  const handleRemoveLine = (index: number) => {
+    setPfVariables((prev) => ({
+      ...prev,
+      newLines: prev.newLines.filter((_, i) => i !== index),
+    }));
+    setTimeout(runSimulation, 50);
+  };
+
+  const handleRemoveGen = (index: number) => {
+    setPfVariables((prev) => ({
+      ...prev,
+      newGenerators: prev.newGenerators.filter((_, i) => i !== index),
+    }));
+    setTimeout(runSimulation, 50);
   };
 
   const totalExtensionsCount =
@@ -203,14 +229,14 @@ export const GridStabilityTab: React.FC<Props> = ({
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Top Breadcrumb & Workflow Navigator */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 border-b border-slate-200 gap-3">
+      {/* Top Header & Breadcrumb Navigator */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 gap-3">
         <div>
           <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
             Grid Stability & Simulation Studio
           </h2>
           <p className="text-sm text-slate-500 mt-0.5">
-            Configure NESI grid operating parameters, analyze contingencies, and plan regional transmission.
+            Operational variables deck, $N-1$ contingency switching, and regional expansion sandtable.
           </p>
         </div>
 
@@ -225,7 +251,7 @@ export const GridStabilityTab: React.FC<Props> = ({
             }`}
           >
             <Search className="h-4 w-4" />
-            <span>1. Choose Model</span>
+            <span>1. Choose / Activate Model</span>
           </button>
 
           <span className="text-slate-300 px-2">/</span>
@@ -248,11 +274,10 @@ export const GridStabilityTab: React.FC<Props> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* STEP 1: CHOOSE MODEL                                                      */}
+      {/* STEP 1: CHOOSE AND ACTIVATE MODEL                                         */}
       {/* ========================================================================= */}
       {workflowStep === 'select_model' && (
         <div className="space-y-6">
-          {/* Parameter Filters */}
           <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-sm font-bold uppercase tracking-wider text-slate-800">
@@ -326,85 +351,96 @@ export const GridStabilityTab: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Cards Grid */}
-          {filteredModels.length === 0 ? (
-            <div className="rounded-2xl border-2 border-dashed border-slate-300 bg-white p-12 text-center flex flex-col items-center justify-center">
-              <FolderOpen className="h-12 w-12 text-slate-400 mb-3" />
-              <h3 className="text-base font-bold text-slate-800">No Models Match Filter</h3>
-              <button
-                onClick={() => onNavigateTab('Data Upload')}
-                className="mt-4 px-5 py-2.5 rounded-lg bg-[#500b50] text-white text-sm font-bold hover:bg-[#680f68] transition"
-              >
-                Upload Model Case File
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {filteredModels.map((m) => {
-                const isCurrentActive = m.is_active || m.name === modelName;
+          {/* Model Cards Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {filteredModels.map((m) => {
+              const isCurrentActive = m.is_active || m.name === modelName;
 
-                return (
-                  <div
-                    key={m.id}
-                    className={`p-6 rounded-2xl border bg-white shadow-xs transition flex flex-col justify-between ${
-                      isCurrentActive
-                        ? 'border-[#500b50] ring-2 ring-[#500b50]/20'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-2">
-                          <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-purple-100 text-[#500b50]">
-                            {m.voltage_level}
-                          </span>
-                          <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-slate-100 text-slate-700">
-                            {m.platform}
-                          </span>
-                        </div>
-
-                        {isCurrentActive && (
-                          <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 flex items-center gap-1">
-                            <Check className="h-3.5 w-3.5" />
-                            <span>Active</span>
-                          </span>
-                        )}
+              return (
+                <div
+                  key={m.id}
+                  className={`p-6 rounded-2xl border bg-white shadow-xs transition flex flex-col justify-between ${
+                    isCurrentActive
+                      ? 'border-emerald-500 ring-2 ring-emerald-500/20'
+                      : 'border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-purple-100 text-[#500b50]">
+                          {m.voltage_level}
+                        </span>
+                        <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-slate-100 text-slate-700">
+                          {m.platform}
+                        </span>
                       </div>
 
-                      <h3 className="text-base font-bold text-slate-900 leading-snug">{m.name}</h3>
-
-                      <div className="mt-4 grid grid-cols-2 gap-3 text-sm font-mono bg-slate-50 p-3 rounded-xl border border-slate-100">
-                        <div>
-                          <span className="text-xs text-slate-400 block font-sans font-medium">Substations</span>
-                          <span className="font-bold text-slate-900">{m.buses} Buses</span>
-                        </div>
-                        <div>
-                          <span className="text-xs text-slate-400 block font-sans font-medium">Transmission Lines</span>
-                          <span className="font-bold text-slate-900">{m.branches} Lines</span>
-                        </div>
-                        <div>
-                          <span className="text-xs text-slate-400 block font-sans font-medium">Generation</span>
-                          <span className="font-bold text-[#500b50]">{m.total_installed_mw.toLocaleString()} MW</span>
-                        </div>
-                        <div>
-                          <span className="text-xs text-slate-400 block font-sans font-medium">Demand</span>
-                          <span className="font-bold text-slate-900">{m.total_demand_mw.toLocaleString()} MW</span>
-                        </div>
-                      </div>
+                      {isCurrentActive && (
+                        <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300 flex items-center gap-1.5">
+                          <Check className="h-3.5 w-3.5" />
+                          <span>Active in RAM</span>
+                        </span>
+                      )}
                     </div>
 
+                    <h3 className="text-base font-bold text-slate-900 leading-snug">{m.name}</h3>
+
+                    <div className="mt-4 grid grid-cols-2 gap-3 text-sm font-mono bg-slate-50 p-3 rounded-xl border border-slate-100">
+                      <div>
+                        <span className="text-xs text-slate-400 block font-sans font-medium">Substations</span>
+                        <span className="font-bold text-slate-900">{m.buses} Buses</span>
+                      </div>
+                      <div>
+                        <span className="text-xs text-slate-400 block font-sans font-medium">Transmission Lines</span>
+                        <span className="font-bold text-slate-900">{m.branches} Lines</span>
+                      </div>
+                      <div>
+                        <span className="text-xs text-slate-400 block font-sans font-medium">Generation</span>
+                        <span className="font-bold text-[#500b50]">{m.total_installed_mw.toLocaleString()} MW</span>
+                      </div>
+                      <div>
+                        <span className="text-xs text-slate-400 block font-sans font-medium">Demand</span>
+                        <span className="font-bold text-slate-900">{m.total_demand_mw.toLocaleString()} MW</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {isCurrentActive ? (
                     <button
-                      onClick={() => handleSelectModel(m.id)}
-                      className="mt-5 w-full rounded-xl bg-[#500b50] text-white py-3 text-sm font-bold hover:bg-[#680f68] transition shadow-xs flex items-center justify-center gap-2"
+                      onClick={() => {
+                        setWorkflowStep('simulation_properties');
+                        setSimSubTab('deck');
+                      }}
+                      className="mt-5 w-full rounded-xl bg-emerald-700 text-white py-3 text-sm font-bold hover:bg-emerald-800 transition shadow-xs flex items-center justify-center gap-2"
                     >
                       <span>Open Simulation Properties</span>
                       <ArrowRight className="h-4 w-4" />
                     </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  ) : (
+                    <button
+                      onClick={() => handleActivateAndOpen(m.id)}
+                      disabled={activatingId !== null}
+                      className="mt-5 w-full rounded-xl bg-[#500b50] text-white py-3 text-sm font-bold hover:bg-[#680f68] transition shadow-xs flex items-center justify-center gap-2 disabled:opacity-60"
+                    >
+                      {activatingId === m.id ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                          <span>Activating Model in Memory...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="h-4 w-4 text-amber-300" />
+                          <span>Activate & Load Model</span>
+                          <ArrowRight className="h-4 w-4" />
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -423,9 +459,16 @@ export const GridStabilityTab: React.FC<Props> = ({
                 <span className="text-xs uppercase font-bold text-emerald-700 tracking-wider">
                   Active Simulation Network
                 </span>
-                <h3 className="text-lg font-black text-slate-900 leading-tight">{modelName}</h3>
+                <h3 className="text-lg font-black text-slate-900 leading-tight">
+                  {buses.length > 0 ? modelName : 'No Active Model Loaded'}
+                </h3>
                 <span className="text-xs text-slate-500 font-mono">
                   {buses.length} Buses • {lines.length} Lines • Statutory Band: 0.95–1.05 pu
+                  {trippedLines.length > 0 && (
+                    <span className="text-rose-600 font-bold ml-2">
+                      ({trippedLines.length} Line(s) Tripped on $N-1$)
+                    </span>
+                  )}
                 </span>
               </div>
             </div>
@@ -434,7 +477,7 @@ export const GridStabilityTab: React.FC<Props> = ({
               onClick={() => setWorkflowStep('select_model')}
               className="flex items-center gap-2 rounded-xl border border-slate-300 bg-slate-50 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100 transition shadow-xs self-start sm:self-center"
             >
-              <span>⇄ Switch Model</span>
+              <span>⇄ Switch / Select Model</span>
             </button>
           </div>
 
@@ -486,30 +529,37 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </div>
               )}
 
-              {/* 5 High-Visibility Parameter Cards */}
+              {/* 5 High-Visibility Parameter Cards with 240% Demand Capability */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-                {/* 1. Demand Scale */}
-                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
-                  <label className="block text-xs font-bold uppercase text-slate-500 mb-2">
-                    Demand Scale
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      step="0.05"
-                      min="0.4"
-                      max="2.5"
-                      value={pfVariables.loadMultiplier}
-                      onChange={(e) =>
-                        setPfVariables((v) => ({ ...v, loadMultiplier: parseFloat(e.target.value) || 1.0 }))
-                      }
-                      className="w-full text-base font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5"
-                    />
-                    <span className="text-slate-500 font-mono text-sm">x</span>
+                {/* 1. Demand Scale up to 2.40x (240%) */}
+                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold uppercase text-slate-500">
+                      Demand Scale
+                    </label>
+                    <span className="text-xs font-mono font-bold text-purple-900">
+                      {(pfVariables.loadMultiplier * 100).toFixed(0)}%
+                    </span>
                   </div>
-                  <span className="text-xs text-slate-400 mt-2 block">
-                    {(pfVariables.loadMultiplier * 100).toFixed(0)}% Nominal Load
-                  </span>
+
+                  <input
+                    type="range"
+                    min="0.4"
+                    max="2.4"
+                    step="0.05"
+                    value={pfVariables.loadMultiplier}
+                    onChange={(e) =>
+                      setPfVariables((v) => ({ ...v, loadMultiplier: parseFloat(e.target.value) || 1.0 }))
+                    }
+                    className="w-full accent-[#500b50] cursor-pointer"
+                  />
+
+                  <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
+                    <span>40%</span>
+                    <span>100%</span>
+                    <span>180%</span>
+                    <span className="text-[#500b50] font-bold">240% Max</span>
+                  </div>
                 </div>
 
                 {/* 2. Power Factor (cos φ) */}
@@ -550,7 +600,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                     />
                     <span className="text-slate-500 text-xs">pu</span>
                   </div>
-                  <span className="text-xs text-slate-400 mt-2 block">Slack terminal target</span>
+                  <span className="text-xs text-slate-400 mt-2 block">Egbin terminal setpoint</span>
                 </div>
 
                 {/* 4. Shunt MVAR (ΔQ) */}
@@ -596,15 +646,34 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </div>
               </div>
 
-              {/* Action Controls Bar */}
-              <div className="flex items-center justify-between p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
-                <span className="text-xs text-slate-500 font-medium">
-                  {totalExtensionsCount > 0 ? (
-                    <strong className="text-emerald-700">✓ {totalExtensionsCount} planning element(s) incorporated</strong>
-                  ) : (
-                    'Configure variables and solve AC Newton-Raphson flow'
-                  )}
-                </span>
+              {/* Action Controls & Sub-View Switcher */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl border border-slate-200 bg-white shadow-xs gap-3">
+                <div className="flex items-center gap-2">
+                  <div className="flex rounded-lg border border-slate-200 p-0.5 bg-slate-50 text-xs">
+                    <button
+                      onClick={() => setDeckView('buses')}
+                      className={`px-3 py-1.5 rounded-md font-bold transition ${
+                        deckView === 'buses' ? 'bg-[#500b50] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Substation Voltages ({buses.length} Nodes)
+                    </button>
+                    <button
+                      onClick={() => setDeckView('lines')}
+                      className={`px-3 py-1.5 rounded-md font-bold transition flex items-center gap-1.5 ${
+                        deckView === 'lines' ? 'bg-[#500b50] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Power className="h-3.5 w-3.5 text-rose-500" />
+                      <span>$N-1$ Trip Breakers ({lines.length} Lines)</span>
+                      {trippedLines.length > 0 && (
+                        <span className="bg-rose-600 text-white rounded-full px-1.5 py-0.2 text-[10px] font-bold">
+                          {trippedLines.length}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                </div>
 
                 <div className="flex items-center gap-3">
                   <button
@@ -627,67 +696,155 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </div>
               </div>
 
-              {/* Substation Bus Voltage Profiles Table */}
-              <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-xs">
-                <div className="bg-[#500b50] text-white px-5 py-3 flex justify-between items-center text-sm font-bold">
-                  <span>Substation Bus Voltage Profiles ({buses.length} Nodes)</span>
-                  <span className="font-normal text-xs text-white/80">Statutory NERC Band: 0.95 – 1.05 p.u.</span>
-                </div>
-                <div className="overflow-x-auto max-h-[420px]">
-                  <table className="w-full text-left text-sm min-w-[600px]">
-                    <thead className="bg-slate-100 text-slate-700 border-b border-slate-200 font-semibold sticky top-0">
-                      <tr>
-                        <th className="py-3 px-4">ID</th>
-                        <th className="py-3 px-4">Substation Name</th>
-                        <th className="py-3 px-4">Regional Zone</th>
-                        <th className="py-3 px-4">Voltage (|V|)</th>
-                        <th className="py-3 px-4">Angle (°)</th>
-                        <th className="py-3 px-4">Active (MW)</th>
-                        <th className="py-3 px-4">Reactive (MVAR)</th>
-                        <th className="py-3 px-4">Compliance</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-800">
-                      {buses.map((bus) => {
-                        const isUnder = bus.v_pu < 0.95;
-                        const isOver = bus.v_pu > 1.05;
-                        const zoneLabel = formatRegionalZone(bus.zone, bus.name);
+              {/* VIEW A: SUBSTATION BUS VOLTAGE TABLE */}
+              {deckView === 'buses' && (
+                <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-xs">
+                  <div className="bg-[#500b50] text-white px-5 py-3 flex justify-between items-center text-sm font-bold">
+                    <span>Substation Bus Voltage Profiles ({buses.length} Nodes)</span>
+                    <span className="font-normal text-xs text-white/80">Statutory NERC Band: 0.95 – 1.05 p.u.</span>
+                  </div>
+                  <div className="overflow-x-auto max-h-[420px]">
+                    <table className="w-full text-left text-sm min-w-[600px]">
+                      <thead className="bg-slate-100 text-slate-700 border-b border-slate-200 font-semibold sticky top-0">
+                        <tr>
+                          <th className="py-3 px-4">ID</th>
+                          <th className="py-3 px-4">Substation Name</th>
+                          <th className="py-3 px-4">Regional Zone</th>
+                          <th className="py-3 px-4">Voltage (|V|)</th>
+                          <th className="py-3 px-4">Angle (°)</th>
+                          <th className="py-3 px-4">Active (MW)</th>
+                          <th className="py-3 px-4">Reactive (MVAR)</th>
+                          <th className="py-3 px-4">Compliance</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-800">
+                        {buses.map((bus) => {
+                          const isUnder = bus.v_pu < 0.95;
+                          const isOver = bus.v_pu > 1.05;
+                          const zoneLabel = formatRegionalZone(bus.zone, bus.name);
 
-                        return (
-                          <tr key={bus.id} className="hover:bg-slate-50/80">
-                            <td className="py-3 px-4 font-mono text-slate-400 font-bold">#{bus.id}</td>
-                            <td className="py-3 px-4 font-bold text-slate-900">{bus.name}</td>
-                            <td className="py-3 px-4 text-slate-600 font-medium">{zoneLabel}</td>
-                            <td className="py-3 px-4 font-mono font-bold">
-                              <span className={isUnder ? 'text-rose-600' : isOver ? 'text-amber-600' : 'text-emerald-700'}>
-                                {bus.v_pu.toFixed(3)} pu
-                              </span>
-                            </td>
-                            <td className="py-3 px-4 font-mono">{bus.va_deg.toFixed(2)}°</td>
-                            <td className="py-3 px-4 font-mono">{bus.p_mw}</td>
-                            <td className="py-3 px-4 font-mono">{bus.q_mvar}</td>
-                            <td className="py-3 px-4">
-                              {isUnder ? (
-                                <span className="inline-flex items-center rounded-md bg-rose-100 px-2.5 py-1 text-xs font-bold text-rose-700">
-                                  Under-voltage
+                          return (
+                            <tr key={bus.id} className="hover:bg-slate-50/80">
+                              <td className="py-3 px-4 font-mono text-slate-400 font-bold">#{bus.id}</td>
+                              <td className="py-3 px-4 font-bold text-slate-900">{bus.name}</td>
+                              <td className="py-3 px-4 text-slate-600 font-medium">{zoneLabel}</td>
+                              <td className="py-3 px-4 font-mono font-bold">
+                                <span className={isUnder ? 'text-rose-600' : isOver ? 'text-amber-600' : 'text-emerald-700'}>
+                                  {bus.v_pu.toFixed(3)} pu
                                 </span>
-                              ) : isOver ? (
-                                <span className="inline-flex items-center rounded-md bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800">
-                                  Over-voltage
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center rounded-md bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-800">
-                                  Compliant
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                              </td>
+                              <td className="py-3 px-4 font-mono">{bus.va_deg.toFixed(2)}°</td>
+                              <td className="py-3 px-4 font-mono">{bus.p_mw}</td>
+                              <td className="py-3 px-4 font-mono">{bus.q_mvar}</td>
+                              <td className="py-3 px-4">
+                                {isUnder ? (
+                                  <span className="inline-flex items-center rounded-md bg-rose-100 px-2.5 py-1 text-xs font-bold text-rose-700">
+                                    Under-voltage
+                                  </span>
+                                ) : isOver ? (
+                                  <span className="inline-flex items-center rounded-md bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800">
+                                    Over-voltage
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center rounded-md bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-800">
+                                    Compliant
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* VIEW B: TRANSMISSION CORRIDORS & N-1 CONTINGENCY TRIP BREAKERS */}
+              {deckView === 'lines' && (
+                <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-xs">
+                  <div className="bg-[#500b50] text-white px-5 py-3 flex justify-between items-center text-sm font-bold">
+                    <span>Transmission Lines & $N-1$ Contingency Breaker Deck ({lines.length} Corridors)</span>
+                    <span className="font-normal text-xs text-white/80">
+                      Click &quot;Trip Breaker&quot; to test instant $N-1$ power redistribution
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto max-h-[420px]">
+                    <table className="w-full text-left text-sm min-w-[700px]">
+                      <thead className="bg-slate-100 text-slate-700 border-b border-slate-200 font-semibold sticky top-0">
+                        <tr>
+                          <th className="py-3 px-4">Line ID</th>
+                          <th className="py-3 px-4">Transmission Corridor</th>
+                          <th className="py-3 px-4">From $\to$ To</th>
+                          <th className="py-3 px-4">Flow (MW)</th>
+                          <th className="py-3 px-4">Thermal Loading</th>
+                          <th className="py-3 px-4">Breaker Status</th>
+                          <th className="py-3 px-4 text-right">Switching Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-800">
+                        {lines.map((l) => {
+                          const isTripped = trippedLines.includes(l.id);
+                          const isOverload = l.loading_percent > 100;
+
+                          return (
+                            <tr key={l.id} className={`hover:bg-slate-50/80 ${isTripped ? 'bg-rose-50/50' : ''}`}>
+                              <td className="py-3 px-4 font-mono text-slate-400 font-bold">#{l.id}</td>
+                              <td className="py-3 px-4 font-bold text-slate-900">{l.name}</td>
+                              <td className="py-3 px-4 font-mono text-slate-600 text-xs">
+                                Bus #{l.from_bus} $\to$ #{l.to_bus}
+                              </td>
+                              <td className="py-3 px-4 font-mono font-bold">
+                                {isTripped ? (
+                                  '0.0 MW'
+                                ) : (
+                                  // LineData may not include p_mw in the TS type; tolerate several possible field names
+                                  (() => {
+                                    const flow = (l as any).p_mw ?? (l as any).flow_mw ?? (l as any).p_from_mw ?? (l as any).p_to_mw ?? 0;
+                                    return `${Number(flow).toFixed(1)} MW`;
+                                  })()
+                                )}
+                              </td>
+                              <td className="py-3 px-4 font-mono">
+                                {isTripped ? (
+                                  <span className="text-slate-400">Isolated</span>
+                                ) : (
+                                  <span className={isOverload ? 'text-rose-600 font-bold' : 'text-slate-800'}>
+                                    {l.loading_percent.toFixed(1)}%
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3 px-4">
+                                {isTripped ? (
+                                  <span className="inline-flex items-center gap-1 rounded-md bg-rose-100 px-2.5 py-1 text-xs font-bold text-rose-800">
+                                    Breaker Open (Tripped)
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-800">
+                                    Breaker Closed (In Service)
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3 px-4 text-right">
+                                <button
+                                  onClick={() => toggleLine(l.id)}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-xs ${
+                                    isTripped
+                                      ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                                      : 'bg-rose-600 text-white hover:bg-rose-700'
+                                  }`}
+                                >
+                                  {isTripped ? 'Reclose Breaker' : 'Trip Breaker ($N-1$)'}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -733,7 +890,15 @@ export const GridStabilityTab: React.FC<Props> = ({
 
                   <div className="flex items-end">
                     <button
-                      onClick={handleRunCascade}
+                      onClick={async () => {
+                        setCascadeLoading(true);
+                        try {
+                          const res = await onCascadeTrigger([initialTripLine], cascadeThreshold);
+                          setCascadeResult(res);
+                        } finally {
+                          setCascadeLoading(false);
+                        }
+                      }}
                       disabled={cascadeLoading || lines.length === 0}
                       className="w-full flex items-center justify-center gap-2 rounded-xl bg-rose-700 text-white py-2.5 text-sm font-bold hover:bg-rose-800 transition shadow-xs disabled:opacity-50"
                     >
@@ -769,11 +934,12 @@ export const GridStabilityTab: React.FC<Props> = ({
             </div>
           )}
 
-          {/* 3. REGIONAL PLANNING */}
+          {/* 3. REGIONAL PLANNING WITH REAL-TIME EDITABLE EXPANSION LEDGER */}
           {simSubTab === 'planning' && (
             <div className="space-y-6">
+              {/* Proposal Cards */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* 1. Add Substation */}
+                {/* 1. Propose Substation */}
                 <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-3">
                   <h4 className="font-bold text-slate-900 text-sm border-b pb-2 flex items-center gap-2">
                     <Plus className="h-4 w-4 text-[#500b50]" />
@@ -835,9 +1001,9 @@ export const GridStabilityTab: React.FC<Props> = ({
 
                   <button
                     onClick={handleAddBus}
-                    className="w-full py-2 rounded-lg bg-[#500b50] text-white font-bold text-xs hover:bg-[#680f68] transition"
+                    className="w-full py-2.5 rounded-lg bg-[#500b50] text-white font-bold text-xs hover:bg-[#680f68] transition"
                   >
-                    Add Substation Node
+                    + Add Substation Node & Re-Solve
                   </button>
                 </div>
 
@@ -920,13 +1086,13 @@ export const GridStabilityTab: React.FC<Props> = ({
 
                   <button
                     onClick={handleAddLine}
-                    className="w-full py-2 rounded-lg bg-[#500b50] text-white font-bold text-xs hover:bg-[#680f68] transition"
+                    className="w-full py-2.5 rounded-lg bg-[#500b50] text-white font-bold text-xs hover:bg-[#680f68] transition"
                   >
-                    Connect Line
+                    + Connect Line & Re-Solve
                   </button>
                 </div>
 
-                {/* 3. Add Plant */}
+                {/* 3. Propose Power Plant */}
                 <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-3">
                   <h4 className="font-bold text-slate-900 text-sm border-b pb-2 flex items-center gap-2">
                     <Plus className="h-4 w-4 text-[#500b50]" />
@@ -987,11 +1153,128 @@ export const GridStabilityTab: React.FC<Props> = ({
 
                   <button
                     onClick={handleAddGen}
-                    className="w-full py-2 rounded-lg bg-[#500b50] text-white font-bold text-xs hover:bg-[#680f68] transition"
+                    className="w-full py-2.5 rounded-lg bg-[#500b50] text-white font-bold text-xs hover:bg-[#680f68] transition"
                   >
-                    Incorporate Plant
+                    + Incorporate Plant & Re-Solve
                   </button>
                 </div>
+              </div>
+
+              {/* LIVE EDITABLE EXPANSION LEDGER */}
+              <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-xs">
+                <div className="bg-[#500b50] text-white px-5 py-3 flex justify-between items-center text-sm font-bold">
+                  <div className="flex items-center gap-2">
+                    <GitBranch className="h-4 w-4" />
+                    <span>Prospective Expansion Ledger ({totalExtensionsCount} Active Additions)</span>
+                  </div>
+                  {totalExtensionsCount > 0 && (
+                    <button
+                      onClick={() => {
+                        setPfVariables((v) => ({ ...v, newBuses: [], newLines: [], newGenerators: [] }));
+                        setTimeout(runSimulation, 50);
+                      }}
+                      className="px-3 py-1 bg-white/20 hover:bg-white/30 text-white rounded-md text-xs font-bold transition"
+                    >
+                      Clear All Expansions
+                    </button>
+                  )}
+                </div>
+
+                {totalExtensionsCount === 0 ? (
+                  <div className="p-8 text-center text-sm text-slate-500">
+                    No prospective network elements added yet. Use the cards above to design expansion scenarios.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm min-w-[700px]">
+                      <thead className="bg-slate-100 text-slate-700 border-b border-slate-200 font-semibold">
+                        <tr>
+                          <th className="py-3 px-4">Type</th>
+                          <th className="py-3 px-4">Element Name</th>
+                          <th className="py-3 px-4">Voltage / Rating</th>
+                          <th className="py-3 px-4">Capacity / Distance</th>
+                          <th className="py-3 px-4">Interconnection</th>
+                          <th className="py-3 px-4 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-800">
+                        {/* New Substations */}
+                        {pfVariables.newBuses.map((bus, idx) => (
+                          <tr key={`bus-${idx}`} className="hover:bg-slate-50">
+                            <td className="py-3 px-4">
+                              <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-blue-100 text-blue-800">
+                                Substation
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 font-bold text-slate-900">{bus.name}</td>
+                            <td className="py-3 px-4 font-mono">{bus.vn_kv} kV</td>
+                            <td className="py-3 px-4 font-mono">{bus.p_mw} MW Load</td>
+                            <td className="py-3 px-4 text-slate-600">{bus.zone}</td>
+                            <td className="py-3 px-4 text-right">
+                              <button
+                                onClick={() => handleRemoveBus(idx)}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                                title="Delete element"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+
+                        {/* New Corridors */}
+                        {pfVariables.newLines.map((line, idx) => (
+                          <tr key={`line-${idx}`} className="hover:bg-slate-50">
+                            <td className="py-3 px-4">
+                              <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-purple-100 text-purple-800">
+                                Line Corridor
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 font-bold text-slate-900">{line.name}</td>
+                            <td className="py-3 px-4 font-mono">{line.conductor_type}</td>
+                            <td className="py-3 px-4 font-mono">{line.length_km} km</td>
+                            <td className="py-3 px-4 font-mono text-xs text-slate-600">
+                              Bus #{line.from_bus} $\to$ #{line.to_bus}
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              <button
+                                onClick={() => handleRemoveLine(idx)}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                                title="Delete element"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+
+                        {/* New Generators */}
+                        {pfVariables.newGenerators.map((gen, idx) => (
+                          <tr key={`gen-${idx}`} className="hover:bg-slate-50">
+                            <td className="py-3 px-4">
+                              <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-emerald-100 text-emerald-800">
+                                Power Plant
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 font-bold text-slate-900">{gen.name}</td>
+                            <td className="py-3 px-4 font-mono">{gen.vm_pu} pu target</td>
+                            <td className="py-3 px-4 font-mono font-bold text-[#500b50]">{gen.p_mw} MW Infeed</td>
+                            <td className="py-3 px-4 font-mono text-slate-600">Bus #{gen.bus}</td>
+                            <td className="py-3 px-4 text-right">
+                              <button
+                                onClick={() => handleRemoveGen(idx)}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                                title="Delete element"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </div>
           )}

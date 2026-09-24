@@ -137,28 +137,53 @@ export default function PowerPlatformDashboard() {
     { id: "About Us", label: "About Us (ML4PS)", icon: Info },
   ];
 
-  // User session
+  // 1. In fetchInitialData inside useEffect:
   useEffect(() => {
-    const saved = localStorage.getItem("ml4ps_user");
-    if (saved) {
+    const initApp = async () => {
       try {
-        setCurrentUser(JSON.parse(saved));
-      } catch {}
-    } else {
-      const defaultAdmin: UserAccount = {
-        id: "usr-1",
-        name: "Opeyemi Ibrahim Abubakar",
-        email: "operator@futminna.edu.ng",
-        institution: "FUT Minna (ML4PS Group)",
-        department: "Electrical & Electronics Engineering",
-        role: "Taskforce Administrator",
-        status: "APPROVED",
-        registered_at: "2026-09-01 10:14",
-      };
-      setCurrentUser(defaultAdmin);
-      localStorage.setItem("ml4ps_user", JSON.stringify(defaultAdmin));
-    }
+        const modelList = await api.getModels();
+        setModels(modelList);
+
+        // Retrieve persisted model or fallback to active or first model
+        const savedModelId = typeof window !== 'undefined' ? localStorage.getItem('nesi_active_model_id') : null;
+        const targetModel = 
+          modelList.find((m) => m.id === savedModelId) ||
+          modelList.find((m) => m.is_active) ||
+          modelList[0];
+
+        if (targetModel) {
+          await handleActivateModel(targetModel.id);
+        }
+      } catch (err) {
+        console.error('Failed to initialize models:', err);
+      }
+    };
+    initApp();
   }, []);
+
+  // 2. Update handleActivateModel with localStorage persistence and immediate solver run:
+  const handleActivateModel = async (id: string) => {
+    setLoading(true);
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('nesi_active_model_id', id);
+      }
+      await api.activateModel(id);
+      
+      const updatedModels = await api.getModels();
+      setModels(updatedModels);
+      setActiveModelId(id);
+
+      // Immediately run power flow for the newly activated model
+      const pf = await api.runPowerFlow(pfVariables, []);
+      setResults(pf);
+      setTrippedLines([]);
+    } catch (err: any) {
+      console.error('Model activation error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Sync models with Supabase
   const syncWithSupabase = async () => {
@@ -291,38 +316,6 @@ export default function PowerPlatformDashboard() {
       : [...trippedLines, id];
     setTrippedLines(next);
     api.runPowerFlow(pfVariables, next).then(setResults);
-  };
-
-  const handleActivateModel = async (id: string) => {
-    setLoading(true);
-    try {
-      const { data: dbModel } = await supabase
-        .from("grid_models")
-        .select("*")
-        .eq("id", id)
-        .single();
-
-      if (dbModel) {
-        setActiveModelId(dbModel.id);
-        await api.loadPayload({
-          id: dbModel.id,
-          name: dbModel.name,
-          voltage_level: dbModel.voltage_level,
-          domain: dbModel.domain,
-          platform: dbModel.platform,
-          network_payload: dbModel.network_payload,
-        });
-        setTrippedLines([]);
-        setSelectedBus(null);
-        await syncWithSupabase();
-        await runSim();
-        await runMkt();
-      }
-    } catch {
-      alert("Failed to activate model.");
-    } finally {
-      setLoading(false);
-    }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {

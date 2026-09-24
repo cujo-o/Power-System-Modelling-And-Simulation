@@ -73,6 +73,21 @@ def get_model_router(model_registry: dict, state_holder: dict):
             state_holder["active_id"] = next(iter(model_registry.keys()), None)
         return {"status": "success", "active_model_id": state_holder["active_id"]}
 
+        # In backend/routers/models.py or wherever get_active_model is configured:
+def get_active_net_and_name():
+    global active_model_id
+    if not model_registry:
+        return None, "No Models Available"
+    
+    # If no active model or active model missing, fallback to first available
+    if not active_model_id or active_model_id not in model_registry:
+        # Default to case330 if present, else first in registry
+        default_candidate = next((k for k in model_registry.keys() if "330" in k.lower()), list(model_registry.keys())[0])
+        active_model_id = default_candidate
+        
+    entry = model_registry[active_model_id]
+    return entry["net"], entry["name"]
+
     @router.post("/api/grid/reset")
     def reset_grid():
         state_holder["active_id"] = next(iter(model_registry.keys()), None)
