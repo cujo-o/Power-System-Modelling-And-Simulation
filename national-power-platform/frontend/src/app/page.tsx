@@ -137,49 +137,49 @@ export default function PowerPlatformDashboard() {
     { id: "About Us", label: "About Us (ML4PS)", icon: Info },
   ];
 
-  // 1. In fetchInitialData inside useEffect:
+ // 1. Initial application bootstrap
   useEffect(() => {
     const initApp = async () => {
       try {
         const modelList = await api.getModels();
         setModels(modelList);
 
-        // Retrieve persisted model or fallback to active or first model
-        const savedModelId = typeof window !== 'undefined' ? localStorage.getItem('nesi_active_model_id') : null;
-        const targetModel = 
-          modelList.find((m) => m.id === savedModelId) ||
-          modelList.find((m) => m.is_active) ||
-          modelList[0];
-
-        if (targetModel) {
-          await handleActivateModel(targetModel.id);
+        if (modelList.length > 0) {
+          const savedId = typeof window !== 'undefined' ? localStorage.getItem('nesi_active_model_id') : null;
+          const target = modelList.find((m) => m.id === savedId) || modelList.find((m) => m.is_active) || modelList[0];
+          await handleActivateModel(target.id);
         }
       } catch (err) {
-        console.error('Failed to initialize models:', err);
+        console.error('Initialization error:', err);
       }
     };
     initApp();
   }, []);
 
-  // 2. Update handleActivateModel with localStorage persistence and immediate solver run:
+  // 2. Comprehensive Model Activation & Solver Trigger
   const handleActivateModel = async (id: string) => {
     setLoading(true);
+    setDivergedNotice(null);
     try {
       if (typeof window !== 'undefined') {
         localStorage.setItem('nesi_active_model_id', id);
       }
+
+      // Step A: Tell backend to switch the model
       await api.activateModel(id);
-      
-      const updatedModels = await api.getModels();
-      setModels(updatedModels);
+
+      // Step B: Fetch updated models list
+      const updatedList = await api.getModels();
+      setModels(updatedList);
       setActiveModelId(id);
 
-      // Immediately run power flow for the newly activated model
-      const pf = await api.runPowerFlow(pfVariables, []);
-      setResults(pf);
+      // Step C: Immediately execute AC power flow for this model
+      const pfResult = await api.runPowerFlow(pfVariables, []);
+      setResults(pfResult);
       setTrippedLines([]);
     } catch (err: any) {
-      console.error('Model activation error:', err);
+      console.error('Activation failure:', err);
+      setDivergedNotice(err.message || 'Failed to initialize power flow for the selected model.');
     } finally {
       setLoading(false);
     }

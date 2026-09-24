@@ -73,7 +73,7 @@ export const Header: React.FC<HeaderProps> = ({
           className="flex items-center gap-2 rounded-lg bg-[#500b50] text-white px-4 py-2 text-xs font-bold hover:bg-[#680f68] transition shadow-xs"
         >
           <LogIn className="h-4 w-4" />
-          <span>ign In</span>
+          <span>Sign In</span>
         </button>
       )}
   </header>

@@ -4,25 +4,18 @@ from typing import Dict, Any
 def get_model_router(model_registry: Dict[str, Any], state: Dict[str, Any]):
     router = APIRouter(prefix="/api/models", tags=["Models"])
 
-    def ensure_active_model():
-        """Guarantees a model is active if models exist in registry."""
+    def resolve_active():
+        """Guarantees an active model is always set if models exist."""
         if not model_registry:
             state["active_model_id"] = None
             return None, "No Models Available"
 
-        curr_id = state.get("active_model_id")
-        if not curr_id or curr_id not in model_registry:
-            # Fallback priority: case10_nigeria_dynamic -> case330 -> first available
-            preferred = ["case10_nigeria_dynamic.m", "case330.m"]
-            candidate = None
-            for p in preferred:
-                if p in model_registry:
-                    candidate = p
-                    break
-            if not candidate:
-                candidate = list(model_registry.keys())[0]
-
-            state["active_model_id"] = candidate
+        curr = state.get("active_model_id")
+        if not curr or curr not in model_registry:
+            # Fallback to case10, case330, or the first registered case
+            candidates = [k for k in model_registry.keys() if "10" in k or "330" in k]
+            chosen = candidates[0] if candidates else list(model_registry.keys())[0]
+            state["active_model_id"] = chosen
 
         active_id = state["active_model_id"]
         return model_registry[active_id]["net"], model_registry[active_id]["name"]
@@ -30,7 +23,7 @@ def get_model_router(model_registry: Dict[str, Any], state: Dict[str, Any]):
     @router.get("")
     @router.get("/")
     def list_models():
-        ensure_active_model()
+        resolve_active()
         active_id = state.get("active_model_id")
 
         results = []
@@ -51,33 +44,39 @@ def get_model_router(model_registry: Dict[str, Any], state: Dict[str, Any]):
             })
         return results
 
-    @router.post("/activate/{model_id}")
+    @router.post("/activate/{model_id:path}")
     def activate_model(model_id: str):
-        if model_id not in model_registry:
-            raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found.")
+        # Flexible lookup: exact, stripped of .m, or case-insensitive
+        target_key = None
+        for key in model_registry.keys():
+            if key == model_id or key.lower() == model_id.lower() or key.replace(".m", "") == model_id.replace(".m", ""):
+                target_key = key
+                break
 
-        state["active_model_id"] = model_id
+        if not target_key:
+            raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found in registry.")
+
+        state["active_model_id"] = target_key
         return {
             "status": "SUCCESS",
-            "active_model_id": model_id,
-            "name": model_registry[model_id]["name"]
+            "active_model_id": target_key,
+            "name": model_registry[target_key]["name"]
         }
 
-    @router.delete("/{model_id}")
+    @router.delete("/{model_id:path}")
     def delete_model(model_id: str):
-        if model_id not in model_registry:
+        target_key = next((k for k in model_registry.keys() if k == model_id or k.lower() == model_id.lower()), None)
+        if not target_key:
             raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found.")
 
-        if model_registry[model_id].get("is_default", False):
-            raise HTTPException(status_code=400, detail="Cannot delete default base models.")
+        if model_registry[target_key].get("is_default", False):
+            raise HTTPException(status_code=400, detail="Cannot delete default system models.")
 
-        del model_registry[model_id]
-
-        if state.get("active_model_id") == model_id:
+        del model_registry[target_key]
+        if state.get("active_model_id") == target_key:
             state["active_model_id"] = None
-            ensure_active_model()
+            resolve_active()
 
-        return {"status": "DELETED", "deleted_id": model_id}
+        return {"status": "DELETED", "deleted_id": target_key}
 
-    # CRITICAL: Always return the router instance
     return router
