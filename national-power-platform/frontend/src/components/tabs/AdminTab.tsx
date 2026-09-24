@@ -37,7 +37,7 @@ interface TeamMember {
 const TASKFORCE_COUNCIL: TeamMember[] = [
   {
     id: "lead-pi",
-    name: "Prof. Lead Principal Investigator",
+    name: "Engr. Okoro",
     salutation: "FUT Minna Research Council",
     role: "Lead Principal Investigator & Project Patron",
     designation: "Professor of Electrical & Power Systems Engineering",
@@ -53,7 +53,7 @@ const TASKFORCE_COUNCIL: TeamMember[] = [
   },
   {
     id: "co-pi-1",
-    name: "Dr. / Engr. Project Co-Investigator",
+    name: "Dr. / Engr. MBuhari",
     salutation: "Lead System Architect",
     role: "Co-Principal Investigator (Grid Stability)",
     designation: "Associate Professor / Senior Research Fellow",
@@ -64,12 +64,12 @@ const TASKFORCE_COUNCIL: TeamMember[] = [
       "Transmission Planning",
       "Voltage Stability",
     ],
-    imageSrc: "/team/member_pi_engr.jpg",
+    imageSrc: "/team/member_pi_engr.png",
     badgeType: "Co-Investigator",
   },
   {
     id: "co-pi-2",
-    name: "Dr. Lead Dynamic Researcher",
+    name: "Engr Meedat",
     salutation: "Control & Stability Specialist",
     role: "Lead Research Fellow (Transient Dynamics)",
     designation: "Senior Lecturer / Control Systems Analyst",
@@ -80,12 +80,12 @@ const TASKFORCE_COUNCIL: TeamMember[] = [
       "PSS Damping",
       "RoCoF Tracking",
     ],
-    imageSrc: "/team/member_dr_amina.jpg",
+    imageSrc: "/team/member_dr_amina.jpeg",
     badgeType: "Co-Investigator",
   },
   {
     id: "industry-liaison",
-    name: "Engr. Grid Operations Advisor",
+    name: "Engr. Adamu",
     salutation: "Industry Technical Advisor",
     role: "Principal Operations Specialist & NISO Liaison",
     designation: "Senior Power Systems Operations Consultant",
@@ -101,10 +101,10 @@ const TASKFORCE_COUNCIL: TeamMember[] = [
   },
   {
     id: "researcher-lead",
-    name: "Dr. Systems Modeling Analyst",
+    name: "Engr. Dr. Abubakar Sadiq Ahmed",
     salutation: "Mathematical & AI Modeler",
     role: "Senior Research Fellow (Machine Learning)",
-    designation: "Research Fellow in Computational Power Engineering",
+    designation: "Principal Investigator",
     department: "Department of Electrical & Electronics Engineering",
     institution: "Federal University of Technology, Minna",
     specialization: [
@@ -117,7 +117,7 @@ const TASKFORCE_COUNCIL: TeamMember[] = [
   },
   {
     id: "hardware-lead",
-    name: "Engr. Research Fellow & Simulation Architect",
+    name: "Engr. Dr. James Garba Ambafi",
     salutation: "Substation & Network Engineer",
     role: "Senior Simulation & Architecture Fellow",
     designation: "Power Systems Simulation Specialist",

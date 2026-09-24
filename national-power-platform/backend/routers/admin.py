@@ -96,7 +96,7 @@ def get_admin_router(users_db: list, get_active_fn):
                 if u["status"] != "APPROVED":
                     raise HTTPException(
                         status_code=403,
-                        detail="Your registration is currently PENDING approval from the Taskforce Administrator."
+                        detail="Your registration is currently PENDING approval from the Admin."
                     )
                 if u.get("password") == req.password.strip():
                     return {"status": "success", "user": u}

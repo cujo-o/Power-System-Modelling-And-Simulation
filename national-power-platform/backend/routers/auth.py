@@ -158,7 +158,7 @@ def get_auth_router():
         if not matched_user["is_approved"]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Your account is pending review by the Taskforce Administration. Once approved, you will receive your temporary password."
+                detail="Your account is pending review by the Admin. Once approved, you will receive your temporary password."
             )
 
         if matched_user["password"] != clean_pass:
