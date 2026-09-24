@@ -132,6 +132,7 @@ export default function PowerPlatformDashboard() {
     }
   }, []);
 
+  // Comprehensive Model Activation & Immediate Power Flow Execution
   const handleActivateModel = async (id: string) => {
     setLoading(true);
     setDivergedNotice(null);
@@ -140,33 +141,54 @@ export default function PowerPlatformDashboard() {
         localStorage.setItem('nesi_active_model_id', id);
       }
 
-      // 1. Fetch full payload from Supabase
-      const { data: modelData } = await supabase
-        .from('grid_models')
-        .select('*')
-        .eq('id', id)
-        .single();
+      // 1. Fetch network payload from Supabase to hydrate backend RAM
+      let loadedViaPayload = false;
+      try {
+        const { data: modelData } = await supabase
+          .from('grid_models')
+          .select('*')
+          .eq('id', id)
+          .maybeSingle();
 
-      // 2. If payload exists in Supabase, load it into backend memory first
-      if (modelData && modelData.network_payload) {
-        await api.loadPayload({
-          id: modelData.id,
-          name: modelData.name,
-          voltage_level: modelData.voltage_level,
-          domain: modelData.domain,
-          platform: modelData.platform,
-          network_payload: modelData.network_payload,
-        });
-      } else {
+        if (modelData && modelData.network_payload) {
+          await api.loadPayload({
+            id: modelData.id,
+            name: modelData.name,
+            voltage_level: modelData.voltage_level,
+            domain: modelData.domain,
+            platform: modelData.platform,
+            network_payload: modelData.network_payload,
+          });
+          loadedViaPayload = true;
+        }
+      } catch (sbErr) {
+        console.warn('Supabase payload hydration skipped:', sbErr);
+      }
+
+      if (!loadedViaPayload) {
         await api.activateModel(id);
       }
 
       setActiveModelId(id);
 
-      // 3. Run power flow on the newly hydrated model
+      // 2. Mark active in UI models list
+      setModels((prevModels) =>
+        prevModels.map((m) => ({
+          ...m,
+          is_active: m.id === id,
+        }))
+      );
+
+      // 3. Run power flow on the hydrated network
       const pfResult = await api.runPowerFlow(pfVariables, []);
       setResults(pfResult);
       setTrippedLines([]);
+
+      if (!pfResult.converged) {
+        setDivergedNotice(pfResult.message || 'Power flow calculation diverged.');
+      } else {
+        setDivergedNotice(null);
+      }
     } catch (err: any) {
       console.error('Activation failure:', err);
       setDivergedNotice(err.message || 'Failed to initialize power flow for the selected model.');
@@ -174,6 +196,8 @@ export default function PowerPlatformDashboard() {
       setLoading(false);
     }
   };
+
+  
   // Safe Model Ingestion & Synchronization (Merges Backend and Supabase without wiping)
   const syncModels = async () => {
     setLoading(true);
