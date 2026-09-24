@@ -1,17 +1,17 @@
 'use client';
 
-import React, { useState } from 'react';
-import { DynamicSimResult, MultiMachineResult, BusData } from '@/types/grid';
+import React, { useState, useRef } from 'react';
+import { DynamicSimResult, BusData } from '@/types/grid';
 import {
   Activity,
   Play,
   RefreshCw,
   Sliders,
+  ShieldAlert,
   ShieldCheck,
-  AlertTriangle,
-  RotateCw,
-  Flame,
-  Zap,
+  Download,
+  FileSpreadsheet,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 interface Props {
@@ -27,10 +27,7 @@ interface Props {
     enable_ufls: boolean;
   }) => void;
   buses: BusData[];
-  onRunMultiMachine: (params: {
-    fault_bus_id: number;
-    fault_duration_ms: number;
-  }) => Promise<MultiMachineResult>;
+  onRunMultiMachine?: (params: { fault_bus_id: number; fault_duration_ms: number }) => Promise<any>;
 }
 
 export const DynamicsTab: React.FC<Props> = ({
@@ -40,28 +37,32 @@ export const DynamicsTab: React.FC<Props> = ({
   buses,
   onRunMultiMachine,
 }) => {
-  const [activeMode, setActiveMode] = useState<'frequency' | 'rotor_angles'>('frequency');
+  const [subView, setSubView] = useState<'lumped' | 'multimachine'>('lumped');
 
-  // Lumped Parameters Deck
-  const [disturbanceMw, setDisturbanceMw] = useState(650.0);
-  const [inertiaH, setInertiaH] = useState(4.5);
-  const [enableGovernor, setEnableGovernor] = useState(true);
-  const [droopR, setDroopR] = useState(0.05);
-  const [enablePss, setEnablePss] = useState(true);
-  const [pssGain, setPssGain] = useState(25.0);
-  const [enableUfls, setEnableUfls] = useState(true);
+  // Lumped Parameters
+  const [disturbanceMw, setDisturbanceMw] = useState<number>(650.0);
+  const [inertiaH, setInertiaH] = useState<number>(4.5);
+  const [droopR, setDroopR] = useState<number>(0.05);
+  const [pssGain, setPssGain] = useState<number>(25.0);
+  const [enableGov, setEnableGov] = useState<boolean>(true);
+  const [enablePss, setEnablePss] = useState<boolean>(true);
+  const [enableUfls, setEnableUfls] = useState<boolean>(true);
 
-  // Multi-Machine Parameters Deck
-  const [faultBusId, setFaultBusId] = useState<number>(buses[0]?.id || 12);
-  const [faultDurationMs, setFaultDurationMs] = useState<number>(140);
-  const [mmLoading, setMmLoading] = useState(false);
-  const [mmResult, setMmResult] = useState<MultiMachineResult | null>(null);
+  // Multi-Machine Parameters
+  const [faultBus, setFaultBus] = useState<number>(buses[0]?.id || 1);
+  const [breakerDuration, setBreakerDuration] = useState<number>(60.0);
+  const [mmLoading, setMmLoading] = useState<boolean>(false);
+  const [mmResult, setMmResult] = useState<any>(null);
 
-  const handleSimulateFreq = () => {
+  // SVG Refs for Direct Image Export
+  const freqSvgRef = useRef<SVGSVGElement | null>(null);
+  const angleSvgRef = useRef<SVGSVGElement | null>(null);
+
+  const handleSimulateLumped = () => {
     onRunSimulation({
       disturbance_mw: disturbanceMw,
       inertia_constant_H: inertiaH,
-      enable_governor: enableGovernor,
+      enable_governor: enableGov,
       droop_R: droopR,
       enable_pss: enablePss,
       pss_gain_K: pssGain,
@@ -69,12 +70,13 @@ export const DynamicsTab: React.FC<Props> = ({
     });
   };
 
-  const handleSimulateMM = async () => {
+  const handleSimulateMultiMachine = async () => {
+    if (!onRunMultiMachine) return;
     setMmLoading(true);
     try {
       const res = await onRunMultiMachine({
-        fault_bus_id: faultBusId,
-        fault_duration_ms: faultDurationMs,
+        fault_bus_id: faultBus,
+        fault_duration_ms: breakerDuration,
       });
       setMmResult(res);
     } finally {
@@ -82,156 +84,124 @@ export const DynamicsTab: React.FC<Props> = ({
     }
   };
 
-  const renderFrequencyChart = () => {
-    if (!dynResult || dynResult.time.length === 0) return null;
+  // Safe Property Resolvers
+  const unmitigatedSeries = dynResult?.f_unmitigated || dynResult?.frequency_unmitigated || [];
+  const protectedSeries = dynResult?.f_protected || dynResult?.frequency_ufls || [];
+  const nadirVal = dynResult?.nadir_hz ?? dynResult?.nadir ?? 50.0;
+  const rocofVal = dynResult?.initial_rocof ?? dynResult?.rocof ?? 0.0;
+  const settlingVal = dynResult?.settling_hz ?? 50.0;
+  const totalShedVal = dynResult?.total_shed_mw ?? 0;
+  const stagesTrippedVal = dynResult?.stages_tripped ?? 0;
+  const uflsEvents = dynResult?.ufls_events || [];
 
-    const width = 850;
-    const height = 320;
-    const padX = 65;
-    const padY = 35;
-
-    const tMax = Math.max(...dynResult.time, 10.0);
-    const fMin = 46.5;
-    const fMax = 50.5;
-
-    const scaleX = (t: number) => padX + (t / tMax) * (width - padX - 30);
-    const scaleY = (f: number) => height - padY - ((f - fMin) / (fMax - fMin)) * (height - padY * 2);
-
-    const pathUfls = dynResult.frequency_ufls
-      .map((f, i) => `${i === 0 ? 'M' : 'L'} ${scaleX(dynResult.time[i])} ${scaleY(f)}`)
-      .join(' ');
-
-    const pathUnmit = dynResult.frequency_unmitigated
-      .map((f, i) => `${i === 0 ? 'M' : 'L'} ${scaleX(dynResult.time[i])} ${scaleY(f)}`)
-      .join(' ');
-
-    const y50 = scaleY(50.0);
-    const y49_75 = scaleY(49.75);
-    const y50_25 = scaleY(50.25);
-    const y48_8 = scaleY(48.80);
-
-    return (
-      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-[320px] select-none">
-        <rect x={padX} y={y50_25} width={width - padX - 30} height={y49_75 - y50_25} fill="#10b981" fillOpacity="0.08" />
-        <rect x={padX} y={y48_8} width={width - padX - 30} height={scaleY(46.5) - y48_8} fill="#f43f5e" fillOpacity="0.06" />
-
-        <line x1={padX} y1={y50} x2={width - 30} y2={y50} stroke="#94a3b8" strokeWidth="1.2" strokeDasharray="3 3" />
-        <text x={padX - 10} y={y50 + 4} fill="#64748b" fontSize="11" fontFamily="monospace" textAnchor="end">50.0 Hz</text>
-
-        <line x1={padX} y1={y49_75} x2={width - 30} y2={y49_75} stroke="#10b981" strokeWidth="1" strokeDasharray="2 2" />
-        <text x={padX - 10} y={y49_75 + 4} fill="#10b981" fontSize="10" fontFamily="monospace" textAnchor="end">49.75 Hz</text>
-
-        <line x1={padX} y1={y48_8} x2={width - 30} y2={y48_8} stroke="#f43f5e" strokeWidth="1.2" strokeDasharray="4 2" />
-        <text x={padX - 10} y={y48_8 + 4} fill="#f43f5e" fontSize="10" fontFamily="monospace" fontWeight="bold" textAnchor="end">48.80 Hz (UFLS)</text>
-
-        <line x1={padX} y1={padY} x2={padX} y2={height - padY} stroke="#334155" strokeWidth="1.5" />
-        <line x1={padX} y1={height - padY} x2={width - 30} y2={height - padY} stroke="#334155" strokeWidth="1.5" />
-
-        {[0, 2, 4, 6, 8, 10, 12].map((sec) => (
-          <g key={sec} transform={`translate(${scaleX(sec)}, ${height - padY + 18})`}>
-            <text fill="#64748b" fontSize="11" fontFamily="monospace" textAnchor="middle">{sec}s</text>
-          </g>
-        ))}
-
-        <path d={pathUnmit} fill="none" stroke="#f43f5e" strokeWidth="2.5" strokeDasharray="6 4" />
-        <path d={pathUfls} fill="none" stroke="#10b981" strokeWidth="3" />
-
-        {dynResult.ufls_events.map((evt, idx) => {
-          const cx = scaleX(evt.timestamp_s);
-          const cy = scaleY(evt.frequency_at_trip);
-          return (
-            <g key={idx} transform={`translate(${cx}, ${cy})`}>
-              <circle r="6" fill="#f43f5e" stroke="#ffffff" strokeWidth="2" />
-              <text x="8" y="-6" fill="#f43f5e" fontSize="10" fontFamily="monospace" fontWeight="bold">
-                {`Stage ${evt.stage} (-${evt.mw_shed}MW)`}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
-    );
+  // Export Graph as SVG
+  const exportAsSVG = (svgRef: React.RefObject<SVGSVGElement | null>, filename: string) => {
+    if (!svgRef.current) return;
+    const serializer = new XMLSerializer();
+    const source = serializer.serializeToString(svgRef.current);
+    const blob = new Blob([source], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}.svg`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const renderMultiMachineChart = () => {
-    if (!mmResult || mmResult.generators.length === 0) return null;
+  // Export Graph as PNG
+  const exportAsPNG = (svgRef: React.RefObject<SVGSVGElement | null>, filename: string) => {
+    if (!svgRef.current) return;
+    const serializer = new XMLSerializer();
+    const svgStr = serializer.serializeToString(svgRef.current);
+    const canvas = document.createElement('canvas');
+    canvas.width = 1600;
+    canvas.height = 700;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-    const width = 850;
-    const height = 340;
-    const padX = 65;
-    const padY = 35;
+    const img = new Image();
+    const svgBlob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
 
-    const tMax = Math.max(...mmResult.time, 4.0);
-    const angleMin = -40;
-    const angleMax = 200;
-
-    const scaleX = (t: number) => padX + (t / tMax) * (width - padX - 30);
-    const scaleY = (a: number) => height - padY - ((a - angleMin) / (angleMax - angleMin)) * (height - padY * 2);
-
-    const y0 = scaleY(0.0);
-    const y180 = scaleY(180.0);
-
-    return (
-      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-[340px] select-none">
-        <rect x={padX} y={scaleY(200)} width={width - padX - 30} height={y180 - scaleY(200)} fill="#f43f5e" fillOpacity="0.08" />
-        <rect x={padX} y={scaleY(120)} width={width - padX - 30} height={y0 - scaleY(120)} fill="#10b981" fillOpacity="0.04" />
-
-        <line x1={padX} y1={y180} x2={width - 30} y2={y180} stroke="#f43f5e" strokeWidth="1.5" strokeDasharray="4 2" />
-        <text x={padX - 10} y={y180 + 4} fill="#f43f5e" fontSize="10" fontFamily="monospace" fontWeight="bold" textAnchor="end">
-          180° (Pole Slip)
-        </text>
-
-        <line x1={padX} y1={y0} x2={width - 30} y2={y0} stroke="#94a3b8" strokeWidth="1.2" strokeDasharray="3 3" />
-        <text x={padX - 10} y={y0 + 4} fill="#64748b" fontSize="10" fontFamily="monospace" textAnchor="end">
-          0° (Slack)
-        </text>
-
-        <line x1={padX} y1={padY} x2={padX} y2={height - padY} stroke="#334155" strokeWidth="1.5" />
-        <line x1={padX} y1={height - padY} x2={width - 30} y2={height - padY} stroke="#334155" strokeWidth="1.5" />
-
-        {[0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0].map((sec) => (
-          <g key={sec} transform={`translate(${scaleX(sec)}, ${height - padY + 18})`}>
-            <text fill="#64748b" fontSize="10" fontFamily="monospace" textAnchor="middle">{sec}s</text>
-          </g>
-        ))}
-
-        {(() => {
-          const xFaultStart = scaleX(1.0);
-          const xFaultEnd = scaleX(1.0 + mmResult.fault_duration_ms / 1000.0);
-          return (
-            <g>
-              <rect x={xFaultStart} y={padY} width={xFaultEnd - xFaultStart} height={height - padY * 2} fill="#fbbf24" fillOpacity="0.15" />
-              <line x1={xFaultStart} y1={padY} x2={xFaultStart} y2={height - padY} stroke="#fbbf24" strokeWidth="1.5" />
-              <line x1={xFaultEnd} y1={padY} x2={xFaultEnd} y2={height - padY} stroke="#f43f5e" strokeWidth="1.5" />
-              <text x={(xFaultStart + xFaultEnd) / 2} y={padY + 14} fill="#fbbf24" fontSize="9" fontFamily="monospace" fontWeight="bold" textAnchor="middle">
-                {`FAULT (${mmResult.fault_duration_ms}ms)`}
-              </text>
-            </g>
-          );
-        })()}
-
-        {mmResult.generators.map((gen) => {
-          const path = gen.relative_angle_deg
-            .map((angle, i) => `${i === 0 ? 'M' : 'L'} ${scaleX(mmResult.time[i])} ${scaleY(angle)}`)
-            .join(' ');
-
-          return (
-            <path
-              key={gen.id}
-              d={path}
-              fill="none"
-              stroke={gen.color}
-              strokeWidth={gen.is_slack ? 3.2 : 2.4}
-              className="transition-all"
-            />
-          );
-        })}
-      </svg>
-    );
+    img.onload = () => {
+      ctx.fillStyle = '#0a0d14';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const pngUrl = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = pngUrl;
+      a.download = `${filename}.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
   };
+
+  // Export CSV Telemetry
+  const exportFrequencyCSV = () => {
+    if (!dynResult) return;
+    let csv = 'Time_s,Unmitigated_Hz,Protected_Hz\n';
+    dynResult.time.forEach((t, i) => {
+      csv += `${t},${unmitigatedSeries[i] ?? ''},${protectedSeries[i] ?? ''}\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'NESI_Frequency_Response_Telemetry.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportAngleCSV = () => {
+    if (!mmResult) return;
+    let csv = 'Time_s,' + mmResult.trajectories.map((m: any) => `"${m.name}"`).join(',') + '\n';
+    mmResult.time.forEach((t: number, i: number) => {
+      const row = [t, ...mmResult.trajectories.map((m: any) => m.angles[i])];
+      csv += row.join(',') + '\n';
+    });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'NESI_MultiMachine_Angles_Telemetry.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // SVG Coordinates
+  const svgWidth = 850;
+  const svgHeight = 280;
+  const padLeft = 60;
+  const padRight = 30;
+  const padTop = 30;
+  const padBottom = 40;
+
+  const mapX = (t: number, maxT: number) =>
+    padLeft + (t / maxT) * (svgWidth - padLeft - padRight);
+
+  const mapFreqY = (f: number) => {
+    const minF = 46.0;
+    const maxF = 50.5;
+    const clamped = Math.max(minF, Math.min(maxF, f));
+    return padTop + ((maxF - clamped) / (maxF - minF)) * (svgHeight - padTop - padBottom);
+  };
+
+  const mapAngleY = (deg: number) => {
+    const minDeg = -30.0;
+    const maxDeg = 210.0;
+    const clamped = Math.max(minDeg, Math.min(maxDeg, deg));
+    return padTop + ((maxDeg - clamped) / (maxDeg - minDeg)) * (svgHeight - padTop - padBottom);
+  };
+
+  const MACHINE_COLORS = [
+    '#38bdf8', '#34d399', '#fbbf24', '#f87171', '#a78bfa',
+    '#fb923c', '#2dd4bf', '#ec4899', '#60a5fa', '#c084fc',
+  ];
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Top Header & View Mode Switcher */}
+      {/* Top Navigation */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 gap-3">
         <div>
           <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
@@ -244,44 +214,44 @@ export const DynamicsTab: React.FC<Props> = ({
 
         <div className="flex rounded-xl border border-slate-200 bg-white p-1 text-sm shadow-xs">
           <button
-            onClick={() => setActiveMode('frequency')}
+            onClick={() => setSubView('lumped')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition ${
-              activeMode === 'frequency'
-                ? 'bg-[#500b50] text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+              subView === 'lumped' ? 'bg-[#500b50] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <Activity className="h-4 w-4" />
             <span>Lumped Frequency & UFLS</span>
           </button>
+
           <button
-            onClick={() => setActiveMode('rotor_angles')}
+            onClick={() => {
+              setSubView('multimachine');
+              if (!mmResult) handleSimulateMultiMachine();
+            }}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition ${
-              activeMode === 'rotor_angles'
-                ? 'bg-[#500b50] text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+              subView === 'multimachine' ? 'bg-[#500b50] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <RotateCw className="h-4 w-4 text-emerald-400" />
+            <Sliders className="h-4 w-4" />
             <span>Multi-Machine Angles & CCT</span>
           </button>
         </div>
       </div>
 
-      {/* MODE 1: LUMPED FREQUENCY RESPONSE & UFLS */}
-      {activeMode === 'frequency' && (
+      {/* ========================================================================= */}
+      {/* VIEW 1: LUMPED FREQUENCY RESPONSE                                         */}
+      {/* ========================================================================= */}
+      {subView === 'lumped' && (
         <div className="space-y-6">
-          <div className="p-6 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <span className="text-sm font-bold uppercase tracking-wider text-slate-800 flex items-center gap-2">
-                <Sliders className="h-4 w-4 text-[#500b50]" />
-                <span>Disturbance & Control Parameters</span>
+          <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                Disturbance & Control Parameters
               </span>
-
               <button
-                onClick={handleSimulateFreq}
+                onClick={handleSimulateLumped}
                 disabled={dynLoading}
-                className="flex items-center gap-2 rounded-xl bg-[#500b50] px-5 py-2.5 text-sm font-bold text-white hover:bg-[#680f68] transition shadow-xs disabled:opacity-50"
+                className="flex items-center gap-2 rounded-xl bg-[#500b50] px-5 py-2 text-sm font-bold text-white hover:bg-[#680f68] transition shadow-xs disabled:opacity-50"
               >
                 {dynLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                 <span>Simulate Dynamic Transient</span>
@@ -289,8 +259,8 @@ export const DynamicsTab: React.FC<Props> = ({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50">
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-2">
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50">
+                <label className="block text-xs font-bold uppercase text-slate-500 mb-1">
                   Generation Loss (ΔP)
                 </label>
                 <div className="flex items-center gap-2">
@@ -300,48 +270,48 @@ export const DynamicsTab: React.FC<Props> = ({
                     min="100"
                     max="2000"
                     value={disturbanceMw}
-                    onChange={(e) => setDisturbanceMw(Number(e.target.value))}
-                    className="w-full font-mono font-bold text-base text-slate-900 bg-white border border-slate-300 rounded-lg px-3 py-1.5"
+                    onChange={(e) => setDisturbanceMw(parseFloat(e.target.value) || 650)}
+                    className="w-full font-mono font-bold text-slate-900 bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-sm"
                   />
-                  <span className="text-slate-500 font-mono text-sm">MW</span>
+                  <span className="text-xs text-slate-500 font-mono">MW</span>
                 </div>
               </div>
 
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50">
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-2">
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50">
+                <label className="block text-xs font-bold uppercase text-slate-500 mb-1">
                   Grid Inertia (H)
                 </label>
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
-                    step="0.25"
-                    min="2.0"
-                    max="7.0"
+                    step="0.5"
+                    min="1.5"
+                    max="8.0"
                     value={inertiaH}
-                    onChange={(e) => setInertiaH(Number(e.target.value))}
-                    className="w-full font-mono font-bold text-base text-slate-900 bg-white border border-slate-300 rounded-lg px-3 py-1.5"
+                    onChange={(e) => setInertiaH(parseFloat(e.target.value) || 4.5)}
+                    className="w-full font-mono font-bold text-slate-900 bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-sm"
                   />
-                  <span className="text-slate-500 font-mono text-sm">s</span>
+                  <span className="text-xs text-slate-500 font-mono">s</span>
                 </div>
               </div>
 
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50">
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-2">
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50">
+                <label className="block text-xs font-bold uppercase text-slate-500 mb-1">
                   Governor Droop (R)
                 </label>
                 <input
                   type="number"
-                  step="0.005"
-                  min="0.03"
-                  max="0.08"
+                  step="0.01"
+                  min="0.02"
+                  max="0.10"
                   value={droopR}
-                  onChange={(e) => setDroopR(Number(e.target.value))}
-                  className="w-full font-mono font-bold text-base text-slate-900 bg-white border border-slate-300 rounded-lg px-3 py-1.5"
+                  onChange={(e) => setDroopR(parseFloat(e.target.value) || 0.05)}
+                  className="w-full font-mono font-bold text-slate-900 bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-sm"
                 />
               </div>
 
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50">
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-2">
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50">
+                <label className="block text-xs font-bold uppercase text-slate-500 mb-1">
                   PSS Gain (K_pss)
                 </label>
                 <input
@@ -350,236 +320,307 @@ export const DynamicsTab: React.FC<Props> = ({
                   min="0"
                   max="50"
                   value={pssGain}
-                  onChange={(e) => setPssGain(Number(e.target.value))}
-                  className="w-full font-mono font-bold text-base text-slate-900 bg-white border border-slate-300 rounded-lg px-3 py-1.5"
+                  onChange={(e) => setPssGain(parseFloat(e.target.value) || 25)}
+                  className="w-full font-mono font-bold text-slate-900 bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-sm"
                 />
               </div>
 
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 flex flex-col justify-between">
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-1">
-                  Active Controllers
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 flex flex-col justify-center space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={enableGov}
+                    onChange={(e) => setEnableGov(e.target.checked)}
+                    className="rounded text-[#500b50] accent-[#500b50]"
+                  />
+                  <span>Turbine Governor</span>
                 </label>
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold text-slate-800">
-                    <input
-                      type="checkbox"
-                      checked={enableGovernor}
-                      onChange={(e) => setEnableGovernor(e.target.checked)}
-                      className="h-4 w-4 accent-[#500b50]"
-                    />
-                    <span>Turbine Governor</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold text-slate-800">
-                    <input
-                      type="checkbox"
-                      checked={enablePss}
-                      onChange={(e) => setEnablePss(e.target.checked)}
-                      className="h-4 w-4 accent-[#500b50]"
-                    />
-                    <span>PSS Damping</span>
-                  </label>
-                </div>
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={enablePss}
+                    onChange={(e) => setEnablePss(e.target.checked)}
+                    className="rounded text-[#500b50] accent-[#500b50]"
+                  />
+                  <span>PSS Damping</span>
+                </label>
               </div>
 
-              <div className="p-4 rounded-xl border border-purple-200 bg-purple-50/60 flex flex-col justify-between">
-                <label className="block text-xs font-bold uppercase text-[#500b50] mb-1">
-                  NERC UFLS Defense
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 flex flex-col justify-center">
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-purple-900">
                   <input
                     type="checkbox"
                     checked={enableUfls}
                     onChange={(e) => setEnableUfls(e.target.checked)}
-                    className="h-5 w-5 accent-[#500b50]"
+                    className="rounded accent-[#500b50]"
                   />
-                  <span className="text-sm font-bold text-[#500b50]">
-                    {enableUfls ? 'Armed (4 Stages)' : 'Disabled'}
-                  </span>
+                  <span>NERC UFLS Defense (4 Stages)</span>
                 </label>
-                <span className="text-xs text-purple-700 mt-1">Triggers at 48.80 Hz</span>
+                <span className="text-[10px] text-slate-400 mt-1 block">Stage 1 triggers at 48.80 Hz</span>
               </div>
             </div>
           </div>
 
-          {/* Metric Summary Cards */}
+          {/* Metric KPI Cards */}
           {dynResult && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block">Frequency Nadir</span>
-                <div className="flex items-baseline gap-2 mt-1">
-                  <span className={`text-2xl font-bold font-mono ${
-                    dynResult.metrics.nadir_ufls_hz < 48.80 ? 'text-rose-600' : 'text-emerald-700'
-                  }`}>
-                    {dynResult.metrics.nadir_ufls_hz.toFixed(2)} Hz
-                  </span>
-                  <span className="text-xs text-slate-400 line-through">
-                    {dynResult.metrics.nadir_unmitigated_hz.toFixed(2)} Hz
-                  </span>
-                </div>
-                <span className="text-xs text-slate-500 mt-1 block">NERC Standard: ≥ 48.80 Hz</span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
+                <span className="text-xs uppercase font-bold text-slate-400 block">Frequency Nadir</span>
+                <span className={`text-2xl font-black font-mono ${nadirVal < 48.80 ? 'text-rose-600' : 'text-emerald-700'}`}>
+                  {nadirVal.toFixed(2)} Hz
+                </span>
+                <span className="text-[11px] text-slate-400 block mt-1">NERC Statutory Band: ≥ 48.80 Hz</span>
               </div>
 
-              <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block">Initial RoCoF (df/dt)</span>
-                <span className={`text-2xl font-bold font-mono block mt-1 ${
-                  dynResult.metrics.rocf_compliant ? 'text-emerald-700' : 'text-rose-600'
-                }`}>
-                  {dynResult.metrics.initial_rocof_hz_per_s.toFixed(2)} Hz/s
+              <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
+                <span className="text-xs uppercase font-bold text-slate-400 block">Initial RoCoF (df/dt)</span>
+                <span className="text-2xl font-black font-mono text-purple-900">
+                  {rocofVal.toFixed(2)} Hz/s
                 </span>
-                <span className="text-xs text-slate-500 mt-1 block">Limit: ≤ -0.50 Hz/s</span>
+                <span className="text-[11px] text-slate-400 block mt-1">Grid Code Limit: ≤ -0.50 Hz/s</span>
               </div>
 
-              <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block">Settling Frequency</span>
-                <span className={`text-2xl font-bold font-mono block mt-1 ${
-                  dynResult.metrics.frequency_band_compliant ? 'text-emerald-700' : 'text-amber-600'
-                }`}>
-                  {dynResult.metrics.settling_ufls_hz.toFixed(2)} Hz
+              <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
+                <span className="text-xs uppercase font-bold text-slate-400 block">Settling Frequency</span>
+                <span className="text-2xl font-black font-mono text-slate-900">
+                  {settlingVal.toFixed(2)} Hz
                 </span>
-                <span className="text-xs text-slate-500 mt-1 block">Target: 49.75 – 50.25 Hz</span>
+                <span className="text-[11px] text-slate-400 block mt-1">Target: 49.75 – 50.25 Hz</span>
               </div>
 
-              <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block">Automatic Load Shed</span>
-                <span className="text-2xl font-bold font-mono text-[#500b50] block mt-1">
-                  {dynResult.metrics.total_load_shed_mw} MW
+              <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
+                <span className="text-xs uppercase font-bold text-slate-400 block">Automatic Load Shed</span>
+                <span className="text-2xl font-black font-mono text-amber-600">
+                  {totalShedVal} MW
                 </span>
-                <span className="text-xs text-slate-500 mt-1 block">
-                  {dynResult.metrics.stages_tripped_count} of 4 Stages Tripped
-                </span>
+                <span className="text-[11px] text-slate-400 block mt-1">{stagesTrippedVal} of 4 Stages Tripped</span>
               </div>
             </div>
           )}
 
-          {/* SVG Vector Plot */}
-          <div className="rounded-2xl border border-slate-800 bg-[#090e1a] p-6 shadow-xl relative overflow-hidden">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-3 mb-3 text-sm gap-2">
-              <div className="flex items-center gap-2">
-                <Activity className="h-5 w-5 text-emerald-400" />
-                <span className="text-slate-100 font-bold">Center-of-Inertia Frequency Response: f(t)</span>
+          {/* Center-of-Inertia Frequency Graph with Direct Export */}
+          <div className="rounded-2xl border border-slate-800 bg-[#0a0d14] p-5 shadow-xl text-white">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800 gap-3">
+              <div className="flex items-center gap-3">
+                <div className="h-3 w-3 rounded-full bg-emerald-400 animate-pulse"></div>
+                <h3 className="text-sm font-bold text-slate-100 tracking-wide">
+                  Center-of-Inertia Frequency Response: $f(t)$
+                </h3>
               </div>
 
-              <div className="flex items-center gap-5 text-xs font-mono">
-                <div className="flex items-center gap-2">
-                  <span className="inline-block w-4 h-1 bg-[#10b981] rounded-full"></span>
-                  <span className="text-emerald-400 font-bold">UFLS & Governor Protected</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="inline-block w-4 h-1 bg-[#f43f5e] border-dashed border-b rounded-full"></span>
-                  <span className="text-rose-400 font-bold">Unmitigated Trajectory</span>
-                </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => exportAsPNG(freqSvgRef, 'NESI_Frequency_Response')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition"
+                  title="Export PNG"
+                >
+                  <ImageIcon className="h-3.5 w-3.5 text-cyan-400" />
+                  <span>PNG</span>
+                </button>
+
+                <button
+                  onClick={() => exportAsSVG(freqSvgRef, 'NESI_Frequency_Response')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition"
+                  title="Export SVG"
+                >
+                  <Download className="h-3.5 w-3.5 text-emerald-400" />
+                  <span>SVG</span>
+                </button>
+
+                <button
+                  onClick={exportFrequencyCSV}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition"
+                  title="Export CSV"
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5 text-amber-400" />
+                  <span>CSV Data</span>
+                </button>
               </div>
             </div>
 
-            {renderFrequencyChart()}
-          </div>
+            <div className="relative mt-4 overflow-x-auto">
+              {dynResult ? (
+                <svg
+                  ref={freqSvgRef}
+                  viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+                  className="w-full h-auto min-w-[750px] overflow-visible select-none"
+                >
+                  {[46.0, 47.0, 48.0, 48.8, 49.75, 50.0].map((fVal) => {
+                    const y = mapFreqY(fVal);
+                    const isUfls = fVal === 48.8;
+                    const isNominal = fVal === 50.0;
+                    return (
+                      <g key={fVal}>
+                        <line
+                          x1={padLeft}
+                          y1={y}
+                          x2={svgWidth - padRight}
+                          y2={y}
+                          stroke={isUfls ? '#f43f5e' : isNominal ? '#10b981' : '#1e293b'}
+                          strokeWidth={isUfls || isNominal ? 1.5 : 1}
+                          strokeDasharray={isUfls ? '4 4' : undefined}
+                        />
+                        <text
+                          x={padLeft - 10}
+                          y={y + 4}
+                          textAnchor="end"
+                          fontSize="10"
+                          fill={isUfls ? '#f43f5e' : isNominal ? '#10b981' : '#64748b'}
+                          fontFamily="monospace"
+                        >
+                          {fVal.toFixed(2)} Hz
+                        </text>
+                      </g>
+                    );
+                  })}
 
-          {/* UFLS Sequence Ledger */}
-          {dynResult && (
-            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-xs">
-              <div className="bg-[#500b50] text-white px-5 py-3 flex justify-between items-center text-sm font-bold">
-                <span>NERC Statutory UFLS Tripping Sequence Ledger</span>
-                <span className="font-mono text-emerald-300">
-                  {dynResult.ufls_events.length > 0 ? `${dynResult.ufls_events.length} Relays Activated` : 'No UFLS Stages Triggered'}
-                </span>
-              </div>
+                  {[0, 2, 4, 6, 8, 10, 12].map((tVal) => {
+                    const x = mapX(tVal, 12.0);
+                    return (
+                      <g key={tVal}>
+                        <line x1={x} y1={padTop} x2={x} y2={svgHeight - padBottom} stroke="#1e293b" strokeWidth="1" />
+                        <text
+                          x={x}
+                          y={svgHeight - padBottom + 18}
+                          textAnchor="middle"
+                          fontSize="10"
+                          fill="#64748b"
+                          fontFamily="monospace"
+                        >
+                          {tVal}s
+                        </text>
+                      </g>
+                    );
+                  })}
 
-              {dynResult.ufls_events.length === 0 ? (
-                <div className="p-8 text-center text-sm text-slate-500">
-                  Frequency remained above 48.80 Hz. No automatic load shedding required.
-                </div>
+                  {unmitigatedSeries.length > 0 && (
+                    <path
+                      d={dynResult.time.reduce(
+                        (acc, t, i) => `${acc} ${i === 0 ? 'M' : 'L'} ${mapX(t, 12.0)} ${mapFreqY(unmitigatedSeries[i] ?? 50.0)}`,
+                        ''
+                      )}
+                      fill="none"
+                      stroke="#ef4444"
+                      strokeWidth="2.5"
+                      strokeDasharray="6 4"
+                    />
+                  )}
+
+                  {protectedSeries.length > 0 && (
+                    <path
+                      d={dynResult.time.reduce(
+                        (acc, t, i) => `${acc} ${i === 0 ? 'M' : 'L'} ${mapX(t, 12.0)} ${mapFreqY(protectedSeries[i] ?? 50.0)}`,
+                        ''
+                      )}
+                      fill="none"
+                      stroke="#10b981"
+                      strokeWidth="3"
+                    />
+                  )}
+
+                  {uflsEvents.map((ev, idx) => {
+                    const cx = mapX(ev.timestamp, 12.0);
+                    const cy = mapFreqY(ev.threshold_hz);
+                    return (
+                      <g key={idx}>
+                        <circle cx={cx} cy={cy} r="5" fill="#f43f5e" stroke="#ffffff" strokeWidth="2" />
+                        <text
+                          x={cx + 8}
+                          y={cy - 6}
+                          fontSize="9"
+                          fill="#fda4af"
+                          fontFamily="sans-serif"
+                          fontWeight="bold"
+                        >
+                          Stage {ev.stage} (-{ev.shed_mw}MW)
+                        </text>
+                      </g>
+                    );
+                  })}
+                </svg>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm min-w-[650px]">
-                    <thead className="bg-slate-100 text-slate-700 border-b border-slate-200 font-semibold">
-                      <tr>
-                        <th className="py-3 px-4">Stage</th>
-                        <th className="py-3 px-4">Trigger Threshold</th>
-                        <th className="py-3 px-4">Relay Timestamp</th>
-                        <th className="py-3 px-4">Frequency at Trip</th>
-                        <th className="py-3 px-4">Shed MW</th>
-                        <th className="py-3 px-4">Cumulative Shed</th>
-                        <th className="py-3 px-4">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-800">
-                      {dynResult.ufls_events.map((evt) => (
-                        <tr key={evt.stage} className="hover:bg-slate-50">
-                          <td className="py-3 px-4 font-bold text-slate-900">Stage {evt.stage}</td>
-                          <td className="py-3 px-4 font-mono text-slate-600">
-                            {evt.stage === 1 ? '48.80 Hz' : evt.stage === 2 ? '48.60 Hz' : evt.stage === 3 ? '48.40 Hz' : '48.20 Hz'}
-                          </td>
-                          <td className="py-3 px-4 font-mono font-bold text-[#500b50]">{evt.timestamp_s}s</td>
-                          <td className="py-3 px-4 font-mono text-rose-600 font-bold">{evt.frequency_at_trip} Hz</td>
-                          <td className="py-3 px-4 font-mono font-bold text-amber-700">-{evt.mw_shed} MW</td>
-                          <td className="py-3 px-4 font-mono font-bold text-slate-900">{evt.cumulative_shed_mw} MW</td>
-                          <td className="py-3 px-4">
-                            <span className="inline-flex items-center rounded-md bg-rose-100 px-2.5 py-1 text-xs font-bold text-rose-800">
-                              Breaker Open
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="py-16 text-center text-slate-500 text-sm">
+                  Click &quot;Simulate Dynamic Transient&quot; above to calculate frequency response.
                 </div>
               )}
             </div>
-          )}
+
+            <div className="mt-4 pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between text-xs text-slate-400">
+              <div className="flex items-center gap-6">
+                <span className="flex items-center gap-2">
+                  <span className="h-0.5 w-6 bg-[#10b981]"></span>
+                  <span>UFLS & Governor Protected</span>
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="h-0.5 w-6 bg-[#ef4444] border-b border-dashed border-red-400"></span>
+                  <span>Unmitigated Trajectory</span>
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-[#f43f5e]"></span>
+                  <span>UFLS Relay Tripping Events</span>
+                </span>
+              </div>
+              <span className="font-mono text-[11px] text-slate-500">Center-of-Inertia Vector Plot (0 to 12s)</span>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* MODE 2: MULTI-MACHINE ROTOR ANGLES & CRITICAL CLEARING TIME */}
-      {activeMode === 'rotor_angles' && (
+      {/* ========================================================================= */}
+      {/* VIEW 2: MULTI-MACHINE ROTOR ANGLES & CCT                                   */}
+      {/* ========================================================================= */}
+      {subView === 'multimachine' && (
         <div className="space-y-6">
-          {/* Fault Configuration Deck */}
-          <div className="p-6 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-4">
+          <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
               <div>
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-2">
+                <label className="block text-xs font-bold uppercase text-slate-600 mb-1.5">
                   1. Fault Location (Substation Bus)
                 </label>
                 <select
-                  value={faultBusId}
-                  onChange={(e) => setFaultBusId(Number(e.target.value))}
-                  className="w-full border rounded-xl px-3 py-2.5 text-sm font-semibold text-slate-800 bg-white"
+                  value={faultBus}
+                  onChange={(e) => setFaultBus(Number(e.target.value))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm font-semibold text-slate-800 bg-white"
                 >
                   {buses.map((b) => (
                     <option key={b.id} value={b.id}>
-                      {`#${b.id} ${b.name} (${b.vn_kv || 330} kV)`}
+                      #{b.id} {b.name} ({b.vn_kv || 330} kV)
                     </option>
                   ))}
                 </select>
               </div>
 
               <div>
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-2">
-                  2. Breaker Clearing Duration (t_clear)
-                </label>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="range"
-                    min="50"
-                    max="350"
-                    step="10"
-                    value={faultDurationMs}
-                    onChange={(e) => setFaultDurationMs(Number(e.target.value))}
-                    className="w-full accent-[#500b50] cursor-pointer"
-                  />
-                  <span className="font-mono font-bold text-[#500b50] text-base whitespace-nowrap">
-                    {faultDurationMs} ms
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-bold uppercase text-slate-600">
+                    2. Breaker Clearing Duration (t_clear)
+                  </label>
+                  <span className="font-mono font-bold text-[#500b50] text-sm">
+                    {breakerDuration} ms ({(breakerDuration / 20.0).toFixed(1)} cycles)
                   </span>
                 </div>
-                <span className="text-xs text-slate-400 mt-1 block">
-                  {(faultDurationMs / 20).toFixed(1)} protection cycles at 50 Hz
-                </span>
+                <input
+                  type="range"
+                  min="20"
+                  max="300"
+                  step="5"
+                  value={breakerDuration}
+                  onChange={(e) => setBreakerDuration(Number(e.target.value))}
+                  className="w-full accent-[#500b50] cursor-pointer"
+                />
+                <div className="flex justify-between text-[11px] text-slate-400 font-mono mt-1">
+                  <span>20 ms (1 cycle)</span>
+                  <span>80 ms (4 cycles)</span>
+                  <span>150 ms (Statutory)</span>
+                  <span>300 ms</span>
+                </div>
               </div>
 
               <div className="flex items-end">
                 <button
-                  onClick={handleSimulateMM}
-                  disabled={mmLoading || buses.length === 0}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#500b50] text-white py-3 text-sm font-bold hover:bg-[#680f68] transition shadow-xs disabled:opacity-50"
+                  onClick={handleSimulateMultiMachine}
+                  disabled={mmLoading}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#500b50] text-white py-2.5 text-sm font-bold hover:bg-[#680f68] transition shadow-xs disabled:opacity-50"
                 >
                   {mmLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                   <span>Run Multi-Machine Analysis</span>
@@ -588,129 +629,262 @@ export const DynamicsTab: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Results Summary & Plot */}
           {mmResult && (
-            <div className="space-y-6">
-              <div className={`p-5 rounded-2xl border text-sm flex items-center justify-between ${
-                mmResult.is_transiently_stable
-                  ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
-                  : 'bg-rose-50 border-rose-300 text-rose-900'
-              }`}>
-                <div className="flex items-center gap-3.5">
-                  {mmResult.is_transiently_stable ? (
-                    <ShieldCheck className="h-8 w-8 text-emerald-600 shrink-0" />
-                  ) : (
-                    <AlertTriangle className="h-8 w-8 text-rose-600 shrink-0" />
+            <div
+              className={`p-4 rounded-xl border flex items-center justify-between ${
+                mmResult.system_status === 'POLE_SLIP'
+                  ? 'border-rose-300 bg-rose-50 text-rose-800'
+                  : 'border-emerald-300 bg-emerald-50 text-emerald-800'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                {mmResult.system_status === 'POLE_SLIP' ? (
+                  <ShieldAlert className="h-6 w-6 text-rose-600 shrink-0" />
+                ) : (
+                  <ShieldCheck className="h-6 w-6 text-emerald-600 shrink-0" />
+                )}
+                <div>
+                  <h4 className="font-bold text-sm">
+                    {mmResult.system_status === 'POLE_SLIP'
+                      ? 'TRANSIENT INSTABILITY: Machine POLE SLIP'
+                      : 'SYNCHRONOUS STABILITY MAINTAINED'}
+                  </h4>
+                  <p className="text-xs opacity-90">
+                    Fault at Bus #{faultBus} cleared in {breakerDuration} ms. {mmResult.trajectories.length} generating units monitored.
+                  </p>
+                </div>
+              </div>
+
+              <div className="text-right">
+                <span className="text-[10px] uppercase font-bold tracking-wider block opacity-70">
+                  Critical Clearing Time
+                </span>
+                <span className="font-mono text-base font-black">
+                  {mmResult.lowest_cct_ms} ms ({(mmResult.lowest_cct_ms / 20.0).toFixed(1)} cycles)
+                </span>
+              </div>
+            </div>
+          )}
+
+          <div className="rounded-2xl border border-slate-800 bg-[#0a0d14] p-5 shadow-xl text-white">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800 gap-3">
+              <div className="flex items-center gap-3">
+                <div className="h-3 w-3 rounded-full bg-cyan-400"></div>
+                <h3 className="text-sm font-bold text-slate-100 tracking-wide">
+                  Generator Rotor Angles Relative to Slack: (δ_i - δ_slack)
+                </h3>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => exportAsPNG(angleSvgRef, 'NESI_MultiMachine_Angles')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition"
+                  title="Export PNG"
+                >
+                  <ImageIcon className="h-3.5 w-3.5 text-cyan-400" />
+                  <span>PNG</span>
+                </button>
+
+                <button
+                  onClick={() => exportAsSVG(angleSvgRef, 'NESI_MultiMachine_Angles')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition"
+                  title="Export SVG"
+                >
+                  <Download className="h-3.5 w-3.5 text-emerald-400" />
+                  <span>SVG</span>
+                </button>
+
+                <button
+                  onClick={exportAngleCSV}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition"
+                  title="Export CSV"
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5 text-amber-400" />
+                  <span>CSV Data</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="relative mt-4 overflow-x-auto">
+              {mmResult ? (
+                <svg
+                  ref={angleSvgRef}
+                  viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+                  className="w-full h-auto min-w-[750px] overflow-visible select-none"
+                >
+                  {[0, 45, 90, 135, 180].map((degVal) => {
+                    const y = mapAngleY(degVal);
+                    const isLimit = degVal === 180;
+                    const isSlack = degVal === 0;
+                    return (
+                      <g key={degVal}>
+                        <line
+                          x1={padLeft}
+                          y1={y}
+                          x2={svgWidth - padRight}
+                          y2={y}
+                          stroke={isLimit ? '#f43f5e' : isSlack ? '#94a3b8' : '#1e293b'}
+                          strokeWidth={isLimit || isSlack ? 1.5 : 1}
+                          strokeDasharray={isLimit ? '4 4' : undefined}
+                        />
+                        <text
+                          x={padLeft - 10}
+                          y={y + 4}
+                          textAnchor="end"
+                          fontSize="10"
+                          fill={isLimit ? '#f43f5e' : '#64748b'}
+                          fontFamily="monospace"
+                        >
+                          {degVal}° {isLimit ? '(Pole Slip)' : isSlack ? '(Slack)' : ''}
+                        </text>
+                      </g>
+                    );
+                  })}
+
+                  {[0, 1.0, 2.0, 3.0, 4.0].map((tVal) => {
+                    const x = mapX(tVal, 4.0);
+                    return (
+                      <g key={tVal}>
+                        <line x1={x} y1={padTop} x2={x} y2={svgHeight - padBottom} stroke="#1e293b" strokeWidth="1" />
+                        <text
+                          x={x}
+                          y={svgHeight - padBottom + 18}
+                          textAnchor="middle"
+                          fontSize="10"
+                          fill="#64748b"
+                          fontFamily="monospace"
+                        >
+                          {tVal.toFixed(1)}s
+                        </text>
+                      </g>
+                    );
+                  })}
+
+                  {mmResult.fault_start_s && (
+                    <rect
+                      x={mapX(mmResult.fault_start_s, 4.0)}
+                      y={padTop}
+                      width={mapX(mmResult.fault_clear_s, 4.0) - mapX(mmResult.fault_start_s, 4.0)}
+                      height={svgHeight - padTop - padBottom}
+                      fill="#eab308"
+                      fillOpacity="0.25"
+                      stroke="#eab308"
+                      strokeWidth="1"
+                    />
                   )}
-                  <div>
-                    <h4 className="font-black text-base">
-                      {mmResult.is_transiently_stable
-                        ? 'SYNCHRONOUS COHERENCE MAINTAINED'
-                        : `TRANSIENT INSTABILITY: ${mmResult.unstable_generator || 'Machine'} POLE SLIP`}
-                    </h4>
-                    <p className="text-xs mt-0.5 opacity-90">
-                      Fault at {mmResult.fault_bus_name} cleared in {mmResult.fault_duration_ms} ms. All {mmResult.generators.length} machines monitored.
-                    </p>
-                  </div>
-                </div>
 
-                <div className="text-right font-mono">
-                  <span className="text-xs uppercase font-bold text-slate-500 block">Critical Clearing Time</span>
-                  <span className="text-lg font-black text-[#500b50]">
-                    {mmResult.cct_ms} ms ({mmResult.cct_cycles} cycles)
-                  </span>
+                  {mmResult.fault_start_s && (
+                    <text
+                      x={mapX(mmResult.fault_start_s, 4.0) + 4}
+                      y={padTop + 14}
+                      fontSize="9"
+                      fill="#fef08a"
+                      fontFamily="monospace"
+                      fontWeight="bold"
+                    >
+                      FAULT ({breakerDuration}ms)
+                    </text>
+                  )}
+
+                  {mmResult.trajectories.map((gen: any, idx: number) => {
+                    const color = MACHINE_COLORS[idx % MACHINE_COLORS.length];
+                    const pathData = mmResult.time.reduce(
+                      (acc: string, t: number, i: number) =>
+                        `${acc} ${i === 0 ? 'M' : 'L'} ${mapX(t, 4.0)} ${mapAngleY(gen.angles[i])}`,
+                      ''
+                    );
+
+                    return (
+                      <path
+                        key={gen.id}
+                        d={pathData}
+                        fill="none"
+                        stroke={color}
+                        strokeWidth="2"
+                        strokeOpacity="0.85"
+                      />
+                    );
+                  })}
+                </svg>
+              ) : (
+                <div className="py-16 text-center text-slate-500 text-sm">
+                  Click &quot;Run Multi-Machine Analysis&quot; to compute dynamic rotor angles.
                 </div>
+              )}
+            </div>
+
+            {mmResult && (
+              <div className="mt-4 pt-3 border-t border-slate-800 flex flex-wrap gap-4 text-xs">
+                {mmResult.trajectories.map((gen: any, idx: number) => (
+                  <span key={gen.id} className="flex items-center gap-1.5 font-mono text-[11px] text-slate-300">
+                    <span
+                      className="h-2.5 w-2.5 rounded-full"
+                      style={{ backgroundColor: MACHINE_COLORS[idx % MACHINE_COLORS.length] }}
+                    ></span>
+                    <span>{gen.name}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {mmResult && (
+            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-xs">
+              <div className="bg-[#500b50] text-white px-5 py-3 flex justify-between items-center text-sm font-bold">
+                <span>Generating Plant Inertia & Transient Angular Excursions</span>
+                <span className="font-normal text-xs text-white/80">Statutory Primary Clearance: ≤ 150 ms (7.5 cycles)</span>
               </div>
 
-              {/* Multi-Machine Vector Trajectory Plot */}
-              <div className="rounded-2xl border border-slate-800 bg-[#090e1a] p-6 shadow-xl relative overflow-hidden">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-3 mb-3 text-sm gap-2">
-                  <div className="flex items-center gap-2">
-                    <RotateCw className="h-5 w-5 text-emerald-400" />
-                    <span className="text-slate-100 font-bold">
-                      Generator Rotor Angles Relative to Slack: (delta_i - delta_slack)
-                    </span>
-                  </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm min-w-[700px]">
+                  <thead className="bg-slate-100 text-slate-700 border-b border-slate-200 font-semibold">
+                    <tr>
+                      <th className="py-3 px-4">Generating Station</th>
+                      <th className="py-3 px-4">Bus Node</th>
+                      <th className="py-3 px-4">Inertia (H)</th>
+                      <th className="py-3 px-4">Max Excursion</th>
+                      <th className="py-3 px-4">Plant CCT Limit</th>
+                      <th className="py-3 px-4">CCT Margin</th>
+                      <th className="py-3 px-4 text-right">Transient Coherence</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-slate-800">
+                    {mmResult.machines.map((m: any, idx: number) => {
+                      const isSlipped = m.status === 'POLE SLIP';
+                      const marginPositive = m.cct_margin_ms >= 0;
 
-                  <div className="flex items-center gap-3 flex-wrap text-xs font-mono">
-                    {mmResult.generators.map((g) => (
-                      <div key={g.id} className="flex items-center gap-1.5">
-                        <span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: g.color }}></span>
-                        <span className="text-slate-300 font-bold">{g.name.split(' ')[0]}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {renderMultiMachineChart()}
-              </div>
-
-              {/* Machine Ledger Table */}
-              <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-xs">
-                <div className="bg-[#500b50] text-white px-5 py-3 text-sm font-bold flex justify-between items-center">
-                  <span>Generating Plant Inertia & Transient Angular Excursions</span>
-                  <span className="font-normal text-xs text-white/80">
-                    Statutory Primary Clearance: ≤ 150 ms (7.5 cycles)
-                  </span>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm min-w-[650px]">
-                    <thead className="bg-slate-100 text-slate-700 border-b border-slate-200 font-semibold">
-                      <tr>
-                        <th className="py-3 px-4">Generating Station</th>
-                        <th className="py-3 px-4">Bus Node</th>
-                        <th className="py-3 px-4">Inertia (H)</th>
-                        <th className="py-3 px-4">Max Excursion</th>
-                        <th className="py-3 px-4">CCT Margin</th>
-                        <th className="py-3 px-4">Transient Coherence</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-800">
-                      {mmResult.generators.map((g) => {
-                        const isSlipped = g.max_angle_deg >= 180.0;
-                        const cctMargin = mmResult.cct_ms - faultDurationMs;
-
-                        return (
-                          <tr key={g.id} className="hover:bg-slate-50">
-                            <td className="py-3 px-4 font-bold text-slate-900 flex items-center gap-2.5">
-                              <span className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: g.color }}></span>
-                              <span>{g.name}</span>
-                              {g.is_slack && (
-                                <span className="px-2 py-0.5 rounded-md bg-purple-100 text-[#500b50] text-xs font-bold">
-                                  Slack Ref
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-3 px-4 font-mono text-slate-600">Bus #{g.bus_id}</td>
-                            <td className="py-3 px-4 font-mono">{g.H} s</td>
-                            <td className="py-3 px-4 font-mono font-bold">
-                              <span className={isSlipped ? 'text-rose-600' : 'text-slate-900'}>
-                                {g.max_angle_deg.toFixed(1)}°
-                              </span>
-                            </td>
-                            <td className="py-3 px-4 font-mono">
-                              <span className={cctMargin >= 0 ? 'text-emerald-700 font-bold' : 'text-rose-600 font-bold'}>
-                                {cctMargin >= 0 ? `+${cctMargin.toFixed(0)} ms` : `${cctMargin.toFixed(0)} ms (Deficit)`}
-                              </span>
-                            </td>
-                            <td className="py-3 px-4">
-                              {isSlipped ? (
-                                <span className="inline-flex items-center rounded-md bg-rose-100 px-2.5 py-1 text-xs font-bold text-rose-800">
-                                  Pole Slipping
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center rounded-md bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-800">
-                                  Synchronous
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                      return (
+                        <tr key={m.id} className="hover:bg-slate-50">
+                          <td className="py-3 px-4 font-bold text-slate-900 flex items-center gap-2">
+                            <span
+                              className="h-2.5 w-2.5 rounded-full shrink-0"
+                              style={{ backgroundColor: MACHINE_COLORS[idx % MACHINE_COLORS.length] }}
+                            ></span>
+                            <span>{m.name}</span>
+                          </td>
+                          <td className="py-3 px-4 font-mono text-slate-600">{m.bus_node}</td>
+                          <td className="py-3 px-4 font-mono">{m.inertia_h}</td>
+                          <td className="py-3 px-4 font-mono font-bold text-slate-800">{m.max_excursion}</td>
+                          <td className="py-3 px-4 font-mono font-bold text-purple-900">{m.cct_ms} ms</td>
+                          <td className="py-3 px-4 font-mono font-bold">
+                            <span className={marginPositive ? 'text-emerald-700' : 'text-rose-600'}>
+                              {marginPositive ? `+${m.cct_margin_ms} ms (Stable)` : `${m.cct_margin_ms} ms (Deficit)`}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <span
+                              className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-bold ${
+                                isSlipped ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
+                              }`}
+                            >
+                              {m.status}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}

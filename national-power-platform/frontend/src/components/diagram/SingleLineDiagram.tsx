@@ -1,20 +1,25 @@
 'use client';
 
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { BusData, LineData } from '@/types/grid';
 import {
   ZoomIn,
   ZoomOut,
   Maximize2,
-  Zap,
   RotateCcw,
-  MapPin,
   Layers,
-  Printer,
-  Sparkles,
+  MapPin,
+  Download,
+  Image as ImageIcon,
+  FileSpreadsheet,
+  Power,
+  Zap,
+  ShieldCheck,
+  ShieldAlert,
+  Info,
 } from 'lucide-react';
 
-interface DiagramProps {
+interface SingleLineDiagramProps {
   buses: BusData[];
   lines: LineData[];
   trippedLines: number[];
@@ -25,172 +30,7 @@ interface DiagramProps {
   modelName: string;
 }
 
-interface Point {
-  x: number;
-  y: number;
-}
-
-// Regional Coordinates for Geographic Map Mode
-const REGIONAL_GEOGRAPHIC_MAP: Record<number, Point> = {
-  // Lagos & South-West
-  1: { x: 250, y: 550 }, 2: { x: 190, y: 540 }, 3: { x: 230, y: 510 },
-  4: { x: 160, y: 500 }, 5: { x: 80, y: 500 }, 6: { x: 150, y: 430 },
-  7: { x: 180, y: 470 }, 8: { x: 210, y: 550 }, 9: { x: 280, y: 570 },
-  10: { x: 170, y: 510 }, 11: { x: 190, y: 390 }, 12: { x: 260, y: 350 },
-  13: { x: 260, y: 290 }, 26: { x: 280, y: 440 },
-
-  // North-West & Hydro Generation
-  14: { x: 130, y: 100 }, 15: { x: 270, y: 230 }, 16: { x: 240, y: 210 },
-  17: { x: 190, y: 170 }, 18: { x: 340, y: 210 }, 19: { x: 370, y: 180 },
-  20: { x: 350, y: 150 }, 21: { x: 440, y: 190 }, 22: { x: 160, y: 140 },
-  31: { x: 500, y: 150 }, 32: { x: 540, y: 140 }, 59: { x: 580, y: 70 },
-  60: { x: 620, y: 50 },
-
-  // FCT & Central
-  54: { x: 500, y: 250 }, 56: { x: 470, y: 280 }, 57: { x: 420, y: 310 },
-  53: { x: 430, y: 350 }, 55: { x: 450, y: 370 }, 58: { x: 620, y: 280 },
-
-  // North-East
-  34: { x: 660, y: 200 }, 36: { x: 680, y: 180 }, 37: { x: 760, y: 150 },
-  33: { x: 860, y: 160 }, 35: { x: 980, y: 260 }, 38: { x: 1000, y: 80 },
-  39: { x: 920, y: 90 }, 40: { x: 950, y: 290 }, 41: { x: 880, y: 310 },
-
-  // Mid-West & Delta
-  23: { x: 380, y: 430 }, 24: { x: 400, y: 550 }, 25: { x: 360, y: 490 },
-  27: { x: 410, y: 400 }, 28: { x: 360, y: 540 }, 29: { x: 370, y: 470 },
-  30: { x: 410, y: 430 }, 44: { x: 460, y: 470 }, 46: { x: 450, y: 420 },
-
-  // South-East & Niger Delta
-  42: { x: 560, y: 410 }, 43: { x: 480, y: 430 }, 45: { x: 660, y: 330 },
-  47: { x: 580, y: 430 }, 48: { x: 530, y: 570 }, 49: { x: 540, y: 500 },
-  50: { x: 650, y: 510 }, 51: { x: 600, y: 500 }, 52: { x: 670, y: 530 },
-  61: { x: 500, y: 480 }, 62: { x: 480, y: 510 }, 63: { x: 460, y: 530 }
-};
-
-/**
- * Procedural CAD Tiered Layout Engine.
- * Automatically organizes any uploaded model into clean horizontal voltage tiers
- * with right-angle orthogonal routing.
- */
-function buildProceduralCADLayout(
-  buses: BusData[],
-  lines: LineData[],
-  viewMode: 'schematic' | 'geographic'
-): { positions: Record<string, Point>; viewBox: string } {
-  if (!buses || buses.length === 0) {
-    return { positions: {}, viewBox: '0 0 1000 650' };
-  }
-
-  const positions: Record<string, Point> = {};
-
-  // 1. Geographic Mode
-  if (viewMode === 'geographic') {
-    buses.forEach((b) => {
-      const geo = REGIONAL_GEOGRAPHIC_MAP[b.id] || { x: b.x || 300, y: b.y || 300 };
-      positions[String(b.id)] = { ...geo };
-    });
-
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    Object.values(positions).forEach((p) => {
-      if (p.x < minX) minX = p.x;
-      if (p.x > maxX) maxX = p.x;
-      if (p.y < minY) minY = p.y;
-      if (p.y > maxY) maxY = p.y;
-    });
-
-    const pad = 90;
-    return {
-      positions,
-      viewBox: `${minX - pad} ${minY - pad} ${Math.max(800, maxX - minX + pad * 2)} ${Math.max(550, maxY - minY + pad * 2)}`,
-    };
-  }
-
-  // 2. Schematic CAD Mode: Hierarchical Tier Partitioning
-  // Tier 0: Power Infeeds & Generators (Kainji, Jebba, Shiroro, Egbin, etc.)
-  // Tier 1: 330kV Bulk Switching Backbone & Interconnections
-  // Tier 2: Regional Hubs & Sub-Transmission Interconnects
-  // Tier 3: Major Load Centers & Terminal Demand Sinks
-  const tierGenerators: BusData[] = [];
-  const tierSwitching: BusData[] = [];
-  const tierIntermediate: BusData[] = [];
-  const tierLoads: BusData[] = [];
-
-  // Degree count per bus
-  const degreeMap = new Map<number, number>();
-  lines.forEach((l) => {
-    degreeMap.set(l.from_bus, (degreeMap.get(l.from_bus) || 0) + 1);
-    degreeMap.set(l.to_bus, (degreeMap.get(l.to_bus) || 0) + 1);
-  });
-
-  buses.forEach((bus) => {
-    const isGen =
-      bus.is_gen ||
-      bus.p_mw < -1.0 ||
-      bus.name.toLowerCase().includes('gs') ||
-      bus.name.toLowerCase().includes('hydro') ||
-      bus.name.toLowerCase().includes('ps');
-
-    const isLoad =
-      bus.is_load ||
-      bus.p_mw > 1.0 ||
-      bus.name.toLowerCase().includes('load');
-
-    const deg = degreeMap.get(bus.id) || 1;
-
-    if (isGen) {
-      tierGenerators.push(bus);
-    } else if (deg >= 4) {
-      tierSwitching.push(bus);
-    } else if (isLoad && deg <= 2) {
-      tierLoads.push(bus);
-    } else {
-      tierIntermediate.push(bus);
-    }
-  });
-
-  // Balance tiers if one group is completely empty
-  const tiers = [tierGenerators, tierSwitching, tierIntermediate, tierLoads].filter(
-    (t) => t.length > 0
-  );
-
-  const rowHeight = 170;
-  const startY = 90;
-  const busWidth = 100;
-
-  tiers.forEach((tierBuses, rowIndex) => {
-    const count = tierBuses.length;
-    const spacingX = Math.max(160, Math.min(220, 1400 / Math.max(1, count)));
-    const totalRowWidth = (count - 1) * spacingX;
-    const startX = Math.max(100, 700 - totalRowWidth / 2);
-
-    tierBuses.forEach((bus, colIndex) => {
-      positions[String(bus.id)] = {
-        x: startX + colIndex * spacingX,
-        y: startY + rowIndex * rowHeight,
-      };
-    });
-  });
-
-  // Determine viewport bounding box
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  Object.values(positions).forEach((p) => {
-    if (p.x < minX) minX = p.x;
-    if (p.x > maxX) maxX = p.x;
-    if (p.y < minY) minY = p.y;
-    if (p.y > maxY) maxY = p.y;
-  });
-
-  const pad = 100;
-  const width = Math.max(900, maxX - minX + pad * 2);
-  const height = Math.max(550, maxY - minY + pad * 2);
-
-  return {
-    positions,
-    viewBox: `${minX - pad} ${minY - pad} ${width} ${height}`,
-  };
-}
-
-export const SingleLineDiagram: React.FC<DiagramProps> = ({
+export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   buses,
   lines,
   trippedLines,
@@ -201,133 +41,260 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
   modelName,
 }) => {
   const [viewMode, setViewMode] = useState<'schematic' | 'geographic'>('schematic');
-  const [zoomLevel, setZoomLevel] = useState(1.0);
-  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
 
-  // Mouse & Touch Drag States
-  const [isMouseDown, setIsMouseDown] = useState(false);
-  const [mouseStart, setMouseStart] = useState({ x: 0, y: 0 });
+  // Infinite Canvas Pan & Zoom State
+  const [scale, setScale] = useState<number>(1.0);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  const touchState = useRef<{
-    initialDist: number;
-    initialZoom: number;
-    startPan: Point;
-    startTouch: Point;
-    isPinching: boolean;
-  }>({
-    initialDist: 0,
-    initialZoom: 1.0,
-    startPan: { x: 0, y: 0 },
-    startTouch: { x: 0, y: 0 },
-    isPinching: false,
-  });
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
 
-  // Procedural CAD Engine Execution
-  const { positions: nodePositions, viewBox } = useMemo(() => {
-    return buildProceduralCADLayout(buses, lines, viewMode);
-  }, [buses, lines, viewMode]);
-
-  // Safe Position Lookup
-  const getPos = (busId: number): Point | null => {
-    return nodePositions[String(busId)] || nodePositions[busId] || null;
+  // Auto-fit view when switching models or views
+  const resetViewport = () => {
+    if (viewMode === 'schematic') {
+      setScale(0.85);
+      setPan({ x: 40, y: 30 });
+    } else {
+      setScale(1.0);
+      setPan({ x: 0, y: 0 });
+    }
   };
 
-  // Zoom & Pan Handlers
-  const handleZoomIn = () => setZoomLevel((z) => Math.min(z + 0.2, 4.0));
-  const handleZoomOut = () => setZoomLevel((z) => Math.max(z - 0.2, 0.35));
-  const handleReset = () => {
-    setZoomLevel(1.0);
-    setPanOffset({ x: 0, y: 0 });
-    onReset();
+  useEffect(() => {
+    resetViewport();
+  }, [viewMode, modelName]);
+
+  // Mouse Pan Handlers
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return; // Only primary button
+    setIsDragging(true);
+    setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
   };
 
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging) return;
+    setPan({
+      x: e.clientX - dragStart.x,
+      y: e.clientY - dragStart.y,
+    });
+  };
+
+  const handleMouseUp = () => setIsDragging(false);
+
+  // Wheel Zoom Handler
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
-    const delta = e.deltaY < 0 ? 0.15 : -0.15;
-    setZoomLevel((z) => Math.min(Math.max(z + delta, 0.35), 4.0));
+    const zoomFactor = e.deltaY < 0 ? 1.12 : 0.88;
+    setScale((prev) => Math.min(3.5, Math.max(0.3, prev * zoomFactor)));
   };
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    setIsMouseDown(true);
-    setMouseStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
-  };
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isMouseDown) return;
-    setPanOffset({ x: e.clientX - mouseStart.x, y: e.clientY - mouseStart.y });
-  };
-  const handleMouseUp = () => setIsMouseDown(false);
+  // =========================================================================
+  // 1. SCHEMATIC CAD LAYOUT SYNTHESIS (Spaced Out Manhattan Coordinates)
+  // =========================================================================
+  const schematicCoordinates = useMemo(() => {
+    const coords = new Map<number, { x: number; y: number; isGen: boolean }>();
+    if (!buses || buses.length === 0) return coords;
 
-  // Mobile Pinch-to-Zoom & Pan Handlers
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (e.touches.length === 1) {
-      touchState.current.isPinching = false;
-      touchState.current.startPan = { ...panOffset };
-      touchState.current.startTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-    } else if (e.touches.length === 2) {
-      touchState.current.isPinching = true;
-      const dx = e.touches[1].clientX - e.touches[0].clientX;
-      const dy = e.touches[1].clientY - e.touches[0].clientY;
-      touchState.current.initialDist = Math.hypot(dx, dy);
-      touchState.current.initialZoom = zoomLevel;
-    }
-  };
+    // Distinguish generators vs bulk vs distribution substations
+    const genBuses: BusData[] = [];
+    const mainBuses: BusData[] = [];
+    const subBuses: BusData[] = [];
 
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (e.touches.length === 1 && !touchState.current.isPinching) {
-      const dx = e.touches[0].clientX - touchState.current.startTouch.x;
-      const dy = e.touches[0].clientY - touchState.current.startTouch.y;
-      setPanOffset({
-        x: touchState.current.startPan.x + dx,
-        y: touchState.current.startPan.y + dy,
-      });
-    } else if (e.touches.length === 2) {
-      const dx = e.touches[1].clientX - e.touches[0].clientX;
-      const dy = e.touches[1].clientY - e.touches[0].clientY;
-      const currentDist = Math.hypot(dx, dy);
-      if (touchState.current.initialDist > 0) {
-        const ratio = currentDist / touchState.current.initialDist;
-        setZoomLevel(Math.min(Math.max(touchState.current.initialZoom * ratio, 0.35), 4.0));
+    buses.forEach((b) => {
+      const isGen =
+        b.p_mw < -20 ||
+        b.name.toLowerCase().includes('gs') ||
+        b.name.toLowerCase().includes('ps') ||
+        b.name.toLowerCase().includes('slack') ||
+        b.name.toLowerCase().includes('ipp') ||
+        b.name.toLowerCase().includes('kainji') ||
+        b.name.toLowerCase().includes('egbin') ||
+        b.name.toLowerCase().includes('shiroro') ||
+        b.name.toLowerCase().includes('delta');
+
+      if (isGen) genBuses.push(b);
+      else if ((b.vn_kv && b.vn_kv >= 330) || b.p_mw > 100) mainBuses.push(b);
+      else subBuses.push(b);
+    });
+
+    const xPitch = 260; // Wide horizontal spacing (breathing room)
+    const yTop = 130;
+    const yMid = 340;
+    const yBottom = 570;
+
+    // Tier 1: Generating Stations
+    genBuses.forEach((b, i) => {
+      coords.set(b.id, { x: 140 + i * xPitch, y: yTop, isGen: true });
+    });
+
+    // Tier 2: 330 kV Bulk Transmission Backbone
+    mainBuses.forEach((b, i) => {
+      coords.set(b.id, { x: 140 + (i % 8) * xPitch, y: yMid + Math.floor(i / 8) * 160, isGen: false });
+    });
+
+    // Tier 3: Regional Sub-transmission & Infeed Nodes
+    subBuses.forEach((b, i) => {
+      coords.set(b.id, { x: 180 + (i % 7) * (xPitch * 1.1), y: yBottom + Math.floor(i / 7) * 160, isGen: false });
+    });
+
+    return coords;
+  }, [buses]);
+
+  // =========================================================================
+  // 2. GEOGRAPHIC NIGERIAN VECTOR MAP SYNTHESIS (Dispersed Coordinates)
+  // =========================================================================
+  const geoCoordinates = useMemo(() => {
+    const coords = new Map<number, { x: number; y: number }>();
+    if (!buses || buses.length === 0) return coords;
+
+    // Geographic anchors for major hubs in Nigeria (lat/long approximate map)
+    const GEO_ANCHORS: Record<string, { x: number; y: number }> = {
+      kainji: { x: 380, y: 320 },
+      jebba: { x: 420, y: 410 },
+      shiroro: { x: 620, y: 340 },
+      katampe: { x: 740, y: 380 },
+      abuja: { x: 760, y: 390 },
+      osogbo: { x: 450, y: 550 },
+      ikeja: { x: 340, y: 690 },
+      egbin: { x: 400, y: 700 },
+      benin: { x: 600, y: 640 },
+      delta: { x: 640, y: 760 },
+      afam: { x: 780, y: 780 },
+      alaoji: { x: 800, y: 740 },
+      kaduna: { x: 680, y: 260 },
+      kano: { x: 790, y: 160 },
+      jos: { x: 890, y: 340 },
+      gombe: { x: 1080, y: 300 },
+      yola: { x: 1220, y: 460 },
+      makurdi: { x: 880, y: 540 },
+      onitsha: { x: 720, y: 670 },
+      calabar: { x: 920, y: 770 },
+    };
+
+    buses.forEach((b, idx) => {
+      const name = b.name.toLowerCase();
+      let matched = null;
+      for (const [key, pos] of Object.entries(GEO_ANCHORS)) {
+        if (name.includes(key)) {
+          matched = pos;
+          break;
+        }
       }
-    }
+
+      if (matched) {
+        // Apply slight offset so multi-bus stations don't stack
+        const jitterX = ((idx % 3) - 1) * 28;
+        const jitterY = (((idx * 2) % 3) - 1) * 24;
+        coords.set(b.id, { x: matched.x * 1.5 + jitterX, y: matched.y * 1.3 + jitterY });
+      } else {
+        // Disperse unmapped regional buses into spatial grid
+        const col = idx % 8;
+        const row = Math.floor(idx / 8);
+        coords.set(b.id, { x: 200 + col * 210, y: 180 + row * 160 });
+      }
+    });
+
+    return coords;
+  }, [buses]);
+
+  // =========================================================================
+  // EXPORT CAPABILITIES (PNG, SVG, CSV)
+  // =========================================================================
+  const exportAsPNG = () => {
+    if (!svgRef.current) return;
+    const serializer = new XMLSerializer();
+    const svgStr = serializer.serializeToString(svgRef.current);
+    const canvas = document.createElement('canvas');
+    canvas.width = 2400;
+    canvas.height = 1400;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const img = new Image();
+    const svgBlob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+
+    img.onload = () => {
+      ctx.fillStyle = '#090d16';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const pngUrl = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = pngUrl;
+      a.download = `NESI_Single_Line_Diagram_${viewMode}.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
   };
 
-  const handleTouchEnd = () => {
-    touchState.current.isPinching = false;
+  const exportAsSVG = () => {
+    if (!svgRef.current) return;
+    const serializer = new XMLSerializer();
+    const source = serializer.serializeToString(svgRef.current);
+    const blob = new Blob([source], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `NESI_Single_Line_Diagram_${viewMode}.svg`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const selectedBusLines = useMemo(() => {
+  const exportAsCSV = () => {
+    let csv = 'ELEMENT,ID,NAME,FROM_BUS,TO_BUS,FLOW_MW,LOADING_PERCENT,VOLTAGE_PU,STATUS\n';
+    buses.forEach((b) => {
+      csv += `BUS,#${b.id},"${b.name}",-,-,${b.p_mw},-,${b.v_pu.toFixed(3)},${b.v_pu < 0.95 ? 'UNDERVOLTAGE' : b.v_pu > 1.05 ? 'OVERVOLTAGE' : 'COMPLIANT'}\n`;
+    });
+    lines.forEach((l) => {
+      const isTripped = trippedLines.includes(l.id);
+      csv += `LINE,#${l.id},"${l.name}",#${l.from_bus},#${l.to_bus},${isTripped ? 0 : l.flow_mw.toFixed(1)},${isTripped ? 0 : l.loading_percent.toFixed(1)}%,-,${isTripped ? 'TRIPPED' : 'IN_SERVICE'}\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `NESI_Grid_Topology_Audit_${modelName}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Connected corridors for the inspector sidebar
+  const connectedLines = useMemo(() => {
     if (!selectedBus) return [];
     return lines.filter((l) => l.from_bus === selectedBus.id || l.to_bus === selectedBus.id);
   }, [selectedBus, lines]);
 
   return (
-    <div className="space-y-4 max-w-6xl mx-auto">
-      {/* Top Toolbar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="space-y-4 max-w-7xl mx-auto">
+      {/* Header Controls Bar */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-3 border-b border-slate-200">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-lg font-bold text-[#500b50]">
+            <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
               Single-Line Diagram (CAD & Vector Map)
             </h2>
-            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-[#500b50] flex items-center gap-1">
-              <Sparkles className="h-3 w-3" />
-              <span>Manhattan CAD</span>
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-[#500b50] border border-[#500b50]/20">
+              {viewMode === 'schematic' ? 'Manhattan CAD' : 'Geographic Map'}
             </span>
           </div>
-          <p className="text-xs text-slate-500">
-            {buses.length} Substations | {lines.length} Transmission Branches | 90° Orthogonal CAD Channels
+          <p className="text-xs text-slate-500 mt-0.5">
+            {buses.length} Substations • {lines.length} Transmission Corridors •{' '}
+            {trippedLines.length > 0 ? `${trippedLines.length} Lines Tripped ($N-1$)` : 'All Breakers Closed'}
           </p>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
+        {/* View & Export Controls */}
+        <div className="flex flex-wrap items-center gap-2">
           {/* View Mode Toggle */}
-          <div className="flex rounded border border-slate-300 bg-white p-0.5 text-xs shadow-xs">
+          <div className="flex rounded-xl border border-slate-200 bg-white p-1 text-xs shadow-xs font-bold">
             <button
               onClick={() => setViewMode('schematic')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded font-bold transition ${
-                viewMode === 'schematic'
-                  ? 'bg-[#500b50] text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition ${
+                viewMode === 'schematic' ? 'bg-[#500b50] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <Layers className="h-3.5 w-3.5" />
@@ -335,186 +302,212 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
             </button>
             <button
               onClick={() => setViewMode('geographic')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded font-bold transition ${
-                viewMode === 'geographic'
-                  ? 'bg-[#500b50] text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition ${
+                viewMode === 'geographic' ? 'bg-[#500b50] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <MapPin className="h-3.5 w-3.5" />
+              <MapPin className="h-3.5 w-3.5 text-rose-500" />
               <span>Geographic Map</span>
             </button>
           </div>
 
-          {/* Zoom and Pan Controls */}
-          <div className="flex items-center rounded border border-slate-300 bg-white p-0.5 text-xs shadow-xs">
+          {/* Zoom & Navigation Actions */}
+          <div className="flex items-center rounded-xl border border-slate-200 bg-white p-1 shadow-xs text-xs font-mono">
             <button
-              onClick={handleZoomIn}
-              className="p-1.5 hover:bg-slate-100 rounded text-slate-700"
-              title="Zoom In (+)"
-            >
-              <ZoomIn className="h-4 w-4" />
-            </button>
-            <span className="px-2 font-mono text-[11px] font-bold text-slate-600">
-              {Math.round(zoomLevel * 100)}%
-            </span>
-            <button
-              onClick={handleZoomOut}
-              className="p-1.5 hover:bg-slate-100 rounded text-slate-700"
-              title="Zoom Out (-)"
+              onClick={() => setScale((s) => Math.max(0.3, s * 0.85))}
+              className="p-1.5 hover:bg-slate-100 rounded text-slate-600"
+              title="Zoom Out"
             >
               <ZoomOut className="h-4 w-4" />
             </button>
+            <span className="px-2 font-bold text-slate-700">{Math.round(scale * 100)}%</span>
             <button
-              onClick={handleReset}
-              className="p-1.5 hover:bg-slate-100 rounded border-l ml-0.5 text-slate-700"
-              title="Reset View"
+              onClick={() => setScale((s) => Math.min(3.5, s * 1.15))}
+              className="p-1.5 hover:bg-slate-100 rounded text-slate-600"
+              title="Zoom In"
+            >
+              <ZoomIn className="h-4 w-4" />
+            </button>
+            <button
+              onClick={resetViewport}
+              className="p-1.5 hover:bg-slate-100 rounded text-slate-600 ml-1 border-l border-slate-100"
+              title="Fit to Screen"
             >
               <Maximize2 className="h-3.5 w-3.5" />
             </button>
           </div>
 
+          {/* Export Dropdown Group */}
+          <div className="flex items-center rounded-xl border border-slate-200 bg-white p-1 shadow-xs text-xs">
+            <button
+              onClick={exportAsPNG}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-slate-100 rounded font-bold text-slate-700 transition"
+              title="Export high-resolution PNG"
+            >
+              <ImageIcon className="h-3.5 w-3.5 text-cyan-600" />
+              <span>PNG</span>
+            </button>
+            <button
+              onClick={exportAsSVG}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-slate-100 rounded font-bold text-slate-700 transition border-l border-slate-100"
+              title="Export scalable SVG"
+            >
+              <Download className="h-3.5 w-3.5 text-emerald-600" />
+              <span>SVG</span>
+            </button>
+            <button
+              onClick={exportAsCSV}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-slate-100 rounded font-bold text-slate-700 transition border-l border-slate-100"
+              title="Export CSV topology report"
+            >
+              <FileSpreadsheet className="h-3.5 w-3.5 text-amber-600" />
+              <span>CSV</span>
+            </button>
+          </div>
+
+          {/* Reset Baseline */}
           <button
-            onClick={handleReset}
-            className="flex items-center gap-1 rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-xs"
+            onClick={onReset}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 shadow-xs transition"
           >
-            <RotateCcw className="h-3.5 w-3.5 text-slate-500" />
+            <RotateCcw className="h-3.5 w-3.5" />
             <span>Reset Grid</span>
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-        {/* Vector Viewport Canvas */}
+      {/* Main CAD Workspace Layout (Expanded to 750px Height) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        {/* Vector Canvas Container */}
         <div
-          className="lg:col-span-2 rounded-lg border border-slate-800 bg-[#090e1a] p-4 relative overflow-hidden flex flex-col items-center justify-center shadow-lg select-none"
-          style={{ touchAction: 'none' }}
-          onWheel={handleWheel}
+          ref={containerRef}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
+          onWheel={handleWheel}
+          className={`lg:col-span-8 xl:col-span-9 h-[750px] w-full rounded-2xl border border-slate-800 bg-[#090d16] relative overflow-hidden shadow-2xl select-none ${
+            isDragging ? 'cursor-grabbing' : 'cursor-grab'
+          }`}
         >
-          <svg viewBox={viewBox} className="w-full h-[430px] sm:h-[490px]">
-            <defs>
-              <filter id="bus-glow" x="-20%" y="-20%" width="140%" height="140%">
-                <feGaussianBlur stdDeviation="3" result="glow" />
-                <feMerge>
-                  <feMergeNode in="glow" />
-                  <feMergeNode in="SourceGraphic" />
-                </feMerge>
-              </filter>
-            </defs>
+          {/* Subtle Grid Watermark & Compass */}
+          <div className="absolute top-4 left-4 z-10 flex items-center gap-2 pointer-events-none opacity-40">
+            <Zap className="h-4 w-4 text-emerald-400" />
+            <span className="text-[11px] font-mono tracking-widest text-slate-300 uppercase">
+              330kV Bulk Synchronous Grid CAD
+            </span>
+          </div>
 
-            <g transform={`translate(${panOffset.x}, ${panOffset.y}) scale(${zoomLevel})`}>
-              {/* Transmission Corridors (Manhattan Orthogonal CAD Routing) */}
+          <div className="absolute bottom-4 right-4 z-10 pointer-events-none flex items-center gap-2 text-[10px] font-mono text-slate-500">
+            <span>Pinch / Scroll to Zoom • Drag to Pan</span>
+          </div>
+
+          {/* SVG Vector Workspace */}
+          <svg
+            ref={svgRef}
+            className="w-full h-full"
+            style={{ width: '100%', height: '100%' }}
+          >
+            <g transform={`translate(${pan.x}, ${pan.y}) scale(${scale})`}>
+              {/* Subtle background coordinate grid dots */}
+              <defs>
+                <pattern id="cadGrid" width="60" height="60" patternUnits="userSpaceOnUse">
+                  <circle cx="2" cy="2" r="1" fill="#1e293b" opacity="0.6" />
+                </pattern>
+              </defs>
+              <rect x="-3000" y="-3000" width="9000" height="9000" fill="url(#cadGrid)" pointerEvents="none" />
+
+              {/* ========================================================================= */}
+              {/* 1. TRANSMISSION LINES (CAD PATHS & ORTHOGONAL ROUTING)                     */}
+              {/* ========================================================================= */}
               {lines.map((line) => {
-                const pFrom = getPos(line.from_bus);
-                const pTo = getPos(line.to_bus);
-                if (!pFrom || !pTo) return null;
+                const posA = viewMode === 'schematic' ? schematicCoordinates.get(line.from_bus) : geoCoordinates.get(line.from_bus);
+                const posB = viewMode === 'schematic' ? schematicCoordinates.get(line.to_bus) : geoCoordinates.get(line.to_bus);
+                if (!posA || !posB) return null;
 
                 const isTripped = trippedLines.includes(line.id);
-                const strokeColor = isTripped
-                  ? '#f43f5e'
-                  : line.loading_percent > 85
-                  ? '#fbbf24'
-                  : '#10b981';
+                const isOverload = line.loading_percent > 100;
+                const lineColor = isTripped ? '#ef4444' : isOverload ? '#f97316' : '#10b981';
 
-                let pathData = '';
-                let midPoint: Point = { x: 0, y: 0 };
+                // Midpoint for Flow Pill
+                const midX = (posA.x + posB.x) / 2;
+                const midY = (posA.y + posB.y) / 2;
 
+                // Orthogonal routing for Schematic, Direct Vector for Geo
+                let pathString = '';
                 if (viewMode === 'schematic') {
-                  const busHalfWidth = 45;
-                  const dy = pTo.y - pFrom.y;
-                  const dx = pTo.x - pFrom.x;
-
-                  if (Math.abs(dy) < 30) {
-                    // Same Tier: loop into horizontal channel below
-                    const yLoop = pFrom.y + 40;
-                    pathData = `M ${pFrom.x} ${pFrom.y + 6} L ${pFrom.x} ${yLoop} L ${pTo.x} ${yLoop} L ${pTo.x} ${pTo.y + 6}`;
-                    midPoint = { x: (pFrom.x + pTo.x) / 2, y: yLoop };
-                  } else {
-                    // Different Tiers: orthogonal dogleg
-                    const fromEdgeY = dy > 0 ? pFrom.y + 6 : pFrom.y - 6;
-                    const toEdgeY = dy > 0 ? pTo.y - 6 : pTo.y + 6;
-                    const yChannel = (pFrom.y + pTo.y) / 2;
-
-                    pathData = `M ${pFrom.x} ${fromEdgeY} L ${pFrom.x} ${yChannel} L ${pTo.x} ${yChannel} L ${pTo.x} ${toEdgeY}`;
-                    midPoint = { x: (pFrom.x + pTo.x) / 2, y: yChannel };
-                  }
+                  const deltaY = posB.y - posA.y;
+                  pathString = `M ${posA.x} ${posA.y} C ${posA.x} ${posA.y + deltaY * 0.45}, ${posB.x} ${posB.y - deltaY * 0.45}, ${posB.x} ${posB.y}`;
                 } else {
-                  // Direct Geographic Corridor
-                  pathData = `M ${pFrom.x} ${pFrom.y} L ${pTo.x} ${pTo.y}`;
-                  midPoint = { x: (pFrom.x + pTo.x) / 2, y: (pFrom.y + pTo.y) / 2 };
+                  pathString = `M ${posA.x} ${posA.y} L ${posB.x} ${posB.y}`;
                 }
 
                 return (
-                  <g key={`corridor-${line.id}`} className="cursor-pointer group" onClick={() => toggleLine(line.id)}>
+                  <g key={`line-${line.id}`} className="group cursor-pointer" onClick={() => toggleLine(line.id)}>
+                    {/* Invisible Thick Hover Target */}
+                    <path d={pathString} fill="none" stroke="transparent" strokeWidth="18" />
+
+                    {/* Visible Line */}
                     <path
-                      d={pathData}
+                      d={pathString}
                       fill="none"
-                      stroke={strokeColor}
-                      strokeWidth={isTripped ? 2.0 : 2.8}
-                      strokeDasharray={isTripped ? '6 6' : 'none'}
-                      className="transition-colors group-hover:stroke-white"
+                      stroke={lineColor}
+                      strokeWidth={isTripped ? 2 : Math.max(2, Math.min(5, (line.loading_percent / 100) * 4))}
+                      strokeDasharray={isTripped ? '6 4' : undefined}
+                      strokeOpacity={isTripped ? 0.4 : 0.85}
+                      className="transition-all duration-150 group-hover:stroke-cyan-300 group-hover:stroke-width-4"
                     />
 
-                    {/* N-1 Breaker Box */}
-                    <g transform={`translate(${midPoint.x}, ${midPoint.y})`} className="transition-transform group-hover:scale-125">
+                    {/* Flow MW Tag with Dark Shield Backdrop (No collisions) */}
+                    <g transform={`translate(${midX}, ${midY})`}>
                       <rect
-                        x="-7"
-                        y="-7"
-                        width="14"
-                        height="14"
-                        rx="2"
-                        fill={isTripped ? '#4c0519' : '#064e3b'}
-                        stroke={isTripped ? '#f43f5e' : '#10b981'}
-                        strokeWidth="1.8"
+                        x="-30"
+                        y="-9"
+                        width="60"
+                        height="18"
+                        rx="4"
+                        fill="#090d16"
+                        stroke={lineColor}
+                        strokeWidth="1"
+                        fillOpacity="0.9"
                       />
+                      <text
+                        x="0"
+                        y="3.5"
+                        textAnchor="middle"
+                        fontSize="9"
+                        fill={isTripped ? '#f87171' : isOverload ? '#fdba74' : '#a7f3d0'}
+                        fontFamily="monospace"
+                        fontWeight="bold"
+                      >
+                        {isTripped ? 'TRIPPED' : `${line.flow_mw.toFixed(1)} MW`}
+                      </text>
                     </g>
-
-                    {/* Flow MW Tag */}
-                    {!isTripped && (
-                      <g transform={`translate(${midPoint.x}, ${midPoint.y - 14})`}>
-                        <rect x="-24" y="-8" width="48" height="15" rx="3" fill="#090e1a" stroke="#334155" strokeWidth="1" />
-                        <text x="0" y="3.5" fill="#f8fafc" fontSize="8" fontFamily="monospace" fontWeight="bold" textAnchor="middle">
-                          {line.flow_mw} MW
-                        </text>
-                      </g>
-                    )}
                   </g>
                 );
               })}
 
-              {/* Substations, Busbars, Generators & Load Symbols */}
+              {/* ========================================================================= */}
+              {/* 2. SUBSTATION BUSES (Generators, Busbars & Loads)                         */}
+              {/* ========================================================================= */}
               {buses.map((bus) => {
-                const pos = getPos(bus.id);
+                const pos = viewMode === 'schematic' ? schematicCoordinates.get(bus.id) : geoCoordinates.get(bus.id);
                 if (!pos) return null;
 
                 const isSelected = selectedBus?.id === bus.id;
                 const isUnder = bus.v_pu < 0.95;
                 const isOver = bus.v_pu > 1.05;
-                const busColor = isUnder ? '#f43f5e' : isOver ? '#fbbf24' : '#10b981';
+                const busColor = isUnder ? '#f43f5e' : isOver ? '#f59e0b' : '#10b981';
 
-                const hasGen =
-                  bus.is_gen ||
-                  bus.p_mw < -1.0 ||
+                const isGen =
+                  bus.p_mw < -20 ||
                   bus.name.toLowerCase().includes('gs') ||
-                  bus.name.toLowerCase().includes('hydro') ||
-                  bus.name.toLowerCase().includes('ps');
-
-                const hasLoad =
-                  bus.is_load ||
-                  bus.p_mw > 1.0 ||
-                  bus.name.toLowerCase().includes('load') ||
-                  bus.name.toLowerCase().includes('ts');
+                  bus.name.toLowerCase().includes('ps') ||
+                  bus.name.toLowerCase().includes('slack');
 
                 return (
                   <g
-                    key={`busbar-${bus.id}`}
+                    key={`bus-${bus.id}`}
                     transform={`translate(${pos.x}, ${pos.y})`}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -522,85 +515,78 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
                     }}
                     className="cursor-pointer group"
                   >
-                    {/* Synchronous Generator Feeder Symbol */}
-                    {hasGen && viewMode === 'schematic' && (
+                    {/* Selection Beacon */}
+                    {isSelected && (
+                      <circle cx="0" cy="0" r="42" fill="#a855f7" fillOpacity="0.2" stroke="#c084fc" strokeWidth="2" />
+                    )}
+
+                    {/* Generator Icon on Top of Bus (If applicable) */}
+                    {isGen && (
                       <g transform="translate(0, -32)">
-                        <line x1="0" y1="26" x2="0" y2="11" stroke="#94a3b8" strokeWidth="2" />
-                        <circle r="11" fill="#090e1a" stroke="#38bdf8" strokeWidth="2" />
-                        <path d="M -5 0 Q -2.5 -4 0 0 Q 2.5 4 5 0" fill="none" stroke="#38bdf8" strokeWidth="1.8" />
-                        <text x="0" y="-14" fill="#38bdf8" fontSize="8" fontFamily="monospace" fontWeight="bold" textAnchor="middle">
-                          {Math.abs(bus.p_mw) > 0 ? `${Math.abs(bus.p_mw).toFixed(0)}MW` : 'GEN'}
-                        </text>
-                      </g>
-                    )}
-
-                    {/* Load Feeder Arrow Symbol */}
-                    {hasLoad && !hasGen && viewMode === 'schematic' && (
-                      <g transform="translate(0, 18)">
-                        <line x1="0" y1="-12" x2="0" y2="6" stroke="#94a3b8" strokeWidth="2" />
-                        <path d="M 0 14 L -5 6 L 5 6 Z" fill="#fbbf24" stroke="#fbbf24" />
-                        <text x="0" y="24" fill="#fbbf24" fontSize="8" fontFamily="monospace" fontWeight="bold" textAnchor="middle">
-                          {bus.p_mw > 0 ? `${bus.p_mw.toFixed(0)}MW` : 'LOAD'}
-                        </text>
-                      </g>
-                    )}
-
-                    {/* Copper Busbar */}
-                    {viewMode === 'schematic' ? (
-                      <>
-                        <rect
-                          x="-45"
-                          y="-5.5"
-                          width="90"
-                          height="11"
-                          rx="2.5"
-                          fill={isSelected ? '#38bdf8' : busColor}
-                          stroke="#090e1a"
+                        <circle cx="0" cy="0" r="14" fill="#090d16" stroke="#38bdf8" strokeWidth="2" />
+                        <path
+                          d="M -7 0 Q -3.5 -6 0 0 T 7 0"
+                          fill="none"
+                          stroke="#38bdf8"
                           strokeWidth="2"
-                          filter={isSelected ? 'url(#bus-glow)' : undefined}
-                          className="transition-all group-hover:brightness-125"
                         />
-                        {/* Substation Name Label */}
                         <text
                           x="0"
-                          y={hasLoad && !hasGen ? -12 : 22}
-                          fill="#f8fafc"
-                          fontSize="9.5"
-                          fontFamily="sans-serif"
-                          fontWeight="bold"
+                          y="-18"
                           textAnchor="middle"
-                        >
-                          {bus.name.split(' ')[0]}
-                        </text>
-                        {/* Per-Unit Voltage */}
-                        <text
-                          x="0"
-                          y={hasLoad && !hasGen ? -22 : 32}
-                          fill={busColor}
-                          fontSize="8.5"
+                          fontSize="9"
+                          fill="#38bdf8"
                           fontFamily="monospace"
                           fontWeight="bold"
-                          textAnchor="middle"
                         >
-                          {bus.v_pu.toFixed(3)} pu
+                          {Math.abs(bus.p_mw).toFixed(0)} MW
                         </text>
-                      </>
-                    ) : (
-                      // Geographic Node
-                      <>
-                        <circle
-                          r={isSelected ? 11 : 7}
-                          fill={isSelected ? '#38bdf8' : busColor}
-                          stroke="#090e1a"
-                          strokeWidth="2"
-                          filter={isSelected ? 'url(#bus-glow)' : undefined}
-                          className="transition-all group-hover:scale-125"
-                        />
-                        <text x="12" y="4" fill="#f8fafc" fontSize="8.5" fontFamily="sans-serif" fontWeight="bold">
-                          {bus.name.split(' ')[0]}
-                        </text>
-                      </>
+                      </g>
                     )}
+
+                    {/* Heavy Copper/Aluminum Busbar Element */}
+                    <line
+                      x1="-40"
+                      y1="0"
+                      x2="40"
+                      y2="0"
+                      stroke={busColor}
+                      strokeWidth={isSelected ? '8' : '6'}
+                      strokeLinecap="round"
+                      className="transition-all duration-150 group-hover:stroke-purple-300"
+                    />
+
+                    {/* Substation Name Label (Clean backdrop with stroke outline) */}
+                    <text
+                      x="0"
+                      y="16"
+                      textAnchor="middle"
+                      fontSize="10"
+                      fontWeight="bold"
+                      fill="#ffffff"
+                      fontFamily="sans-serif"
+                      stroke="#090d16"
+                      strokeWidth="3"
+                      style={{ paintOrder: 'stroke fill' }}
+                    >
+                      {bus.name}
+                    </text>
+
+                    {/* Voltage Reading Pill */}
+                    <text
+                      x="0"
+                      y="29"
+                      textAnchor="middle"
+                      fontSize="9"
+                      fontFamily="monospace"
+                      fontWeight="bold"
+                      fill={busColor}
+                      stroke="#090d16"
+                      strokeWidth="2.5"
+                      style={{ paintOrder: 'stroke fill' }}
+                    >
+                      {bus.v_pu.toFixed(3)} pu
+                    </text>
                   </g>
                 );
               })}
@@ -608,109 +594,102 @@ export const SingleLineDiagram: React.FC<DiagramProps> = ({
           </svg>
         </div>
 
-        {/* Substation Inspector Side Panel */}
-        <div className="rounded-lg border border-slate-200 bg-white p-5 flex flex-col justify-between shadow-xs">
-          <div>
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-3">
-              <h3 className="text-sm font-bold text-[#500b50] flex items-center gap-2">
-                <Zap className="h-4 w-4" /> Substation Inspector
-              </h3>
-              <button
-                onClick={() => window.print()}
-                className="text-[11px] text-slate-500 hover:text-[#500b50] flex items-center gap-1 font-semibold"
-                title="Print Audit"
-              >
-                <Printer className="h-3.5 w-3.5" />
-                <span>Audit</span>
-              </button>
+        {/* Substation Inspector Drawer Panel */}
+        <div className="lg:col-span-4 xl:col-span-3 space-y-4">
+          <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <Info className="h-4 w-4 text-[#500b50]" />
+                <h3 className="text-sm font-bold text-slate-900">Substation Inspector</h3>
+              </div>
+              <span className="text-[10px] font-mono text-slate-400">Live Telemetry</span>
             </div>
 
             {selectedBus ? (
-              <div className="space-y-3 text-xs">
-                <div className="p-3 rounded bg-slate-50 border border-slate-200">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <span className="text-slate-400 block text-[10px] uppercase font-bold">Substation</span>
-                      <span className="font-bold text-slate-900 text-sm">{selectedBus.name}</span>
-                    </div>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#f5eff6] text-[#500b50] border border-[#500b50]/20">
-                      {selectedBus.vn_kv || 330} kV
-                    </span>
-                  </div>
-                  <span className="block text-[11px] text-slate-500 mt-1">{selectedBus.zone} Regional Zone</span>
+              <div className="mt-4 space-y-4">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
+                    Station Name
+                  </span>
+                  <h4 className="text-base font-black text-slate-900">{selectedBus.name}</h4>
+                  <span className="text-xs text-slate-500 font-mono">
+                    Bus #{selectedBus.id} • {selectedBus.zone || '330kV Bulk Substation'}
+                  </span>
                 </div>
 
-                {/* Telemetry Matrix */}
-                <div className="grid grid-cols-2 gap-2 font-mono">
-                  <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
-                    <span className="text-slate-400 block text-[10px]">Voltage (|V|)</span>
-                    <span className={`font-bold ${selectedBus.v_pu < 0.95 ? 'text-rose-600' : 'text-emerald-700'}`}>
+                <div className="grid grid-cols-2 gap-3 text-xs font-mono">
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                    <span className="text-[10px] text-slate-400 block font-sans">Voltage Profile</span>
+                    <span
+                      className={`text-base font-bold ${
+                        selectedBus.v_pu < 0.95
+                          ? 'text-rose-600'
+                          : selectedBus.v_pu > 1.05
+                          ? 'text-amber-600'
+                          : 'text-emerald-700'
+                      }`}
+                    >
                       {selectedBus.v_pu.toFixed(3)} pu
                     </span>
                   </div>
-                  <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
-                    <span className="text-slate-400 block text-[10px]">Phase Angle</span>
-                    <span className="font-bold text-slate-800">{selectedBus.va_deg}°</span>
+
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                    <span className="text-[10px] text-slate-400 block font-sans">Phase Angle</span>
+                    <span className="text-base font-bold text-slate-800">{selectedBus.va_deg.toFixed(2)}°</span>
                   </div>
-                  <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
-                    <span className="text-slate-400 block text-[10px]">Active Power</span>
-                    <span className="font-bold text-[#500b50]">{selectedBus.p_mw} MW</span>
+
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                    <span className="text-[10px] text-slate-400 block font-sans">Active Power</span>
+                    <span className="text-base font-bold text-[#500b50]">{selectedBus.p_mw.toFixed(1)} MW</span>
                   </div>
-                  <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
-                    <span className="text-slate-400 block text-[10px]">Reactive Power</span>
-                    <span className="font-bold text-amber-700">{selectedBus.q_mvar} MVAR</span>
+
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                    <span className="text-[10px] text-slate-400 block font-sans">Reactive Power</span>
+                    <span className="text-base font-bold text-slate-800">{selectedBus.q_mvar.toFixed(1)} MVAR</span>
                   </div>
                 </div>
 
-                {/* Connected Corridors with Inline Breaker Toggles */}
-                {selectedBusLines.length > 0 && (
-                  <div className="pt-2">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
-                      Connected Corridors ({selectedBusLines.length})
-                    </span>
-                    <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                      {selectedBusLines.map((l) => {
-                        const isTripped = trippedLines.includes(l.id);
-                        return (
-                          <div
-                            key={`connected-${l.id}`}
-                            className="flex items-center justify-between p-2 rounded border border-slate-100 bg-slate-50 text-[11px]"
-                          >
-                            <span className="font-medium text-slate-800 truncate max-w-[130px]" title={l.name}>
-                              {l.name}
+                {/* Connected Lines Interconnects */}
+                <div className="pt-2">
+                  <span className="text-xs font-bold text-slate-700 block mb-2">
+                    Connected Corridors ({connectedLines.length})
+                  </span>
+                  <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                    {connectedLines.map((line) => {
+                      const isTripped = trippedLines.includes(line.id);
+                      return (
+                        <div
+                          key={line.id}
+                          className={`p-2.5 rounded-xl border flex items-center justify-between text-xs transition ${
+                            isTripped ? 'bg-rose-50/50 border-rose-200' : 'bg-slate-50 border-slate-200'
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1 pr-2">
+                            <span className="font-bold text-slate-900 block truncate">{line.name}</span>
+                            <span className="text-[10px] text-slate-500 font-mono">
+                              {line.flow_mw.toFixed(1)} MW ({line.loading_percent.toFixed(1)}% load)
                             </span>
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono text-[10px] font-bold text-slate-600">
-                                {l.loading_percent}%
-                              </span>
-                              <button
-                                onClick={() => toggleLine(l.id)}
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                  !isTripped ? 'bg-rose-100 text-rose-700 hover:bg-rose-200' : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
-                                }`}
-                              >
-                                {!isTripped ? 'Trip' : 'Close'}
-                              </button>
-                            </div>
                           </div>
-                        );
-                      })}
-                    </div>
+                          <button
+                            onClick={() => toggleLine(line.id)}
+                            className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition ${
+                              isTripped ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'
+                            }`}
+                          >
+                            {isTripped ? 'Reclose' : 'Trip'}
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
-                )}
+                </div>
               </div>
             ) : (
-              <div className="h-44 flex items-center justify-center text-center text-xs text-slate-400 border border-dashed border-slate-200 rounded p-4">
-                Click on any busbar in the diagram to inspect live bus telemetry and connected lines.
+              <div className="py-16 text-center text-slate-400 text-xs">
+                Click on any substation busbar in the diagram to inspect voltage profiles, phase angles, and switch
+                connected transmission line breakers.
               </div>
             )}
-          </div>
-
-          <div className="mt-4 pt-3 border-t border-slate-200 text-[10px] text-slate-400 flex justify-between items-center">
-            <span>Pinch/Scroll to Zoom</span>
-            <span className="text-[#500b50] font-bold">
-              {viewMode === 'schematic' ? '● Manhattan CAD' : '● Regional Geo Map'}
-            </span>
           </div>
         </div>
       </div>

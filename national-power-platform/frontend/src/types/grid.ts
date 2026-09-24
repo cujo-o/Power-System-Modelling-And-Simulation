@@ -45,28 +45,6 @@ export interface UFLSEvent {
   cumulative_shed_mw: number;
 }
 
-export interface DynamicSimResult {
-  time: number[];
-  frequency_ufls: number[];
-  frequency_unmitigated: number[];
-  rocof: number[];
-  pss_output: number[];
-  gov_power_mw: number[];
-  metrics: {
-    nadir_ufls_hz: number;
-    nadir_unmitigated_hz: number;
-    settling_ufls_hz: number;
-    settling_unmitigated_hz: number;
-    initial_rocof_hz_per_s: number;
-    total_load_shed_mw: number;
-    stages_tripped_count: number;
-    rocf_compliant: boolean;
-    nadir_compliant: boolean;
-    frequency_band_compliant: boolean;
-  };
-  ufls_events: UFLSEvent[];
-}
-
 export interface CascadeStep {
   step: number;
   event_type: string;
@@ -211,4 +189,31 @@ export interface MultiMachineResult {
   time: number[];
   generators: GeneratorRotorResult[];
   statutory_protection_limit_ms: number;
+
+}
+
+export interface UFLSEvent {
+  stage: number;
+  timestamp: number;
+  threshold_hz: number;
+  shed_mw: number;
+}
+
+export interface DynamicSimResult {
+  time: number[];
+  // Both legacy and new telemetry key aliases supported
+  f_unmitigated?: number[];
+  f_protected?: number[];
+  frequency_unmitigated?: number[];
+  frequency_ufls?: number[];
+  nadir_hz?: number;
+  nadir?: number;
+  initial_rocof?: number;
+  rocof?: number;
+  settling_hz?: number;
+  total_shed_mw?: number;
+  stages_tripped?: number;
+  ufls_events?: UFLSEvent[];
+  cct_ms?: number;
+  status?: string;
 }
