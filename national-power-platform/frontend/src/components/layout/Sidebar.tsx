@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { UserAccount } from '@/types/grid';
-import { RotateCcw, User, LucideIcon, ChevronLeft, ChevronRight } from 'lucide-react';
+import { RotateCcw, User, LucideIcon, ChevronLeft, ChevronRight, LogIn } from 'lucide-react';
 
 interface NavItem {
   id: string;
@@ -31,6 +31,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onReset,
   loading,
   currentUser,
+  onLoginClick,
   desktopCollapsed,
   setDesktopCollapsed,
   mobileMenuOpen,
@@ -59,7 +60,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="w-full flex flex-col items-center gap-2">
                 <div
                   className="h-10 w-10 rounded-full bg-white/10 flex items-center justify-center text-white"
-                  title={currentUser?.name || 'Operator'}
+                  title={currentUser ? `${currentUser.name} (${currentUser.role})` : 'Guest Session'}
                 >
                   <User className="h-5 w-5" />
                 </div>
@@ -75,24 +76,44 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             ) : (
               <>
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="h-10 w-10 rounded-full bg-white/15 flex items-center justify-center text-white shrink-0">
-                    <User className="h-5 w-5" />
+                {currentUser ? (
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div className="h-10 w-10 rounded-full bg-white/15 flex items-center justify-center text-white shrink-0">
+                      <User className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-sm font-bold text-white truncate leading-snug">
+                        {currentUser.name}
+                      </h3>
+                      <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                        {currentUser.role}
+                      </span>
+                    </div>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <h3 className="text-sm font-bold text-white truncate leading-snug">
-                      {currentUser?.name || 'Authorized Operator'}
-                    </h3>
-                    <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
-                      Active Session
-                    </span>
+                ) : (
+                  <div className="flex items-center justify-between w-full min-w-0">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="h-9 w-9 rounded-full bg-white/10 flex items-center justify-center text-white/60 shrink-0">
+                        <User className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-xs font-semibold text-white/80 block leading-tight">Guest Session</span>
+                        <button
+                          onClick={onLoginClick}
+                          className="text-[11px] text-amber-300 font-bold hover:underline hover:text-white inline-flex items-center gap-1 mt-0.5"
+                        >
+                          <LogIn className="h-3 w-3" />
+                          <span>Sign In / Register</span>
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Collapse Button inside Expanded Sidebar */}
                 <button
                   onClick={() => setDesktopCollapsed(true)}
-                  className="hidden md:flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white/70 hover:bg-white/20 hover:text-white transition shrink-0"
+                  className="hidden md:flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white/70 hover:bg-white/20 hover:text-white transition shrink-0 ml-1"
                   title="Collapse Sidebar"
                   aria-label="Collapse Sidebar"
                 >

@@ -9,7 +9,6 @@ interface UploadTabProps {
   uploadLoading: boolean;
   onFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   models: GridModelMeta[];
-  onActivate: (id: string) => void;
   onDelete: (id: string) => void;
   currentUser: UserAccount | null;
   onLoginClick: () => void;
@@ -20,7 +19,6 @@ export const UploadTab: React.FC<UploadTabProps> = ({
   uploadLoading,
   onFileUpload,
   models,
-  onActivate,
   onDelete,
   currentUser,
   onLoginClick,
@@ -143,19 +141,17 @@ export const UploadTab: React.FC<UploadTabProps> = ({
                 </td>
                 <td className="py-3 px-4 text-right">
                   <div className="flex items-center justify-end gap-2.5">
-                    {!m.is_active ? (
-                      <button
-                        onClick={() => onActivate(m.id)}
-                        className="rounded-lg bg-[#500b50] px-3.5 py-1.5 text-xs font-bold text-white hover:bg-[#680f68] transition"
-                      >
-                        Activate
-                      </button>
-                    ) : (
+                    {m.is_active ? (
                       <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-800">
                         <Check className="h-3 w-3" />
-                        <span>Active</span>
+                        <span>Active Case</span>
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-400 font-medium">
+                        Select in Grid Stability
                       </span>
                     )}
+
                     {!m.is_default && (
                       <button
                         onClick={() => onDelete(m.id)}
