@@ -3,6 +3,35 @@ from fastapi.middleware.cors import CORSMiddleware
 from routers.models import get_model_router
 from routers.simulations import get_sim_router
 from routers.auth import get_auth_router
+# In backend/main.py (or startup event):
+from services.importers import parse_matpower_case # or your case parser function
+
+@app.on_event("startup")
+def seed_default_models():
+    """Seeds default Nigerian grid benchmarks into model_registry on container startup."""
+    default_cases = [
+        ("case10_nigeria_dynamic.m", "330kV", "Static & Dynamic", "PSAT"),
+        ("case330.m", "330kV", "Static Power Flow", "MATPOWER"),
+    ]
+    for filename, v_level, domain, platform in default_cases:
+        if filename not in model_registry:
+            try:
+                # Load from backend cases directory
+                net = parse_matpower_case(f"cases/{filename}")
+                model_registry[filename] = {
+                    "name": filename,
+                    "net": net,
+                    "voltage_level": v_level,
+                    "domain": domain,
+                    "platform": platform,
+                    "is_default": True
+                }
+            except Exception as e:
+                print(f"Notice: Could not pre-seed {filename}: {e}")
+
+    # Set initial active model
+    if not state.get("active_model_id") and model_registry:
+        state["active_model_id"] = list(model_registry.keys())[0]
 
 app = FastAPI(title="National Power System Simulation API")
 

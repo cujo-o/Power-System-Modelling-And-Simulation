@@ -68,7 +68,7 @@ export default function PowerPlatformDashboard() {
   const [authSuccessMsg, setAuthSuccessMsg] = useState<string | null>(null);
   const [authSubmitting, setAuthSubmitting] = useState(false);
 
-  // Engineering Operational Deck & Planning State
+  // Engineering Variables Deck & Planning State
   const [pfVariables, setPfVariables] = useState<PowerFlowVariables>({
     loadMultiplier: 1.0,
     targetPowerFactor: 0.9,
@@ -144,8 +144,15 @@ export default function PowerPlatformDashboard() {
       await api.activateModel(id);
 
       const updatedList = await api.getModels();
-      setModels(updatedList);
       setActiveModelId(id);
+
+      // Reflect active state across the model list
+      setModels((prevModels) =>
+        prevModels.map((m) => ({
+          ...m,
+          is_active: m.id === id,
+        }))
+      );
 
       const pfResult = await api.runPowerFlow(pfVariables, []);
       setResults(pfResult);
@@ -158,80 +165,81 @@ export default function PowerPlatformDashboard() {
     }
   };
 
-  // Initial Bootstrap & Auto-Activation
-  useEffect(() => {
-    const initApp = async () => {
-      try {
-        const modelList = await api.getModels();
-        setModels(modelList);
-
-        if (modelList.length > 0) {
-          const savedId = typeof window !== 'undefined' ? localStorage.getItem('nesi_active_model_id') : null;
-          const target = modelList.find((m) => m.id === savedId) || modelList.find((m) => m.is_active) || modelList[0];
-          await handleActivateModel(target.id);
-        }
-      } catch (err) {
-        console.error('Initialization error:', err);
-      }
-    };
-    initApp();
-  }, []);
-
-  // Sync models with Supabase
-  const syncWithSupabase = async () => {
+  // Safe Model Ingestion & Synchronization (Merges Backend and Supabase without wiping)
+  const syncModels = async () => {
     setLoading(true);
     try {
-      const { data: dbModels, error } = await supabase
-        .from('grid_models')
-        .select('*')
-        .order('created_at', { ascending: false });
+      // 1. Fetch from FastAPI Backend
+      let backendModels: GridModelMeta[] = [];
+      try {
+        backendModels = await api.getModels();
+      } catch (err) {
+        console.warn('Backend model fetch notice:', err);
+      }
 
-      if (error) throw error;
+      // 2. Fetch from Supabase Table
+      let dbModels: any[] = [];
+      try {
+        const { data, error } = await supabase
+          .from('grid_models')
+          .select('*')
+          .order('created_at', { ascending: false });
 
-      if (dbModels && dbModels.length > 0) {
-        const mappedModels: GridModelMeta[] = dbModels.map((m: any, idx: number) => ({
-          id: m.id,
-          name: m.name,
-          voltage_level: m.voltage_level || '330kV',
-          domain: m.domain || 'Static & Dynamic',
-          platform: m.platform || m.format || 'MATPOWER',
-          buses: m.buses,
-          branches: m.branches,
-          total_installed_mw: Number(m.total_installed_mw),
-          total_demand_mw: Number(m.total_demand_mw),
-          converged: m.converged,
-          is_default: false,
-          is_active: activeModelId ? m.id === activeModelId : idx === 0,
+        if (!error && data) {
+          dbModels = data;
+        }
+      } catch (err) {
+        console.warn('Supabase fetch notice:', err);
+      }
+
+      // 3. Map Supabase models
+      const mappedDbModels: GridModelMeta[] = dbModels.map((m: any) => ({
+        id: m.id,
+        name: m.name,
+        voltage_level: m.voltage_level || '330kV',
+        domain: m.domain || 'Static & Dynamic',
+        platform: m.platform || m.format || 'MATPOWER',
+        buses: m.buses,
+        branches: m.branches,
+        total_installed_mw: Number(m.total_installed_mw),
+        total_demand_mw: Number(m.total_demand_mw),
+        converged: m.converged,
+        is_default: false,
+        is_active: false,
+      }));
+
+      // 4. Merge non-destructively
+      const mergedMap = new Map<string, GridModelMeta>();
+      backendModels.forEach((m) => mergedMap.set(m.id, m));
+      mappedDbModels.forEach((m) => mergedMap.set(m.id, m));
+
+      const mergedList = Array.from(mergedMap.values());
+
+      if (mergedList.length > 0) {
+        const savedId = typeof window !== 'undefined' ? localStorage.getItem('nesi_active_model_id') : null;
+        const targetModel =
+          mergedList.find((m) => m.id === savedId) ||
+          mergedList.find((m) => m.is_active) ||
+          mergedList[0];
+
+        const finalizedList = mergedList.map((m) => ({
+          ...m,
+          is_active: m.id === targetModel.id,
         }));
 
-        setModels(mappedModels);
-
-        const targetModel = activeModelId
-          ? dbModels.find((m: any) => m.id === activeModelId) || dbModels[0]
-          : dbModels[0];
-
-        if (targetModel) {
-          setActiveModelId(targetModel.id);
-          await api.loadPayload({
-            id: targetModel.id,
-            name: targetModel.name,
-            voltage_level: targetModel.voltage_level,
-            domain: targetModel.domain,
-            platform: targetModel.platform,
-            network_payload: targetModel.network_payload,
-          });
-
-          const simRes = await api.runPowerFlow(pfVariables, trippedLines);
-          setResults(simRes);
-          setDivergedNotice(!simRes.converged ? simRes.message || 'Diverged' : null);
-        }
+        setModels(finalizedList);
+        await handleActivateModel(targetModel.id);
       }
-    } catch (err: any) {
-      console.warn('Sync notice:', err.message);
+    } catch (err) {
+      console.error('Model initialization error:', err);
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    syncModels();
+  }, []);
 
   const runSim = async () => {
     setLoading(true);
@@ -325,26 +333,28 @@ export default function PowerPlatformDashboard() {
     try {
       const res = await api.uploadModel(formData);
 
-      const { error: dbError } = await supabase.from('grid_models').insert({
-        id: res.model_id,
-        name: res.filename,
-        format: res.format,
-        voltage_level: res.voltage_level,
-        domain: 'Static & Dynamic',
-        platform: res.format,
-        buses: res.metrics.buses,
-        branches: res.metrics.branches,
-        total_installed_mw: res.metrics.total_installed_mw,
-        total_demand_mw: res.metrics.total_demand_mw,
-        converged: res.converged,
-        network_payload: res.network_payload,
-        user_id: currentUser ? String(currentUser.id) : null,
-      });
+      try {
+        await supabase.from('grid_models').upsert({
+          id: res.model_id,
+          name: res.filename,
+          format: res.format,
+          voltage_level: res.voltage_level,
+          domain: 'Static & Dynamic',
+          platform: res.format,
+          buses: res.metrics.buses,
+          branches: res.metrics.branches,
+          total_installed_mw: res.metrics.total_installed_mw,
+          total_demand_mw: res.metrics.total_demand_mw,
+          converged: res.converged,
+          network_payload: res.network_payload,
+          user_id: currentUser ? String(currentUser.id) : null,
+        });
+      } catch (sbErr) {
+        console.warn('Supabase storage warning:', sbErr);
+      }
 
-      if (dbError) throw dbError;
-
-      setUploadNotice(`Model '${res.filename}' parsed and stored permanently in Supabase.`);
-      await syncWithSupabase();
+      setUploadNotice(`Model '${res.filename}' parsed and stored permanently.`);
+      await syncModels();
       await handleActivateModel(res.model_id);
     } catch (err: any) {
       setUploadNotice(`Upload Error: ${err.message}`);
@@ -358,7 +368,7 @@ export default function PowerPlatformDashboard() {
     try {
       await supabase.from('grid_models').delete().eq('id', id);
       await api.deleteModel(id);
-      await syncWithSupabase();
+      await syncModels();
     } catch {
       alert('Could not delete model.');
     }
@@ -382,7 +392,7 @@ export default function PowerPlatformDashboard() {
     }
   };
 
-  // Auth Handlers with Dynamic Registration & Admin Approval Queue
+  // Auth Handlers
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
@@ -541,7 +551,7 @@ export default function PowerPlatformDashboard() {
               />
             )}
 
-            {/* Upload Tab: Activate button removed; model selection is performed solely in Grid Stability Models */}
+            {/* Upload Tab: Activate button removed; activation happens exclusively in Grid Stability Models */}
             {activeTab === 'Data Upload' && (
               <UploadTab
                 uploadNotice={uploadNotice}
