@@ -28,7 +28,7 @@ def get_auth_router():
             "institution": "Federal University of Technology, Minna",
             "department": "Electrical & Electronics Engineering",
             "reason": "Root Taskforce Administrator",
-            "role": "Taskforce Administrator",
+            "role": "Admin",
             "is_approved": True,
             "status": "APPROVED",
             "password": "ML4PS-ADMIN",

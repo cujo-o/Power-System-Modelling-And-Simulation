@@ -85,7 +85,7 @@ def get_admin_router(users_db: list, get_active_fn):
                     "email": "admin@futminna.edu.ng",
                     "institution": "FUT Minna (ML4PS Group)",
                     "department": "Electrical & Electronics Engineering",
-                    "role": "Taskforce Administrator",
+                    "role": "Admin",
                     "status": "APPROVED"
                 }
             }
