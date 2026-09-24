@@ -51,12 +51,10 @@ export default function PowerPlatformDashboard() {
   const [loading, setLoading] = useState(false);
   const [desktopCollapsed, setDesktopCollapsed] = useState(false);
 
-  // User Authentication State
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
 
-  // Auth Inputs
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [regName, setRegName] = useState('');
@@ -68,7 +66,6 @@ export default function PowerPlatformDashboard() {
   const [authSuccessMsg, setAuthSuccessMsg] = useState<string | null>(null);
   const [authSubmitting, setAuthSubmitting] = useState(false);
 
-  // Engineering Variables Deck & Planning State
   const [pfVariables, setPfVariables] = useState<PowerFlowVariables>({
     loadMultiplier: 1.0,
     targetPowerFactor: 0.9,
@@ -85,11 +82,9 @@ export default function PowerPlatformDashboard() {
   const [selectedBus, setSelectedBus] = useState<BusData | null>(null);
   const [divergedNotice, setDivergedNotice] = useState<string | null>(null);
 
-  // Grid Models State
   const [models, setModels] = useState<GridModelMeta[]>([]);
   const [activeModelId, setActiveModelId] = useState<string | null>(null);
 
-  // Dynamics & Market State
   const [dynDisturbance, setDynDisturbance] = useState(450.0);
   const [enableGovernor, setEnableGovernor] = useState(true);
   const [enablePSS, setEnablePSS] = useState(true);
@@ -118,7 +113,6 @@ export default function PowerPlatformDashboard() {
     { id: 'About Us', label: 'About Us (ML4PS)', icon: Info },
   ];
 
-  // Restore authenticated session from localStorage
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const savedUser = localStorage.getItem('ml4ps_user');
@@ -132,7 +126,6 @@ export default function PowerPlatformDashboard() {
     }
   }, []);
 
-  // Comprehensive Model Activation & Immediate Power Flow Execution
   const handleActivateModel = async (id: string) => {
     setLoading(true);
     setDivergedNotice(null);
@@ -141,45 +134,36 @@ export default function PowerPlatformDashboard() {
         localStorage.setItem('nesi_active_model_id', id);
       }
 
-      // 1. Fetch network payload from Supabase to hydrate backend RAM
-      let loadedViaPayload = false;
-      try {
-        const { data: modelData } = await supabase
-          .from('grid_models')
-          .select('*')
-          .eq('id', id)
-          .maybeSingle();
+      // 1. Fetch network payload from Supabase
+      const { data: modelData } = await supabase
+        .from('grid_models')
+        .select('*')
+        .or(`id.eq.${id},name.eq.${id}`)
+        .maybeSingle();
 
-        if (modelData && modelData.network_payload) {
-          await api.loadPayload({
-            id: modelData.id,
-            name: modelData.name,
-            voltage_level: modelData.voltage_level,
-            domain: modelData.domain,
-            platform: modelData.platform,
-            network_payload: modelData.network_payload,
-          });
-          loadedViaPayload = true;
-        }
-      } catch (sbErr) {
-        console.warn('Supabase payload hydration skipped:', sbErr);
-      }
-
-      if (!loadedViaPayload) {
+      if (modelData && modelData.network_payload) {
+        await api.loadPayload({
+          id: modelData.id,
+          name: modelData.name,
+          voltage_level: modelData.voltage_level,
+          domain: modelData.domain,
+          platform: modelData.platform,
+          network_payload: modelData.network_payload,
+        });
+      } else {
         await api.activateModel(id);
       }
 
       setActiveModelId(id);
 
-      // 2. Mark active in UI models list
-      setModels((prevModels) =>
-        prevModels.map((m) => ({
+      setModels((prev) =>
+        prev.map((m) => ({
           ...m,
           is_active: m.id === id,
         }))
       );
 
-      // 3. Run power flow on the hydrated network
+      // 2. Solve AC Power Flow
       const pfResult = await api.runPowerFlow(pfVariables, []);
       setResults(pfResult);
       setTrippedLines([]);
@@ -191,87 +175,58 @@ export default function PowerPlatformDashboard() {
       }
     } catch (err: any) {
       console.error('Activation failure:', err);
-      setDivergedNotice(err.message || 'Failed to initialize power flow for the selected model.');
+      setDivergedNotice(err.message || 'Failed to activate simulation model.');
     } finally {
       setLoading(false);
     }
   };
 
-  
-  // Safe Model Ingestion & Synchronization (Merges Backend and Supabase without wiping)
-  const syncModels = async () => {
+  // Synchronize models strictly from Supabase
+  const syncSupabaseModels = async () => {
     setLoading(true);
     try {
-      // 1. Fetch from FastAPI Backend
-      let backendModels: GridModelMeta[] = [];
-      try {
-        backendModels = await api.getModels();
-      } catch (err) {
-        console.warn('Backend model fetch notice:', err);
-      }
+      const { data: dbModels, error } = await supabase
+        .from('grid_models')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-      // 2. Fetch from Supabase Table
-      let dbModels: any[] = [];
-      try {
-        const { data, error } = await supabase
-          .from('grid_models')
-          .select('*')
-          .order('created_at', { ascending: false });
+      if (error) throw error;
 
-        if (!error && data) {
-          dbModels = data;
-        }
-      } catch (err) {
-        console.warn('Supabase fetch notice:', err);
-      }
-
-      // 3. Map Supabase models
-      const mappedDbModels: GridModelMeta[] = dbModels.map((m: any) => ({
-        id: m.id,
-        name: m.name,
-        voltage_level: m.voltage_level || '330kV',
-        domain: m.domain || 'Static & Dynamic',
-        platform: m.platform || m.format || 'MATPOWER',
-        buses: m.buses,
-        branches: m.branches,
-        total_installed_mw: Number(m.total_installed_mw),
-        total_demand_mw: Number(m.total_demand_mw),
-        converged: m.converged,
-        is_default: false,
-        is_active: false,
-      }));
-
-      // 4. Merge non-destructively
-      const mergedMap = new Map<string, GridModelMeta>();
-      backendModels.forEach((m) => mergedMap.set(m.id, m));
-      mappedDbModels.forEach((m) => mergedMap.set(m.id, m));
-
-      const mergedList = Array.from(mergedMap.values());
-
-      if (mergedList.length > 0) {
+      if (dbModels && dbModels.length > 0) {
         const savedId = typeof window !== 'undefined' ? localStorage.getItem('nesi_active_model_id') : null;
-        const targetModel =
-          mergedList.find((m) => m.id === savedId) ||
-          mergedList.find((m) => m.is_active) ||
-          mergedList[0];
+        const targetModel = dbModels.find((m: any) => m.id === savedId) || dbModels[0];
 
-        const finalizedList = mergedList.map((m) => ({
-          ...m,
+        const mapped: GridModelMeta[] = dbModels.map((m: any) => ({
+          id: m.id,
+          name: m.name,
+          voltage_level: m.voltage_level || '330kV',
+          domain: m.domain || 'Static & Dynamic',
+          platform: m.platform || m.format || 'MATPOWER',
+          buses: m.buses,
+          branches: m.branches,
+          total_installed_mw: Number(m.total_installed_mw || 0),
+          total_demand_mw: Number(m.total_demand_mw || 0),
+          converged: m.converged,
+          is_default: false,
           is_active: m.id === targetModel.id,
         }));
 
-        setModels(finalizedList);
+        setModels(mapped);
         await handleActivateModel(targetModel.id);
+      } else {
+        setModels([]);
+        setActiveModelId(null);
+        setResults(null);
       }
     } catch (err) {
-      console.error('Model initialization error:', err);
+      console.warn('Supabase sync notice:', err);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    syncModels();
+    syncSupabaseModels();
   }, []);
 
   const runSim = async () => {
@@ -366,6 +321,7 @@ export default function PowerPlatformDashboard() {
     try {
       const res = await api.uploadModel(formData);
 
+      // Store in Supabase
       try {
         await supabase.from('grid_models').upsert({
           id: res.model_id,
@@ -383,11 +339,11 @@ export default function PowerPlatformDashboard() {
           user_id: currentUser ? String(currentUser.id) : null,
         });
       } catch (sbErr) {
-        console.warn('Supabase storage warning:', sbErr);
+        console.warn('Supabase store notice:', sbErr);
       }
 
-      setUploadNotice(`Model '${res.filename}' parsed and stored permanently.`);
-      await syncModels();
+      setUploadNotice(`Case '${res.filename}' parsed and stored successfully.`);
+      await syncSupabaseModels();
       await handleActivateModel(res.model_id);
     } catch (err: any) {
       setUploadNotice(`Upload Error: ${err.message}`);
@@ -397,11 +353,11 @@ export default function PowerPlatformDashboard() {
   };
 
   const handleDeleteModel = async (id: string) => {
-    if (!confirm('Are you sure you want to permanently delete this model?')) return;
+    if (!confirm('Permanently delete this model?')) return;
     try {
       await supabase.from('grid_models').delete().eq('id', id);
       await api.deleteModel(id);
-      await syncModels();
+      await syncSupabaseModels();
     } catch {
       alert('Could not delete model.');
     }
@@ -425,7 +381,6 @@ export default function PowerPlatformDashboard() {
     }
   };
 
-  // Auth Handlers
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
@@ -437,9 +392,7 @@ export default function PowerPlatformDashboard() {
         body: JSON.stringify({ email: loginEmail, password: loginPassword }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || 'Sign-in failed');
-      }
+      if (!res.ok) throw new Error(data.detail || 'Sign-in failed');
 
       setCurrentUser(data.user);
       if (typeof window !== 'undefined') {
@@ -472,9 +425,7 @@ export default function PowerPlatformDashboard() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || 'Registration failed');
-      }
+      if (!res.ok) throw new Error(data.detail || 'Registration failed');
 
       setAuthSuccessMsg(data.message);
       setTimeout(() => {
@@ -495,10 +446,7 @@ export default function PowerPlatformDashboard() {
     }
   };
 
-  const handleRunMultiMachine = async (params: {
-    fault_bus_id: number;
-    fault_duration_ms: number;
-  }) => {
+  const handleRunMultiMachine = async (params: { fault_bus_id: number; fault_duration_ms: number }) => {
     return await api.runMultiMachine({
       fault_bus_id: params.fault_bus_id,
       fault_duration_ms: params.fault_duration_ms,
@@ -584,8 +532,7 @@ export default function PowerPlatformDashboard() {
               />
             )}
 
-            {/* Upload Tab: Activate button removed; activation happens exclusively in Grid Stability Models */}
-            {activeTab === 'Data Upload' && (
+            <div style={{ display: activeTab === 'Data Upload' ? 'block' : 'none' }}>
               <UploadTab
                 uploadNotice={uploadNotice}
                 uploadLoading={uploadLoading}
@@ -598,7 +545,7 @@ export default function PowerPlatformDashboard() {
                   setShowAuthModal(true);
                 }}
               />
-            )}
+            </div>
 
             {activeTab === 'Visualization' && (
               <>
@@ -607,13 +554,13 @@ export default function PowerPlatformDashboard() {
                     <FolderOpen className="h-12 w-12 text-slate-400 mb-3" />
                     <h3 className="text-sm font-bold text-slate-800">No Active Grid Topology Loaded</h3>
                     <p className="text-xs text-slate-500 max-w-sm mt-1">
-                      Select and solve a model in Grid Stability Models to visualize the single-line diagram.
+                      Upload or activate a model in Grid Stability Models to view the single-line diagram.
                     </p>
                     <button
-                      onClick={() => setActiveTab('Grid Models')}
+                      onClick={() => setActiveTab('Data Upload')}
                       className="mt-4 px-5 py-2.5 rounded-xl bg-[#500b50] text-white text-xs font-bold hover:bg-[#680f68] transition"
                     >
-                      Go to Grid Stability Models
+                      Go to Upload & Ingestion
                     </button>
                   </div>
                 ) : (
@@ -641,7 +588,6 @@ export default function PowerPlatformDashboard() {
               />
             )}
 
-            {/* Admin Tab with Governance Directory & Dynamic User Approval Queue */}
             {activeTab === 'Admin Panel' && <AdminTab apiBaseUrl={apiBaseUrl} />}
 
             {activeTab === 'About Us' && <AboutTab />}
@@ -653,7 +599,6 @@ export default function PowerPlatformDashboard() {
         </main>
       </div>
 
-      {/* Dynamic Authentication & Registration Modal */}
       {showAuthModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 select-none">
           <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl space-y-4">
@@ -675,7 +620,6 @@ export default function PowerPlatformDashboard() {
               </button>
             </div>
 
-            {/* Tab Switcher: Sign In vs Register */}
             <div className="flex rounded-xl border border-slate-200 p-1 bg-slate-50 text-xs">
               <button
                 type="button"
@@ -719,7 +663,6 @@ export default function PowerPlatformDashboard() {
               </div>
             )}
 
-            {/* TAB 1: LOGIN FORM */}
             {authMode === 'login' && (
               <form onSubmit={handleLoginSubmit} className="space-y-4 text-xs">
                 <div>
@@ -754,9 +697,6 @@ export default function PowerPlatformDashboard() {
                       className="w-full border border-slate-300 rounded-xl pl-9 pr-3 py-2 text-sm text-slate-900 bg-white focus:outline-none focus:border-[#500b50]"
                     />
                   </div>
-                  <span className="text-[11px] text-slate-400 mt-1 block">
-                    Use your issued temporary password (e.g. <strong>ML4PS-XXXX</strong>)
-                  </span>
                 </div>
 
                 <button
@@ -779,7 +719,6 @@ export default function PowerPlatformDashboard() {
               </form>
             )}
 
-            {/* TAB 2: REGISTRATION FORM */}
             {authMode === 'register' && (
               <form onSubmit={handleRegisterSubmit} className="space-y-3 text-xs">
                 <div>
@@ -816,7 +755,7 @@ export default function PowerPlatformDashboard() {
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-xs font-bold uppercase text-slate-600 mb-1">
-                      Institution / Utility
+                      Institution
                     </label>
                     <div className="relative">
                       <Building className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
@@ -825,7 +764,7 @@ export default function PowerPlatformDashboard() {
                         required
                         value={regInstitution}
                         onChange={(e) => setRegInstitution(e.target.value)}
-                        placeholder="FUT Minna, TCN, NISO..."
+                        placeholder="FUT Minna, TCN..."
                         className="w-full border border-slate-300 rounded-xl pl-8 pr-2 py-2 text-xs text-slate-900 bg-white"
                       />
                     </div>
@@ -856,7 +795,7 @@ export default function PowerPlatformDashboard() {
                       required
                       value={regReason}
                       onChange={(e) => setRegReason(e.target.value)}
-                      placeholder="e.g. Dynamic transient stability and CCT evaluation"
+                      placeholder="e.g. Transient stability and contingency evaluation"
                       className="w-full border border-slate-300 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 bg-white"
                     />
                   </div>

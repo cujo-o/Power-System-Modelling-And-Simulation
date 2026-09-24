@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 import pandapower as pp
@@ -80,35 +80,39 @@ def get_sim_router(model_registry: Dict[str, Any], get_active_net_fn):
                 "total_losses_mw": 0.0,
                 "buses": [],
                 "lines": [],
-                "message": "No active grid model loaded. Upload or select a network case."
+                "message": "No model loaded in memory. Upload or activate a case file."
             }
 
         temp_net = copy.deepcopy(net)
         vars_deck = req.pf_variables or PowerFlowVariables()
 
-        # 1. Apply $N-1$ line breaker status
+        # Guarantee reference bus
+        if len(temp_net.ext_grid) == 0:
+            if len(temp_net.gen) > 0:
+                first_gen_idx = temp_net.gen.index[0]
+                g_bus = int(temp_net.gen.at[first_gen_idx, "bus"])
+                pp.create_ext_grid(temp_net, bus=g_bus, vm_pu=vars_deck.slackVoltagePu, name="Slack Reference")
+                temp_net.gen.drop(first_gen_idx, inplace=True)
+            elif len(temp_net.bus) > 0:
+                pp.create_ext_grid(temp_net, bus=int(temp_net.bus.index[0]), vm_pu=vars_deck.slackVoltagePu, name="Slack Reference")
+
+        # Line breaker states
         if req.tripped_lines:
             for l_id in req.tripped_lines:
                 if l_id in temp_net.line.index:
                     temp_net.line.at[l_id, "in_service"] = False
 
-        # 2. Scale active load & power factor
+        # Load scaling
         if len(temp_net.load) > 0:
             temp_net.load["p_mw"] *= vars_deck.loadMultiplier
             pf = max(0.70, min(1.0, vars_deck.targetPowerFactor))
             tan_phi = math.tan(math.acos(pf))
             temp_net.load["q_mvar"] = temp_net.load["p_mw"] * tan_phi
 
-        # 3. Apply Slack Generator Voltage
         if len(temp_net.ext_grid) > 0:
             temp_net.ext_grid["vm_pu"] = vars_deck.slackVoltagePu
 
-        # 4. Apply Shunt MVAR compensation
-        if vars_deck.shuntMvarCompensation != 0 and len(temp_net.bus) > 0:
-            first_bus = temp_net.bus.index[0]
-            pp.create_shunt(temp_net, bus=first_bus, q_mvar=-vars_deck.shuntMvarCompensation, p_mw=0.0)
-
-        # 5. Incorporate Regional Planning Expansions
+        # Planning additions
         for nb in vars_deck.newBuses:
             pp.create_bus(temp_net, vn_kv=nb.vn_kv, name=nb.name, zone=nb.zone)
             if nb.p_mw > 0:
@@ -117,48 +121,48 @@ def get_sim_router(model_registry: Dict[str, Any], get_active_net_fn):
 
         for nl in vars_deck.newLines:
             if nl.from_bus in temp_net.bus.index and nl.to_bus in temp_net.bus.index:
-                pp.create_line_from_parameters(
-                    temp_net, from_bus=nl.from_bus, to_bus=nl.to_bus, length_km=nl.length_km,
-                    r_ohm_per_km=0.035, x_ohm_per_km=0.32, c_nf_per_km=11.2, max_i_ka=1.35,
-                    name=nl.name
-                )
+                try:
+                    pp.create_line_from_parameters(
+                        temp_net, from_bus=nl.from_bus, to_bus=nl.to_bus, length_km=nl.length_km,
+                        r_ohm_per_km=0.035, x_ohm_per_km=0.32, c_nf_per_km=11.2, max_i_ka=1.35,
+                        name=nl.name
+                    )
+                except Exception:
+                    pass
 
         for ng in vars_deck.newGenerators:
             if ng.bus in temp_net.bus.index:
                 pp.create_gen(temp_net, bus=ng.bus, p_mw=ng.p_mw, vm_pu=ng.vm_pu, max_p_mw=ng.p_max_mw, name=ng.name)
 
-        # 6. Multi-Stage Adaptive Power Flow Solver (Prevents Failure on 330kV grids)
+        # Multi-stage solver
         converged = False
         solver_notice = None
 
-        # Stage 1: Standard Newton-Raphson
         try:
-            pp.runpp(temp_net, algorithm="nr", max_iteration=40, enforce_q_limits=False)
+            pp.runpp(temp_net, algorithm="nr", max_iteration=45, enforce_q_limits=False)
             converged = bool(temp_net.converged)
         except Exception:
             converged = False
 
-        # Stage 2: Newton-Raphson with Flat Start
         if not converged:
             try:
-                pp.runpp(temp_net, algorithm="nr", init="flat", max_iteration=50, enforce_q_limits=False)
+                pp.runpp(temp_net, algorithm="nr", init="flat", max_iteration=60, enforce_q_limits=False)
                 converged = bool(temp_net.converged)
                 if converged:
-                    solver_notice = "Solved using Newton-Raphson Flat Initialization."
+                    solver_notice = "Solved using Flat Start initialization."
             except Exception:
                 converged = False
 
-        # Stage 3: DC Power Flow (Guaranteed Baseline fallback)
         if not converged:
             try:
                 pp.rundcpp(temp_net)
                 converged = True
-                solver_notice = "AC Newton-Raphson diverged (reactive deficit). Showing linearized DC power flow."
-            except Exception as e:
+                solver_notice = "AC power flow diverged. Displaying linearized DC load flow."
+            except Exception:
                 converged = False
-                solver_notice = f"Calculation diverged: {str(e)}"
+                solver_notice = "Calculation diverged. Displaying nominal node parameters."
 
-        # 7. Extract Bus Telemetry (ALWAYS extracted from topology, never returns empty [])
+        # Extract telemetry
         buses_out = []
         for idx in temp_net.bus.index:
             row = temp_net.bus.loc[idx]
@@ -169,7 +173,7 @@ def get_sim_router(model_registry: Dict[str, Any], get_active_net_fn):
 
             if hasattr(temp_net, "res_bus") and idx in temp_net.res_bus.index:
                 v_val = temp_net.res_bus.at[idx, "vm_pu"]
-                v_pu = float(v_val) if not np.isnan(v_val) else 1.0
+                v_pu = float(v_val) if not np.isnan(v_val) else 1.000
                 va_val = temp_net.res_bus.at[idx, "va_degree"]
                 va_deg = float(va_val) if not np.isnan(va_val) else 0.0
                 p_val = temp_net.res_bus.at[idx, "p_mw"]
@@ -180,7 +184,7 @@ def get_sim_router(model_registry: Dict[str, Any], get_active_net_fn):
             buses_out.append({
                 "id": int(idx),
                 "name": str(row.get("name", f"Bus #{idx}")),
-                "zone": str(row.get("zone", "Main Grid")),
+                "zone": str(row.get("zone", "Grid Bus")),
                 "vn_kv": float(row.get("vn_kv", 330.0)),
                 "v_pu": round(v_pu, 3),
                 "va_deg": round(va_deg, 2),
@@ -188,7 +192,6 @@ def get_sim_router(model_registry: Dict[str, Any], get_active_net_fn):
                 "q_mvar": round(q_mvar, 1)
             })
 
-        # 8. Extract Line Telemetry
         lines_out = []
         for idx in temp_net.line.index:
             l_row = temp_net.line.loc[idx]
@@ -233,9 +236,123 @@ def get_sim_router(model_registry: Dict[str, Any], get_active_net_fn):
             "message": solver_notice
         }
 
+    @router.post("/multi-machine")
+    def run_multi_machine(req: MultiMachineRequest):
+        """Extracts generation units dynamically from the active grid topology."""
+        net, model_name = get_active_net_fn()
+        if net is None or len(net.bus) == 0:
+            return {
+                "time": [],
+                "fault_duration_ms": req.fault_duration_ms,
+                "system_status": "NO_MODEL",
+                "lowest_cct_ms": 0.0,
+                "trajectories": [],
+                "machines": []
+            }
+
+        # Dynamically discover all generators from the loaded model
+        discovered_gens = []
+        if hasattr(net, "ext_grid"):
+            for idx in net.ext_grid.index:
+                b_id = int(net.ext_grid.at[idx, "bus"])
+                b_name = net.bus.at[b_id, "name"] if "name" in net.bus else f"Bus #{b_id}"
+                discovered_gens.append({
+                    "id": len(discovered_gens),
+                    "name": f"{b_name} (Slack)",
+                    "bus": b_id,
+                    "p_mw": 800.0,
+                    "h": 5.0
+                })
+        if hasattr(net, "gen"):
+            for idx in net.gen.index:
+                b_id = int(net.gen.at[idx, "bus"])
+                b_name = net.bus.at[b_id, "name"] if "name" in net.bus else f"Bus #{b_id}"
+                p_val = float(net.gen.at[idx, "p_mw"]) if "p_mw" in net.gen else 150.0
+                discovered_gens.append({
+                    "id": len(discovered_gens),
+                    "name": str(b_name),
+                    "bus": b_id,
+                    "p_mw": max(50.0, p_val),
+                    "h": 4.0
+                })
+
+        t_start = 1.0
+        t_clear = t_start + (req.fault_duration_ms / 1000.0)
+        dt = 0.01
+        time_arr = np.arange(0.0, 4.0 + dt, dt)
+        omega_s = 2.0 * math.pi * 50.0
+
+        trajectories = []
+        machines = []
+        any_pole_slip = False
+        lowest_cct = 999.0
+
+        for gen in discovered_gens:
+            dist = abs(gen["bus"] - req.fault_bus_id)
+            if dist == 0:
+                cct_val = 50.0 + (gen["h"] * 6.0)
+                coupling = 0.05
+            elif dist <= 2:
+                cct_val = 85.0 + (gen["h"] * 10.0)
+                coupling = 0.25
+            else:
+                cct_val = 140.0 + (gen["h"] * 18.0)
+                coupling = 0.70
+
+            cct_val = round(cct_val, 1)
+            lowest_cct = min(lowest_cct, cct_val)
+
+            delta = math.radians(10.0 + (gen["id"] * 5.0))
+            omega = 0.0
+            angles = []
+            max_deg = 0.0
+            Pm = gen["p_mw"] / 1000.0
+
+            for t in time_arr:
+                if t < t_start:
+                    Pe = Pm
+                elif t_start <= t < t_clear:
+                    Pe = Pm * coupling
+                else:
+                    Pe = Pm * 1.15 * math.sin(delta)
+
+                omega += (omega_s / (2.0 * gen["h"])) * (Pm - Pe) * dt
+                omega *= 0.985
+                delta += omega * dt
+
+                deg = math.degrees(delta)
+                max_deg = max(max_deg, deg)
+                angles.append(round(deg, 2))
+
+            slipped = (req.fault_duration_ms > cct_val) or (max_deg >= 180.0)
+            if slipped:
+                any_pole_slip = True
+
+            trajectories.append({"id": gen["id"], "name": gen["name"], "angles": angles})
+            machines.append({
+                "id": gen["id"],
+                "name": gen["name"],
+                "bus_node": f"Bus #{gen['bus']}",
+                "inertia_h": f"{gen['h']} s",
+                "max_excursion": f"{round(max_deg, 1)}°",
+                "cct_ms": cct_val,
+                "cct_margin_ms": round(cct_val - req.fault_duration_ms, 1),
+                "status": "POLE SLIP" if slipped else "SYNCHRONOUS"
+            })
+
+        return {
+            "time": [round(float(t), 2) for t in time_arr],
+            "fault_duration_ms": req.fault_duration_ms,
+            "fault_start_s": t_start,
+            "fault_clear_s": round(t_clear, 3),
+            "system_status": "POLE_SLIP" if any_pole_slip else "STABLE",
+            "lowest_cct_ms": lowest_cct if discovered_gens else 0.0,
+            "trajectories": trajectories,
+            "machines": machines
+        }
+
     @router.post("/cascade")
     def run_cascade(req: CascadeRequest):
-        """Simulates sequential overcurrent tripping and network islanding."""
         net, model_name = get_active_net_fn()
         if net is None:
             return {"status": "NO_MODEL", "total_steps": 0, "timeline": [], "islands": [], "all_tripped_lines": []}
@@ -243,9 +360,8 @@ def get_sim_router(model_registry: Dict[str, Any], get_active_net_fn):
         temp_net = copy.deepcopy(net)
         tripped = list(req.initial_tripped_lines)
         timeline = []
-        max_steps = req.max_cascade_steps
 
-        for step in range(1, max_steps + 1):
+        for step in range(1, req.max_cascade_steps + 1):
             for l_id in tripped:
                 if l_id in temp_net.line.index:
                     temp_net.line.at[l_id, "in_service"] = False
@@ -269,10 +385,10 @@ def get_sim_router(model_registry: Dict[str, Any], get_active_net_fn):
             timeline.append({
                 "step": step,
                 "event_type": "BREAKER_OVERCURRENT_TRIP" if overloaded else "SYSTEM_STABILIZED",
-                "description": f"Stage {step}: {len(overloaded)} lines exceeded {req.overload_threshold_percent}% thermal threshold.",
+                "description": f"Stage {step}: {len(overloaded)} line(s) exceeded {req.overload_threshold_percent}% thermal threshold.",
                 "tripped_in_this_step": overloaded,
                 "total_tripped_so_far": list(set(tripped + overloaded)),
-                "converged": bool(temp_net.converged),
+                "converged": bool(temp_net.converged) if hasattr(temp_net, "converged") else True,
                 "max_loading_percent": float(temp_net.res_line.loading_percent.max()) if hasattr(temp_net, "res_line") and len(temp_net.res_line) > 0 else 0.0,
                 "total_losses_mw": float(temp_net.res_line.pl_mw.sum()) if hasattr(temp_net, "res_line") and len(temp_net.res_line) > 0 else 0.0,
                 "frequency_hz": 50.0
@@ -384,141 +500,6 @@ def get_sim_router(model_registry: Dict[str, Any], get_active_net_fn):
                 "stages_tripped": len(active_shed_events),
                 "cct_ms": 120.0
             }
-        }
-
-    @router.post("/multi-machine")
-    def run_multi_machine(req: MultiMachineRequest):
-        GENERATOR_PROFILES = [
-            {"id": 0, "name": "Egbin PS 330 (Slack)", "bus": 3, "p_mw": 880.0, "h": 5.2},
-            {"id": 1, "name": "Kainji Hydro GS 330", "bus": 1, "p_mw": 480.0, "h": 4.5},
-            {"id": 2, "name": "Jebba Hydro GS 330", "bus": 2, "p_mw": 450.0, "h": 4.2},
-            {"id": 3, "name": "Shiroro Hydro GS 330", "bus": 4, "p_mw": 420.0, "h": 4.0},
-            {"id": 4, "name": "Delta IV Gas GS 330", "bus": 6, "p_mw": 520.0, "h": 3.8},
-            {"id": 5, "name": "Afam VI Combined", "bus": 9, "p_mw": 600.0, "h": 4.6},
-            {"id": 6, "name": "Geregu I Gas GS 330", "bus": 10, "p_mw": 414.0, "h": 3.6},
-            {"id": 7, "name": "Azura-Edo IPP 330", "bus": 8, "p_mw": 461.0, "h": 4.8},
-            {"id": 8, "name": "Odukpani (Calabar) 330", "bus": 12, "p_mw": 380.0, "h": 3.5},
-            {"id": 9, "name": "Okpai Gas IPP 330", "bus": 15, "p_mw": 480.0, "h": 4.4},
-        ]
-
-        t_start = 1.0
-        t_clear = t_start + (req.fault_duration_ms / 1000.0)
-        dt = 0.01
-        time_arr = np.arange(0.0, 4.0 + dt, dt)
-        omega_s = 2.0 * math.pi * 50.0
-
-        trajectories = []
-        machines = []
-        any_pole_slip = False
-        lowest_cct = 999.0
-
-        for gen in GENERATOR_PROFILES:
-            dist = abs(gen["bus"] - req.fault_bus_id)
-            if dist == 0:
-                cct_val = 50.0 + (gen["h"] * 6.0)
-                coupling = 0.05
-            elif dist <= 2:
-                cct_val = 85.0 + (gen["h"] * 10.0)
-                coupling = 0.25
-            else:
-                cct_val = 140.0 + (gen["h"] * 18.0)
-                coupling = 0.70
-
-            cct_val = round(cct_val, 1)
-            lowest_cct = min(lowest_cct, cct_val)
-
-            delta = math.radians(10.0 + (gen["id"] * 5.0))
-            omega = 0.0
-            angles = []
-            max_deg = 0.0
-            Pm = gen["p_mw"] / 1000.0
-
-            for t in time_arr:
-                if t < t_start:
-                    Pe = Pm
-                elif t_start <= t < t_clear:
-                    Pe = Pm * coupling
-                else:
-                    Pe = Pm * 1.15 * math.sin(delta)
-
-                omega += (omega_s / (2.0 * gen["h"])) * (Pm - Pe) * dt
-                omega *= 0.985
-                delta += omega * dt
-
-                deg = math.degrees(delta)
-                max_deg = max(max_deg, deg)
-                angles.append(round(deg, 2))
-
-            slipped = (req.fault_duration_ms > cct_val) or (max_deg >= 180.0)
-            if slipped:
-                any_pole_slip = True
-
-            trajectories.append({"id": gen["id"], "name": gen["name"], "angles": angles})
-            machines.append({
-                "id": gen["id"],
-                "name": gen["name"],
-                "bus_node": f"Bus #{gen['bus']}",
-                "inertia_h": f"{gen['h']} s",
-                "max_excursion": f"{round(max_deg, 1)}°",
-                "cct_ms": cct_val,
-                "cct_margin_ms": round(cct_val - req.fault_duration_ms, 1),
-                "status": "POLE SLIP" if slipped else "SYNCHRONOUS"
-            })
-
-        return {
-            "time": [round(float(t), 2) for t in time_arr],
-            "fault_duration_ms": req.fault_duration_ms,
-            "fault_start_s": t_start,
-            "fault_clear_s": round(t_clear, 3),
-            "system_status": "POLE_SLIP" if any_pole_slip else "STABLE",
-            "lowest_cct_ms": lowest_cct,
-            "trajectories": trajectories,
-            "machines": machines
-        }
-
-    @router.post("/market")
-    def run_market(load_multiplier: float = 1.0, gas_price_factor: float = 1.0, hydro_availability: float = 1.0):
-        total_demand = 3800.0 * load_multiplier
-        merit_order = [
-            {"id": 1, "name": "Kainji Hydro", "type": "Hydro", "marginal_cost": 18.5, "max_mw": 760.0 * hydro_availability},
-            {"id": 2, "name": "Jebba Hydro", "type": "Hydro", "marginal_cost": 19.2, "max_mw": 570.0 * hydro_availability},
-            {"id": 3, "name": "Shiroro Hydro", "type": "Hydro", "marginal_cost": 21.0, "max_mw": 600.0 * hydro_availability},
-            {"id": 4, "name": "Azura-Edo IPP", "type": "Gas CCGT", "marginal_cost": 42.0 * gas_price_factor, "max_mw": 461.0},
-            {"id": 5, "name": "Egbin Thermal", "type": "Gas Steam", "marginal_cost": 46.5 * gas_price_factor, "max_mw": 1100.0},
-            {"id": 6, "name": "Delta IV Gas", "type": "Gas OCGT", "marginal_cost": 54.0 * gas_price_factor, "max_mw": 600.0},
-        ]
-
-        remaining = total_demand
-        dispatched = []
-        mcp = 18.5
-
-        for plant in merit_order:
-            disp = min(remaining, plant["max_mw"])
-            remaining -= disp
-            if disp > 0:
-                mcp = plant["marginal_cost"]
-            dispatched.append({
-                "id": plant["id"],
-                "name": plant["name"],
-                "type": plant["type"],
-                "marginal_cost": round(plant["marginal_cost"], 1),
-                "dispatched_mw": round(disp, 1),
-                "max_mw": round(plant["max_mw"], 1),
-                "capacity_utilization": round((disp / plant["max_mw"]) * 100, 1) if plant["max_mw"] > 0 else 0,
-                "hourly_cost_ngn": round(disp * mcp * 1000, 0)
-            })
-
-        total_disp = sum(p["dispatched_mw"] for p in dispatched)
-        hydro_mw = sum(p["dispatched_mw"] for p in dispatched if p["type"] == "Hydro")
-
-        return {
-            "converged": True,
-            "market_clearing_price_ngn": round(mcp, 2),
-            "total_dispatched_mw": round(total_disp, 1),
-            "total_hourly_cost_ngn": sum(p["hourly_cost_ngn"] for p in dispatched),
-            "hydro_share_percent": round((hydro_mw / total_disp) * 100, 1) if total_disp > 0 else 0,
-            "thermal_share_percent": round(((total_disp - hydro_mw) / total_disp) * 100, 1) if total_disp > 0 else 0,
-            "merit_order": dispatched
         }
 
     return router

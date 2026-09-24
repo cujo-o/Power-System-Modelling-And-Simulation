@@ -3,7 +3,6 @@ import sys
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Ensure the backend root is in the Python search path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from routers.auth import get_auth_router
@@ -16,7 +15,6 @@ app = FastAPI(
     version="2.0.0",
 )
 
-# Enable CORS for frontend clients (Vercel & localhost)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -25,13 +23,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory registry and state (starts completely empty)
 model_registry = {}
 state = {"active_model_id": None}
 
-
 def get_active_net_and_name():
-    """Callback returning the currently active network for the simulation engine."""
     active_id = state.get("active_model_id")
     if active_id and active_id in model_registry:
         return model_registry[active_id]["net"], model_registry[active_id]["name"]
@@ -41,12 +36,9 @@ def get_active_net_and_name():
         return model_registry[first_id]["net"], model_registry[first_id]["name"]
     return None, "No Active Model"
 
-
-# Register API Routers
 app.include_router(get_auth_router())
 app.include_router(get_model_router(model_registry, state))
 app.include_router(get_sim_router(model_registry, get_active_net_and_name))
-
 
 @app.get("/")
 def root():
@@ -56,7 +48,6 @@ def root():
         "active_model": state.get("active_model_id"),
         "models_count": len(model_registry),
     }
-
 
 @app.get("/health")
 def health_check():
