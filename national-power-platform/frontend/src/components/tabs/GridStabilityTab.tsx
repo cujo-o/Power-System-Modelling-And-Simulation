@@ -90,13 +90,6 @@ export const GridStabilityTab: React.FC<Props> = ({
   const [deckView, setDeckView] = useState<'buses' | 'lines'>('buses');
   const [activatingId, setActivatingId] = useState<string | null>(null);
 
-  // Auto-solve watchdog: If on Step 2 and buses are empty, immediately run simulation
-  useEffect(() => {
-    if (workflowStep === 'simulation_properties' && buses.length === 0 && !loading) {
-      runSimulation();
-    }
-  }, [workflowStep, buses.length, loading, runSimulation]);
-
   // Filters
   const [domainFilter, setDomainFilter] = useState<'ALL' | 'Static' | 'Dynamic'>('ALL');
   const [voltageFilter, setVoltageFilter] = useState<'ALL' | '330kV' | '132kV'>('ALL');
