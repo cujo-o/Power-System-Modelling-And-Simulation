@@ -52,11 +52,6 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
     </div>
 
-    {/* User Status & Auth */}
-    <div className="flex items-center gap-3">
-      <span className="hidden lg:inline-flex px-3 py-1 rounded-full text-xs font-bold bg-[#f5eff6] text-[#500b50] border border-[#500b50]/20">
-        NESI 330/132 kV Grid
-      </span>
 
       {currentUser ? (
         <div className="flex items-center gap-3">
@@ -78,9 +73,8 @@ export const Header: React.FC<HeaderProps> = ({
           className="flex items-center gap-2 rounded-lg bg-[#500b50] text-white px-4 py-2 text-xs font-bold hover:bg-[#680f68] transition shadow-xs"
         >
           <LogIn className="h-4 w-4" />
-          <span>Operator Sign In</span>
+          <span>ign In</span>
         </button>
       )}
-    </div>
   </header>
 );
