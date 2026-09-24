@@ -54,7 +54,7 @@ const INITIAL_MEMBERS: TeamMember[] = [
     tag: 'Co-Investigator',
     department: 'Department of Electrical & Electronics Engineering',
     institution: 'Federal University of Technology, Minna',
-    image: '/team/buhari.jpg',
+    image: '/team/buhari.png',
     bio: 'Directing dynamic frequency response modeling, transient stability analysis, and PSS controller optimization.',
   },
   // 3. Lower Row (Trio)
@@ -83,7 +83,7 @@ const INITIAL_MEMBERS: TeamMember[] = [
     tag: 'Co-Investigator',
     department: 'School of Infrastructure, Process Engineering & Technology',
     institution: 'Federal University of Technology, Minna',
-    image: '/team/hameedat.jpg',
+    image: '/team/hameedat.jpeg',
   },
 ]
 
