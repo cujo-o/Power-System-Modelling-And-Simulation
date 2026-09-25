@@ -28,12 +28,12 @@ const INITIAL_MEMBERS: TeamMember[] = [
   // 1. Featured Top Lead
   {
     id: 'okoro',
-    name: 'Engr. Prof. I. Okoro',
-    role: 'Lead Principal Investigator & Project Patron',
+    name: 'Engr. Dr. A. S. Ahmed',
+    role: 'Lead Principal Investigator',
     tag: 'Principal Investigator',
     department: 'Department of Electrical & Electronics Engineering',
     institution: 'Federal University of Technology, Minna',
-    image: '/team/okoro.jpg',
+    image: '/team/sadiq.jpg ',
     bio: 'Overseeing project governance, strategic simulation workflows, and institutional validation for the ML4PS research platform.',
   },
   // 2. Middle Row (Pair)
@@ -60,12 +60,12 @@ const INITIAL_MEMBERS: TeamMember[] = [
   // 3. Lower Row (Trio)
   {
     id: 'sadiq',
-    name: 'Engr. Dr. Abubakar Sadiq',
+    name: 'Engr. Prof. I. Okoro',
     role: 'Senior Research Fellow (Machine Learning)',
     tag: 'Senior Researcher',
     department: 'Department of Electrical & Electronics Engineering',
     institution: 'Federal University of Technology, Minna',
-    image: '/team/sadiq.jpg',
+    image: '/team/okoro.jpg',
   },
   {
     id: 'ambafi',
