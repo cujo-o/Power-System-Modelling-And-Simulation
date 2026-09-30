@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   BusData,
   LineData,
@@ -22,12 +22,12 @@ import {
   GitBranch,
   Sliders,
   ShieldAlert,
-  Flame,
   ArrowRight,
-  FolderOpen,
   Check,
   Zap,
   Power,
+  Activity,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface Props {
@@ -48,6 +48,18 @@ interface Props {
   onCascadeTrigger: (initialTripped: number[], threshold: number) => Promise<CascadeResult>;
   onApplyCascadeTrips: (trippedList: number[]) => void;
 }
+
+const TooltipBadge: React.FC<{ content: string }> = ({ content }) => (
+  <span className="relative group inline-block ml-1 align-middle">
+    <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-600 hover:bg-[#500b50] hover:text-white cursor-help transition">
+      ?
+    </span>
+    <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block w-52 rounded-lg bg-slate-900 px-3 py-2 text-[11px] font-normal normal-case leading-snug text-white shadow-xl z-50 text-center">
+      {content}
+      <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-900" />
+    </span>
+  </span>
+);
 
 const formatRegionalZone = (zone: any, busName: string): string => {
   if (!zone || zone === '1.0' || zone === '1' || zone === 1) {
@@ -90,11 +102,12 @@ export const GridStabilityTab: React.FC<Props> = ({
   const [deckView, setDeckView] = useState<'buses' | 'lines'>('buses');
   const [activatingId, setActivatingId] = useState<string | null>(null);
 
-  // Filters
+  // Filters & Search
   const [domainFilter, setDomainFilter] = useState<'ALL' | 'Static' | 'Dynamic'>('ALL');
   const [voltageFilter, setVoltageFilter] = useState<'ALL' | '330kV' | '132kV'>('ALL');
   const [platformFilter, setPlatformFilter] = useState<string>('ALL');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [modelSearchQuery, setModelSearchQuery] = useState('');
+  const [busSearchQuery, setBusSearchQuery] = useState('');
 
   // Cascade
   const [cascadeThreshold, setCascadeThreshold] = useState(100.0);
@@ -119,7 +132,7 @@ export const GridStabilityTab: React.FC<Props> = ({
   const [newGenP, setNewGenP] = useState(150);
   const [newGenVm, setNewGenVm] = useState(1.03);
 
-  // Synchronize dropdown selections when buses or lines update
+  // Synchronize dropdown references
   useEffect(() => {
     if (lines.length > 0 && (!initialTripLine || !lines.some((l) => l.id === initialTripLine))) {
       setInitialTripLine(lines[0].id);
@@ -143,10 +156,56 @@ export const GridStabilityTab: React.FC<Props> = ({
     const matchesPlatform =
       platformFilter === 'ALL' || (m.platform || '').toLowerCase().includes(platformFilter.toLowerCase());
     const matchesSearch =
-      (m.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (m.voltage_level || '').toLowerCase().includes(searchQuery.toLowerCase());
+      (m.name || '').toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
+      (m.voltage_level || '').toLowerCase().includes(modelSearchQuery.toLowerCase());
     return matchesDomain && matchesVoltage && matchesPlatform && matchesSearch;
   });
+
+  // Filtered Buses for Telemetry Table
+  const filteredBuses = useMemo(() => {
+    if (!busSearchQuery.trim()) return buses;
+    const query = busSearchQuery.toLowerCase();
+    return buses.filter(
+      (b) =>
+        b.name.toLowerCase().includes(query) ||
+        String(b.id).includes(query) ||
+        formatRegionalZone(b.zone, b.name).toLowerCase().includes(query)
+    );
+  }, [buses, busSearchQuery]);
+
+  // Executive KPI summary calculations
+  const voltageStats = useMemo(() => {
+    if (buses.length === 0) return { min: 1.0, max: 1.0, avg: 1.0, compliantPercent: 100, minBus: '', maxBus: '' };
+    let min = Infinity;
+    let max = -Infinity;
+    let sum = 0;
+    let compliantCount = 0;
+    let minBus = '';
+    let maxBus = '';
+
+    buses.forEach((b) => {
+      const v = b.v_pu ?? 1.0;
+      sum += v;
+      if (v < min) {
+        min = v;
+        minBus = b.name;
+      }
+      if (v > max) {
+        max = v;
+        maxBus = b.name;
+      }
+      if (v >= 0.95 && v <= 1.05) compliantCount++;
+    });
+
+    return {
+      min: Number(min.toFixed(3)),
+      max: Number(max.toFixed(3)),
+      avg: Number((sum / buses.length).toFixed(3)),
+      compliantPercent: Number(((compliantCount / buses.length) * 100).toFixed(1)),
+      minBus,
+      maxBus,
+    };
+  }, [buses]);
 
   const handleActivateAndOpen = async (id: string) => {
     setActivatingId(id);
@@ -203,21 +262,6 @@ export const GridStabilityTab: React.FC<Props> = ({
     setTimeout(runSimulation, 60);
   };
 
-  const handleRemoveBus = (index: number) => {
-    setPfVariables((prev) => ({ ...prev, newBuses: prev.newBuses.filter((_, i) => i !== index) }));
-    setTimeout(runSimulation, 60);
-  };
-
-  const handleRemoveLine = (index: number) => {
-    setPfVariables((prev) => ({ ...prev, newLines: prev.newLines.filter((_, i) => i !== index) }));
-    setTimeout(runSimulation, 60);
-  };
-
-  const handleRemoveGen = (index: number) => {
-    setPfVariables((prev) => ({ ...prev, newGenerators: prev.newGenerators.filter((_, i) => i !== index) }));
-    setTimeout(runSimulation, 60);
-  };
-
   const totalExtensionsCount =
     pfVariables.newBuses.length + pfVariables.newLines.length + pfVariables.newGenerators.length;
 
@@ -225,7 +269,7 @@ export const GridStabilityTab: React.FC<Props> = ({
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Workflow Navigator Header */}
+      {/* Workflow Header Navigator */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 gap-3">
         <div>
           <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
@@ -288,8 +332,8 @@ export const GridStabilityTab: React.FC<Props> = ({
                 <input
                   type="text"
                   placeholder="e.g. 330kV, 132kV, Kainji..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  value={modelSearchQuery}
+                  onChange={(e) => setModelSearchQuery(e.target.value)}
                   className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:border-[#500b50] bg-white font-medium"
                 />
               </div>
@@ -487,7 +531,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                 onClick={() => setWorkflowStep('select_model')}
                 className="flex items-center gap-2 rounded-xl border border-slate-300 bg-slate-50 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100 transition shadow-xs"
               >
-                <span>⇄ Switch / Select Model</span>
+                <span>Switch / Select Model</span>
               </button>
             </div>
           </div>
@@ -510,7 +554,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                 simSubTab === 'cascade' ? 'bg-[#500b50] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <Flame className="h-4 w-4 text-rose-500" />
+              <Activity className="h-4 w-4 text-rose-500" />
               <span>Cascading Failure</span>
             </button>
 
@@ -540,81 +584,122 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </div>
               )}
 
-              {/* 5 Operational Parameter Cards (With 240% Demand Scale) */}
+              {/* Professional Input Deck with Numeric Precision and Tooltips */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-2">
+                {/* 1. Demand Scale */}
+                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold uppercase text-slate-500">
-                      Demand Scale
+                    <label className="text-xs font-bold uppercase text-slate-600 flex items-center">
+                      <span>Demand Scale</span>
+                      <TooltipBadge content="System-wide active load scaling factor (λ). Proportioned dynamically across all bulk consumption and regional nodes." />
                     </label>
                     <span className="text-xs font-mono font-bold text-purple-900">
-                      {((pfVariables.loadMultiplier || 1.0) * 100).toFixed(0)}%
+                      {(pfVariables.loadMultiplier || 1.0).toFixed(2)}x
                     </span>
                   </div>
 
-                  <input
-                    type="range"
-                    min="0.4"
-                    max="2.4"
-                    step="0.05"
-                    value={pfVariables.loadMultiplier || 1.0}
-                    onChange={(e) =>
-                      setPfVariables((v) => ({ ...v, loadMultiplier: parseFloat(e.target.value) || 1.0 }))
-                    }
-                    className="w-full accent-[#500b50] cursor-pointer"
-                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      step="5"
+                      min="40"
+                      max="250"
+                      value={Math.round((pfVariables.loadMultiplier || 1.0) * 100)}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        setPfVariables((v) => ({ ...v, loadMultiplier: isNaN(val) ? 1.0 : val / 100 }));
+                      }}
+                      className="w-full text-base font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 focus:border-[#500b50] focus:outline-none"
+                    />
+                    <span className="text-slate-500 font-mono text-sm font-semibold">%</span>
+                  </div>
 
-                  <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
-                    <span>40%</span>
-                    <span>100%</span>
-                    <span>180%</span>
-                    <span className="text-[#500b50] font-bold">240% Max</span>
+                  {/* Industrial Preset Chips */}
+                  <div className="flex flex-wrap gap-1 pt-1">
+                    {[80, 100, 125, 150, 180].map((pct) => (
+                      <button
+                        key={pct}
+                        type="button"
+                        onClick={() => setPfVariables((v) => ({ ...v, loadMultiplier: pct / 100 }))}
+                        className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border transition ${
+                          Math.round((pfVariables.loadMultiplier || 1.0) * 100) === pct
+                            ? 'bg-[#500b50] text-white border-[#500b50]'
+                            : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {pct}%
+                      </button>
+                    ))}
                   </div>
                 </div>
 
-                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
-                  <label className="block text-xs font-bold uppercase text-slate-500 mb-2">
-                    Power Factor (cos φ)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.75"
-                    max="1.0"
-                    value={pfVariables.targetPowerFactor || 0.9}
-                    onChange={(e) =>
-                      setPfVariables((v) => ({ ...v, targetPowerFactor: parseFloat(e.target.value) || 0.9 }))
-                    }
-                    className="w-full text-base font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5"
-                  />
-                  <span className="text-xs text-slate-400 mt-2 block">Inductive MVAR ratio</span>
+                {/* 2. Power Factor */}
+                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold uppercase text-slate-600 flex items-center">
+                      <span>Power Factor (cos φ)</span>
+                      <TooltipBadge content="Operating active-to-apparent power ratio (P/S). Determines inductive reactive MVAR demand across all substation load centers." />
+                    </label>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.70"
+                      max="1.0"
+                      value={pfVariables.targetPowerFactor || 0.9}
+                      onChange={(e) =>
+                        setPfVariables((v) => ({ ...v, targetPowerFactor: parseFloat(e.target.value) || 0.9 }))
+                      }
+                      className="w-full text-base font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 focus:border-[#500b50] focus:outline-none"
+                    />
+                    <span className="text-slate-400 font-mono text-xs">ratio</span>
+                  </div>
+
+                  <span className="text-[11px] text-slate-400 block font-mono">
+                    Inductive Tan(φ): {Math.tan(Math.acos(pfVariables.targetPowerFactor || 0.9)).toFixed(2)}
+                  </span>
                 </div>
 
-                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
-                  <label className="block text-xs font-bold uppercase text-slate-500 mb-2">
-                    Slack Voltage (V₀)
-                  </label>
+                {/* 3. Slack Voltage */}
+                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold uppercase text-slate-600 flex items-center">
+                      <span>Slack Voltage (V₀)</span>
+                      <TooltipBadge content="Terminal voltage setpoint magnitude at the reference (slack) busbar (Egbin PS / Kainji GS) in per-unit." />
+                    </label>
+                  </div>
+
                   <div className="flex items-center gap-2">
                     <input
                       type="number"
                       step="0.005"
                       min="0.95"
-                      max="1.10"
+                      max="1.15"
                       value={pfVariables.slackVoltagePu || 1.05}
                       onChange={(e) =>
                         setPfVariables((v) => ({ ...v, slackVoltagePu: parseFloat(e.target.value) || 1.05 }))
                       }
-                      className="w-full text-base font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5"
+                      className="w-full text-base font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 focus:border-[#500b50] focus:outline-none"
                     />
-                    <span className="text-slate-500 text-xs">pu</span>
+                    <span className="text-slate-500 font-mono text-sm">pu</span>
                   </div>
-                  <span className="text-xs text-slate-400 mt-2 block">Egbin terminal setpoint</span>
+
+                  <span className="text-[11px] text-slate-400 block font-mono">
+                    {((pfVariables.slackVoltagePu || 1.05) * 330).toFixed(1)} kV Base
+                  </span>
                 </div>
 
-                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
-                  <label className="block text-xs font-bold uppercase text-slate-500 mb-2">
-                    Shunt MVAR (ΔQ)
-                  </label>
+                {/* 4. Shunt MVAR */}
+                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold uppercase text-slate-600 flex items-center">
+                      <span>Shunt MVAR (ΔQ)</span>
+                      <TooltipBadge content="Grid reactive compensation. Positive values inject capacitive MVAR to boost sagging voltages; negative values absorb MVAR to curb high voltage." />
+                    </label>
+                  </div>
+
                   <div className="flex items-center gap-2">
                     <input
                       type="number"
@@ -623,17 +708,25 @@ export const GridStabilityTab: React.FC<Props> = ({
                       onChange={(e) =>
                         setPfVariables((v) => ({ ...v, shuntMvarCompensation: parseFloat(e.target.value) || 0 }))
                       }
-                      className="w-full text-base font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5"
+                      className="w-full text-base font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 focus:border-[#500b50] focus:outline-none"
                     />
-                    <span className="text-slate-500 text-xs">MVAR</span>
+                    <span className="text-slate-500 font-mono text-xs font-semibold">MVAR</span>
                   </div>
-                  <span className="text-xs text-slate-400 mt-2 block">+Cap / -Reactor</span>
+
+                  <span className="text-[11px] text-slate-400 block font-mono">
+                    +Capacitor / -Reactor
+                  </span>
                 </div>
 
-                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
-                  <label className="block text-xs font-bold uppercase text-slate-500 mb-2">
-                    Thermal Derating
-                  </label>
+                {/* 5. Thermal Derating */}
+                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold uppercase text-slate-600 flex items-center">
+                      <span>Thermal Derating</span>
+                      <TooltipBadge content="Transmission corridor current capacity derating factor to account for tropical ambient temperatures (35°C–40°C) and line conductor sag." />
+                    </label>
+                  </div>
+
                   <div className="flex items-center gap-2">
                     <input
                       type="number"
@@ -644,15 +737,18 @@ export const GridStabilityTab: React.FC<Props> = ({
                       onChange={(e) =>
                         setPfVariables((v) => ({ ...v, thermalDeratingFactor: parseFloat(e.target.value) || 1.0 }))
                       }
-                      className="w-full text-base font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5"
+                      className="w-full text-base font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 focus:border-[#500b50] focus:outline-none"
                     />
                     <span className="text-slate-500 font-mono text-sm">x</span>
                   </div>
-                  <span className="text-xs text-slate-400 mt-2 block">Ambient temperature</span>
+
+                  <span className="text-[11px] text-slate-400 block font-mono">
+                    Ambient Temperature
+                  </span>
                 </div>
               </div>
 
-              {/* View Switcher Bar */}
+              {/* View Switcher and Action Bar */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl border border-slate-200 bg-white shadow-xs gap-3">
                 <div className="flex items-center gap-2">
                   <div className="flex rounded-lg border border-slate-200 p-0.5 bg-slate-50 text-xs font-bold">
@@ -702,75 +798,174 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </div>
               </div>
 
-              {/* VIEW A: SUBSTATION VOLTAGES TABLE */}
+              {/* VIEW A: SUBSTATION VOLTAGES TABLE & KPIS */}
               {deckView === 'buses' && (
-                <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-xs">
-                  <div className="bg-[#500b50] text-white px-5 py-3 flex justify-between items-center text-sm font-bold">
-                    <span>Substation Bus Voltage Profiles ({buses.length} Nodes)</span>
-                    <span className="font-normal text-xs text-white/80">Statutory NERC Band: 0.95 – 1.05 p.u.</span>
-                  </div>
-                  <div className="overflow-x-auto max-h-[420px]">
-                    <table className="w-full text-left text-sm min-w-[600px]">
-                      <thead className="bg-slate-100 text-slate-700 border-b border-slate-200 font-semibold sticky top-0">
-                        <tr>
-                          <th className="py-3 px-4">ID</th>
-                          <th className="py-3 px-4">Substation Name</th>
-                          <th className="py-3 px-4">Regional Zone</th>
-                          <th className="py-3 px-4">Voltage (|V|)</th>
-                          <th className="py-3 px-4">Angle (°)</th>
-                          <th className="py-3 px-4">Active (MW)</th>
-                          <th className="py-3 px-4">Reactive (MVAR)</th>
-                          <th className="py-3 px-4">Compliance</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-slate-800">
-                        {buses.length === 0 ? (
-                          <tr>
-                            <td colSpan={8} className="py-10 text-center text-slate-500">
-                              No bus telemetry loaded in solver memory. Click &quot;Solve AC Flow&quot; above to calculate.
-                            </td>
-                          </tr>
-                        ) : (
-                          buses.map((bus) => {
-                            const vVal = bus.v_pu ?? 1.0;
-                            const isUnder = vVal < 0.95;
-                            const isOver = vVal > 1.05;
-                            const zoneLabel = formatRegionalZone(bus.zone, bus.name);
+                <div className="space-y-4">
+                  {/* Executive KPI Summary Cards */}
+                  {buses.length > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-xs">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
+                          Minimum Grid Voltage
+                        </span>
+                        <div className="flex items-baseline gap-2 mt-0.5">
+                          <span
+                            className={`text-lg font-black font-mono ${
+                              voltageStats.min < 0.95 ? 'text-rose-600' : 'text-emerald-700'
+                            }`}
+                          >
+                            {voltageStats.min.toFixed(3)} pu
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-slate-500 truncate block mt-0.5">
+                          {voltageStats.minBus}
+                        </span>
+                      </div>
 
-                            return (
-                              <tr key={bus.id} className="hover:bg-slate-50/80">
-                                <td className="py-3 px-4 font-mono text-slate-400 font-bold">#{bus.id}</td>
-                                <td className="py-3 px-4 font-bold text-slate-900">{bus.name}</td>
-                                <td className="py-3 px-4 text-slate-600 font-medium">{zoneLabel}</td>
-                                <td className="py-3 px-4 font-mono font-bold">
-                                  <span className={isUnder ? 'text-rose-600' : isOver ? 'text-amber-600' : 'text-emerald-700'}>
-                                    {vVal.toFixed(3)} pu
-                                  </span>
-                                </td>
-                                <td className="py-3 px-4 font-mono">{(bus.va_deg ?? 0.0).toFixed(2)}°</td>
-                                <td className="py-3 px-4 font-mono">{bus.p_mw ?? 0}</td>
-                                <td className="py-3 px-4 font-mono">{bus.q_mvar ?? 0}</td>
-                                <td className="py-3 px-4">
-                                  {isUnder ? (
-                                    <span className="inline-flex items-center rounded-md bg-rose-100 px-2.5 py-1 text-xs font-bold text-rose-700">
-                                      Under-voltage
+                      <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-xs">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
+                          Maximum Grid Voltage
+                        </span>
+                        <div className="flex items-baseline gap-2 mt-0.5">
+                          <span
+                            className={`text-lg font-black font-mono ${
+                              voltageStats.max > 1.05 ? 'text-amber-600' : 'text-emerald-700'
+                            }`}
+                          >
+                            {voltageStats.max.toFixed(3)} pu
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-slate-500 truncate block mt-0.5">
+                          {voltageStats.maxBus}
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-xs">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
+                          Average Grid Voltage
+                        </span>
+                        <div className="flex items-baseline gap-2 mt-0.5">
+                          <span className="text-lg font-black font-mono text-slate-900">
+                            {voltageStats.avg.toFixed(3)} pu
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-slate-400 block mt-0.5">
+                          Nominal target: 1.000 pu
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-xs">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
+                          Compliance Band (NERC)
+                        </span>
+                        <div className="flex items-baseline gap-2 mt-0.5">
+                          <span
+                            className={`text-lg font-black font-mono ${
+                              voltageStats.compliantPercent < 90 ? 'text-amber-600' : 'text-emerald-700'
+                            }`}
+                          >
+                            {voltageStats.compliantPercent}%
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-slate-400 block mt-0.5">
+                          0.95 pu to 1.05 pu
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Table with Integrated Substation Search */}
+                  <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-xs">
+                    <div className="bg-[#500b50] text-white px-5 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-sm font-bold">
+                      <div className="flex items-center gap-2">
+                        <span>Substation Bus Voltage Profiles ({filteredBuses.length} Nodes)</span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <div className="relative">
+                          <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
+                          <input
+                            type="text"
+                            placeholder="Filter substation name or zone..."
+                            value={busSearchQuery}
+                            onChange={(e) => setBusSearchQuery(e.target.value)}
+                            className="bg-white/10 hover:bg-white/15 focus:bg-white focus:text-slate-900 text-white placeholder-white/60 text-xs rounded-lg pl-8 pr-3 py-1.5 focus:outline-none transition w-56"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto max-h-[440px]">
+                      <table className="w-full text-left text-sm min-w-[650px]">
+                        <thead className="bg-slate-100 text-slate-700 border-b border-slate-200 font-semibold sticky top-0">
+                          <tr>
+                            <th className="py-3 px-4">ID</th>
+                            <th className="py-3 px-4">Substation Name</th>
+                            <th className="py-3 px-4">Regional Zone</th>
+                            <th className="py-3 px-4">Voltage (|V|)</th>
+                            <th className="py-3 px-4">Angle (°)</th>
+                            <th className="py-3 px-4">Active (MW)</th>
+                            <th className="py-3 px-4">Reactive (MVAR)</th>
+                            <th className="py-3 px-4">Compliance</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-slate-800">
+                          {filteredBuses.length === 0 ? (
+                            <tr>
+                              <td colSpan={8} className="py-10 text-center text-slate-500">
+                                No substation nodes match the query. Click &quot;Solve AC Flow&quot; to calculate.
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredBuses.map((bus) => {
+                              const vVal = bus.v_pu ?? 1.0;
+                              const isUnder = vVal < 0.95;
+                              const isOver = vVal > 1.05;
+                              const zoneLabel = formatRegionalZone(bus.zone, bus.name);
+
+                              return (
+                                <tr key={bus.id} className="hover:bg-slate-50/80">
+                                  <td className="py-2.5 px-4 font-mono text-slate-400 font-bold">#{bus.id}</td>
+                                  <td className="py-2.5 px-4 font-bold text-slate-900">{bus.name}</td>
+                                  <td className="py-2.5 px-4 text-slate-600 font-medium text-xs">{zoneLabel}</td>
+                                  <td className="py-2.5 px-4 font-mono font-bold">
+                                    <span className={isUnder ? 'text-rose-600' : isOver ? 'text-amber-600' : 'text-emerald-700'}>
+                                      {vVal.toFixed(3)} pu
                                     </span>
-                                  ) : isOver ? (
-                                    <span className="inline-flex items-center rounded-md bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800">
-                                      Over-voltage
-                                    </span>
-                                  ) : (
-                                    <span className="inline-flex items-center rounded-md bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-800">
-                                      Compliant
-                                    </span>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })
-                        )}
-                      </tbody>
-                    </table>
+                                  </td>
+                                  <td className="py-2.5 px-4 font-mono text-xs text-slate-600">
+                                    {(bus.va_deg ?? 0.0) >= 0 ? '+' : ''}
+                                    {(bus.va_deg ?? 0.0).toFixed(2)}°
+                                  </td>
+                                  <td className="py-2.5 px-4 font-mono text-xs font-semibold">
+                                    {(bus.p_mw ?? 0).toFixed(1)}
+                                  </td>
+                                  <td className="py-2.5 px-4 font-mono text-xs font-semibold text-slate-700">
+                                    {(bus.q_mvar ?? 0) >= 0 ? '+' : ''}
+                                    {(bus.q_mvar ?? 0).toFixed(1)}
+                                  </td>
+                                  <td className="py-2.5 px-4">
+                                    {isUnder ? (
+                                      <span className="inline-flex items-center rounded-md bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-700">
+                                        Under-voltage
+                                      </span>
+                                    ) : isOver ? (
+                                      <span className="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800">
+                                        Over-voltage
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800">
+                                        Compliant
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               )}
@@ -781,10 +976,10 @@ export const GridStabilityTab: React.FC<Props> = ({
                   <div className="bg-[#500b50] text-white px-5 py-3 flex justify-between items-center text-sm font-bold">
                     <span>Transmission Lines & $N-1$ Contingency Breaker Deck ({lines.length} Corridors)</span>
                     <span className="font-normal text-xs text-white/80">
-                      Click &quot;Trip Breaker&quot; to test instant $N-1$ power redistribution
+                      Operate breaker to test immediate $N-1$ power redistribution
                     </span>
                   </div>
-                  <div className="overflow-x-auto max-h-[420px]">
+                  <div className="overflow-x-auto max-h-[440px]">
                     <table className="w-full text-left text-sm min-w-[700px]">
                       <thead className="bg-slate-100 text-slate-700 border-b border-slate-200 font-semibold sticky top-0">
                         <tr>
@@ -801,7 +996,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                         {lines.length === 0 ? (
                           <tr>
                             <td colSpan={7} className="py-10 text-center text-slate-500">
-                              No transmission corridors loaded. Solve power flow to populate line loadings.
+                              No transmission corridors loaded. Solve power flow to view line loadings.
                             </td>
                           </tr>
                         ) : (
@@ -813,35 +1008,35 @@ export const GridStabilityTab: React.FC<Props> = ({
 
                             return (
                               <tr key={l.id} className={`hover:bg-slate-50/80 ${isTripped ? 'bg-rose-50/50' : ''}`}>
-                                <td className="py-3 px-4 font-mono text-slate-400 font-bold">#{l.id}</td>
-                                <td className="py-3 px-4 font-bold text-slate-900">{l.name}</td>
-                                <td className="py-3 px-4 font-mono text-slate-600 text-xs">
+                                <td className="py-2.5 px-4 font-mono text-slate-400 font-bold">#{l.id}</td>
+                                <td className="py-2.5 px-4 font-bold text-slate-900">{l.name}</td>
+                                <td className="py-2.5 px-4 font-mono text-slate-600 text-xs">
                                   Bus #{l.from_bus} $\to$ #{l.to_bus}
                                 </td>
-                                <td className="py-3 px-4 font-mono font-bold">
+                                <td className="py-2.5 px-4 font-mono font-bold">
                                   {isTripped ? '0.0 MW' : `${flowMw.toFixed(1)} MW`}
                                 </td>
-                                <td className="py-3 px-4 font-mono">
+                                <td className="py-2.5 px-4 font-mono">
                                   {isTripped ? (
-                                    <span className="text-slate-400">Isolated</span>
+                                    <span className="text-slate-400 font-semibold">Isolated</span>
                                   ) : (
                                     <span className={isOverload ? 'text-rose-600 font-bold' : 'text-slate-800'}>
                                       {loadingPercent.toFixed(1)}%
                                     </span>
                                   )}
                                 </td>
-                                <td className="py-3 px-4">
+                                <td className="py-2.5 px-4">
                                   {isTripped ? (
-                                    <span className="inline-flex items-center gap-1 rounded-md bg-rose-100 px-2.5 py-1 text-xs font-bold text-rose-800">
+                                    <span className="inline-flex items-center gap-1 rounded-md bg-rose-100 px-2.5 py-0.5 text-xs font-bold text-rose-800">
                                       Breaker Open (Tripped)
                                     </span>
                                   ) : (
-                                    <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-800">
+                                    <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-800">
                                       Breaker Closed (In Service)
                                     </span>
                                   )}
                                 </td>
-                                <td className="py-3 px-4 text-right">
+                                <td className="py-2.5 px-4 text-right">
                                   <button
                                     onClick={() => toggleLine(l.id)}
                                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-xs ${
@@ -872,7 +1067,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
                   <div>
                     <label className="block text-xs font-bold uppercase text-slate-600 mb-1.5">
-                      Initiating Outage
+                      Initiating Contingency
                     </label>
                     <select
                       value={initialTripLine}
@@ -889,19 +1084,19 @@ export const GridStabilityTab: React.FC<Props> = ({
 
                   <div>
                     <label className="block text-xs font-bold uppercase text-slate-600 mb-1.5">
-                      Overcurrent Threshold
+                      Overcurrent Trip Threshold
                     </label>
                     <div className="flex items-center gap-3">
                       <input
-                        type="range"
+                        type="number"
                         min="90"
-                        max="140"
+                        max="150"
                         step="5"
                         value={cascadeThreshold}
                         onChange={(e) => setCascadeThreshold(Number(e.target.value))}
-                        className="w-full accent-rose-600 cursor-pointer"
+                        className="w-full text-sm font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5"
                       />
-                      <span className="font-mono font-bold text-rose-700 text-base">{cascadeThreshold}%</span>
+                      <span className="font-mono font-bold text-rose-700 text-sm">%</span>
                     </div>
                   </div>
 
@@ -919,8 +1114,8 @@ export const GridStabilityTab: React.FC<Props> = ({
                       disabled={cascadeLoading || lines.length === 0}
                       className="w-full flex items-center justify-center gap-2 rounded-xl bg-rose-700 text-white py-2.5 text-sm font-bold hover:bg-rose-800 transition shadow-xs disabled:opacity-50"
                     >
-                      {cascadeLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Flame className="h-4 w-4" />}
-                      <span>Run Cascade Loop</span>
+                      {cascadeLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Activity className="h-4 w-4" />}
+                      <span>Run Cascading Sequence</span>
                     </button>
                   </div>
                 </div>
@@ -934,7 +1129,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                       <div>
                         <h4 className="font-bold text-slate-900">{(cascadeResult.status || '').replace(/_/g, ' ')}</h4>
                         <p className="text-xs text-slate-500">
-                          {cascadeResult.total_steps} stage(s) completed • {(cascadeResult.all_tripped_lines || []).length} corridors disconnected.
+                          {cascadeResult.total_steps} stage(s) calculated • {(cascadeResult.all_tripped_lines || []).length} transmission corridors tripped.
                         </p>
                       </div>
                     </div>
@@ -943,7 +1138,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                       onClick={() => onApplyCascadeTrips(cascadeResult.all_tripped_lines || [])}
                       className="px-4 py-2 rounded-lg bg-[#500b50] text-white font-bold text-xs shadow-xs"
                     >
-                      View on Diagram
+                      View on Single-Line Diagram
                     </button>
                   </div>
                 </div>
@@ -951,7 +1146,7 @@ export const GridStabilityTab: React.FC<Props> = ({
             </div>
           )}
 
-          {/* 3. REGIONAL PLANNING WITH REAL-TIME EDITABLE EXPANSION LEDGER */}
+          {/* 3. REGIONAL PLANNING */}
           {simSubTab === 'planning' && (
             <div className="space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1174,120 +1369,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                     + Incorporate Plant & Re-Solve
                   </button>
                 </div>
-              </div>
-
-              {/* Expansion Ledger */}
-              <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-xs">
-                <div className="bg-[#500b50] text-white px-5 py-3 flex justify-between items-center text-sm font-bold">
-                  <div className="flex items-center gap-2">
-                    <GitBranch className="h-4 w-4" />
-                    <span>Prospective Expansion Ledger ({totalExtensionsCount} Active Additions)</span>
-                  </div>
-                  {totalExtensionsCount > 0 && (
-                    <button
-                      onClick={() => {
-                        setPfVariables((v) => ({ ...v, newBuses: [], newLines: [], newGenerators: [] }));
-                        setTimeout(runSimulation, 60);
-                      }}
-                      className="px-3 py-1 bg-white/20 hover:bg-white/30 text-white rounded-md text-xs font-bold transition"
-                    >
-                      Clear All Expansions
-                    </button>
-                  )}
-                </div>
-
-                {totalExtensionsCount === 0 ? (
-                  <div className="p-8 text-center text-sm text-slate-500">
-                    No prospective network elements added yet. Use the cards above to design expansion scenarios.
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm min-w-[700px]">
-                      <thead className="bg-slate-100 text-slate-700 border-b border-slate-200 font-semibold">
-                        <tr>
-                          <th className="py-3 px-4">Type</th>
-                          <th className="py-3 px-4">Element Name</th>
-                          <th className="py-3 px-4">Voltage / Rating</th>
-                          <th className="py-3 px-4">Capacity / Distance</th>
-                          <th className="py-3 px-4">Interconnection</th>
-                          <th className="py-3 px-4 text-right">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-slate-800">
-                        {pfVariables.newBuses.map((bus, idx) => (
-                          <tr key={`bus-${idx}`} className="hover:bg-slate-50">
-                            <td className="py-3 px-4">
-                              <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-blue-100 text-blue-800">
-                                Substation
-                              </span>
-                            </td>
-                            <td className="py-3 px-4 font-bold text-slate-900">{bus.name}</td>
-                            <td className="py-3 px-4 font-mono">{bus.vn_kv} kV</td>
-                            <td className="py-3 px-4 font-mono">{bus.p_mw} MW Load</td>
-                            <td className="py-3 px-4 text-slate-600">{bus.zone}</td>
-                            <td className="py-3 px-4 text-right">
-                              <button
-                                onClick={() => handleRemoveBus(idx)}
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
-                                title="Delete element"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-
-                        {pfVariables.newLines.map((line, idx) => (
-                          <tr key={`line-${idx}`} className="hover:bg-slate-50">
-                            <td className="py-3 px-4">
-                              <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-purple-100 text-purple-800">
-                                Line Corridor
-                              </span>
-                            </td>
-                            <td className="py-3 px-4 font-bold text-slate-900">{line.name}</td>
-                            <td className="py-3 px-4 font-mono">{line.conductor_type}</td>
-                            <td className="py-3 px-4 font-mono">{line.length_km} km</td>
-                            <td className="py-3 px-4 font-mono text-xs text-slate-600">
-                              Bus #{line.from_bus} $\to$ #{line.to_bus}
-                            </td>
-                            <td className="py-3 px-4 text-right">
-                              <button
-                                onClick={() => handleRemoveLine(idx)}
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
-                                title="Delete element"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-
-                        {pfVariables.newGenerators.map((gen, idx) => (
-                          <tr key={`gen-${idx}`} className="hover:bg-slate-50">
-                            <td className="py-3 px-4">
-                              <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-emerald-100 text-emerald-800">
-                                Power Plant
-                              </span>
-                            </td>
-                            <td className="py-3 px-4 font-bold text-slate-900">{gen.name}</td>
-                            <td className="py-3 px-4 font-mono">{gen.vm_pu} pu target</td>
-                            <td className="py-3 px-4 font-mono font-bold text-[#500b50]">{gen.p_mw} MW Infeed</td>
-                            <td className="py-3 px-4 font-mono text-slate-600">Bus #{gen.bus}</td>
-                            <td className="py-3 px-4 text-right">
-                              <button
-                                onClick={() => handleRemoveGen(idx)}
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
-                                title="Delete element"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
               </div>
             </div>
           )}

@@ -104,13 +104,13 @@ export default function PowerPlatformDashboard() {
   const navItems = [
     { id: 'Home', label: 'Dashboard', icon: Home },
     { id: 'Grid Models', label: 'Grid Stability Models', icon: Grid },
-    { id: 'Dynamics', label: 'Time-Domain & PSS', icon: Activity },
+    { id: 'Dynamics', label: 'Time-Domain', icon: Activity },
     { id: 'Market Simulations', label: 'Market Simulations', icon: DollarSign },
     { id: 'Data Upload', label: 'Upload & Ingestion', icon: UploadCloud },
     { id: 'Visualization', label: 'Single-Line Diagram', icon: Layers },
     { id: 'Reports', label: 'Reports & Publications', icon: FileText },
-    { id: 'Admin Panel', label: 'Organization & Leadership', icon: ShieldCheck },
-    { id: 'About Us', label: 'About Us (ML4PS)', icon: Info },
+    { id: 'Admin Panel', label: 'Workforce', icon: ShieldCheck },
+    { id: 'About Us', label: 'About Us', icon: Info },
   ];
 
   useEffect(() => {
