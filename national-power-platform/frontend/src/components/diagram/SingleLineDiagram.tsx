@@ -33,145 +33,6 @@ interface Point {
   y: number;
 }
 
-// 6 Discrete, non-overlapping regional drafting quadrants across a 4,000 x 2,600 px canvas
-const REGIONAL_QUADRANTS: Record<
-  string,
-  { xStart: number; yStart: number; cols: number; xPitch: number; yPitch: number }
-> = {
-  'north-west': { xStart: 280, yStart: 220, cols: 3, xPitch: 280, yPitch: 240 },
-  'north-central': { xStart: 1350, yStart: 220, cols: 4, xPitch: 280, yPitch: 240 },
-  'north-east': { xStart: 2650, yStart: 220, cols: 3, xPitch: 290, yPitch: 240 },
-  'south-west': { xStart: 260, yStart: 1350, cols: 4, xPitch: 280, yPitch: 250 },
-  'mid-west': { xStart: 1480, yStart: 1350, cols: 3, xPitch: 280, yPitch: 250 },
-  'south-east': { xStart: 2550, yStart: 1350, cols: 4, xPitch: 280, yPitch: 250 },
-  'main grid': { xStart: 1400, yStart: 800, cols: 4, xPitch: 280, yPitch: 240 },
-};
-
-// Automatic regional classifier covering all 63 bulk stations in the Nigerian 330kV transmission network
-const classifySubstationRegion = (zone: any, rawName: string): string => {
-  const z = (zone || '').toLowerCase();
-  const n = (rawName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-
-  if (
-    n.includes('kano') ||
-    n.includes('kaduna') ||
-    n.includes('kebbi') ||
-    n.includes('mando') ||
-    n.includes('funtua') ||
-    n.includes('gusau') ||
-    n.includes('rimzakara') ||
-    n.includes('kumbotso') ||
-    n.includes('katsina') ||
-    n.includes('zaria') ||
-    n.includes('sokoto') ||
-    (z.includes('west') && !z.includes('south') && !z.includes('mid'))
-  ) {
-    return 'north-west';
-  }
-
-  if (
-    n.includes('jos') ||
-    n.includes('bauchi') ||
-    n.includes('gombe') ||
-    n.includes('yola') ||
-    n.includes('maiduguri') ||
-    n.includes('damaturu') ||
-    n.includes('jalingo') ||
-    n.includes('mayobelwa') ||
-    n.includes('ashaka') ||
-    n.includes('potiskum') ||
-    (z.includes('east') && !z.includes('south'))
-  ) {
-    return 'north-east';
-  }
-
-  if (
-    n.includes('shiroro') ||
-    n.includes('jebba') ||
-    n.includes('kainji') ||
-    n.includes('katampe') ||
-    n.includes('gwagw') ||
-    n.includes('abuja') ||
-    n.includes('lokoja') ||
-    n.includes('geregu') ||
-    n.includes('ajaokuta') ||
-    n.includes('zungeru') ||
-    n.includes('makurdi') ||
-    n.includes('mcity') ||
-    n.includes('minna') ||
-    n.includes('suleja') ||
-    n.includes('keffi') ||
-    n.includes('lafia') ||
-    z.includes('central')
-  ) {
-    return 'north-central';
-  }
-
-  if (
-    n.includes('egbin') ||
-    n.includes('ikeja') ||
-    n.includes('akangba') ||
-    n.includes('aja') ||
-    n.includes('alagbon') ||
-    n.includes('lekki') ||
-    n.includes('sakete') ||
-    n.includes('osogbo') ||
-    n.includes('ayede') ||
-    n.includes('omotosho') ||
-    n.includes('olorunsogo') ||
-    n.includes('erunmu') ||
-    n.includes('ibadan') ||
-    n.includes('shagamu') ||
-    n.includes('ikorodu') ||
-    z.includes('southwest') ||
-    z.includes('south-west')
-  ) {
-    return 'south-west';
-  }
-
-  if (
-    n.includes('benin') ||
-    n.includes('sapele') ||
-    n.includes('delta') ||
-    n.includes('aladja') ||
-    n.includes('ihovbor') ||
-    n.includes('azura') ||
-    n.includes('okpai') ||
-    n.includes('asaba') ||
-    n.includes('agbor') ||
-    z.includes('mid')
-  ) {
-    return 'mid-west';
-  }
-
-  if (
-    n.includes('onitsha') ||
-    n.includes('nhaven') ||
-    n.includes('newhaven') ||
-    n.includes('ugwuaji') ||
-    n.includes('afam') ||
-    n.includes('alaoji') ||
-    n.includes('calabar') ||
-    n.includes('owerri') ||
-    n.includes('ikot') ||
-    n.includes('omoku') ||
-    n.includes('egbema') ||
-    n.includes('adiabor') ||
-    n.includes('portharcourt') ||
-    n.includes('uyo') ||
-    n.includes('aba') ||
-    n.includes('abakaliki') ||
-    z.includes('southeast') ||
-    z.includes('south-east') ||
-    z.includes('south-south') ||
-    z.includes('southsouth')
-  ) {
-    return 'south-east';
-  }
-
-  return 'main grid';
-};
-
 export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   buses = [],
   lines = [],
@@ -185,13 +46,13 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   const [viewStyle, setViewStyle] = useState<'stac_direct' | 'orthogonal'>('stac_direct');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Viewport Pan & Zoom
-  const [scale, setScale] = useState<number>(0.46);
-  const [pan, setPan] = useState<Point>({ x: 60, y: 40 });
+  // Canvas Viewport Pan & Zoom
+  const [scale, setScale] = useState<number>(0.55);
+  const [pan, setPan] = useState<Point>({ x: 80, y: 60 });
   const [isPanning, setIsPanning] = useState<boolean>(false);
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
 
-  // Persistent Draggable Busbar Positions
+  // Persistent Draggable Busbar Coordinates
   const [busPositions, setBusPositions] = useState<Record<number, Point>>({});
   const busPositionsRef = useRef<Record<number, Point>>({});
   busPositionsRef.current = busPositions;
@@ -205,56 +66,113 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   const currentModelRef = useRef<string>('');
 
   // =========================================================================
-  // Automatic Untangling Engine: Zonal Grid + AABB Collision Solver
+  // Automatic STAC Topological Untangler (Kamada-Kawai + AABB Non-Overlap)
   // =========================================================================
   const computeAutomaticUntangledLayout = useCallback((): Record<number, Point> => {
-    if (!buses || buses.length === 0) return {};
+    const N = buses.length;
+    if (N === 0) return {};
 
-    const positions: Record<number, Point> = {};
-    const regionBuckets: Record<string, BusData[]> = {
-      'north-west': [],
-      'north-central': [],
-      'north-east': [],
-      'south-west': [],
-      'mid-west': [],
-      'south-east': [],
-      'main grid': [],
-    };
-
+    // 1. Build Adjacency Graph from lines
+    const adj: Record<number, number[]> = {};
     buses.forEach((b) => {
-      const rKey = classifySubstationRegion(b.zone, b.name);
-      regionBuckets[rKey].push(b);
+      adj[b.id] = [];
+    });
+    lines.forEach((l) => {
+      if (adj[l.from_bus]) adj[l.from_bus].push(l.to_bus);
+      if (adj[l.to_bus]) adj[l.to_bus].push(l.from_bus);
     });
 
-    // 1. Zonal Allocation
-    Object.entries(regionBuckets).forEach(([regKey, bList]) => {
-      const qSpec = REGIONAL_QUADRANTS[regKey] || REGIONAL_QUADRANTS['main grid'];
-      bList.forEach((b, idx) => {
-        const col = idx % qSpec.cols;
-        const row = Math.floor(idx / qSpec.cols);
-        const staggerX = (row % 2) * 60;
-        positions[b.id] = {
-          x: qSpec.xStart + col * qSpec.xPitch + staggerX,
-          y: qSpec.yStart + row * qSpec.yPitch,
-        };
-      });
+    // 2. All-Pairs Shortest Path Matrix D[i][j] via BFS
+    const idToIndex = new Map<number, number>();
+    buses.forEach((b, i) => idToIndex.set(b.id, i));
+
+    const D: number[][] = Array.from({ length: N }, () => Array(N).fill(999));
+    for (let i = 0; i < N; i++) {
+      D[i][i] = 0;
+      const queue: number[] = [buses[i].id];
+      while (queue.length > 0) {
+        const currId = queue.shift()!;
+        const currIdx = idToIndex.get(currId)!;
+        const d = D[i][currIdx];
+        const neighbors = adj[currId] || [];
+        for (const nbrId of neighbors) {
+          const nbrIdx = idToIndex.get(nbrId);
+          if (nbrIdx !== undefined && D[i][nbrIdx] > d + 1) {
+            D[i][nbrIdx] = d + 1;
+            queue.push(nbrId);
+          }
+        }
+      }
+    }
+
+    // Connect any disjoint islands gracefully
+    let maxD = 1;
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        if (D[i][j] < 900 && D[i][j] > maxD) maxD = D[i][j];
+      }
+    }
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        if (D[i][j] >= 900) D[i][j] = maxD * 1.6;
+      }
+    }
+
+    // 3. Kamada-Kawai Stress Matrix
+    const idealEdgeLen = N > 30 ? 250 : 210;
+    const L: number[][] = Array.from({ length: N }, (_, i) =>
+      Array.from({ length: N }, (_, j) => idealEdgeLen * D[i][j])
+    );
+    const K: number[][] = Array.from({ length: N }, (_, i) =>
+      Array.from({ length: N }, (_, j) => (i === j ? 0 : 1.0 / (D[i][j] * D[i][j] + 0.05)))
+    );
+
+    // Initial seed placement in circle
+    const cx = 1600;
+    const cy = 1200;
+    const initialRadius = Math.max(380, N * 28);
+    const posArr: Point[] = buses.map((_, i) => {
+      const theta = (i / N) * 2 * Math.PI;
+      return {
+        x: cx + Math.cos(theta) * initialRadius,
+        y: cy + Math.sin(theta) * initialRadius,
+      };
     });
 
-    // 2. Strict AABB Separation Pass (Guarantees zero overlapping between all nodes)
-    const MIN_DX = 240;
-    const MIN_DY = 150;
+    // Run Gradient Descent Stress Minimization
+    let lr = 0.18;
+    const iterations = N > 30 ? 110 : 80;
+    for (let iter = 0; iter < iterations; iter++) {
+      const grad: Point[] = Array.from({ length: N }, () => ({ x: 0, y: 0 }));
 
-    for (let pass = 0; pass < 45; pass++) {
-      for (let i = 0; i < buses.length; i++) {
-        for (let j = i + 1; j < buses.length; j++) {
-          const idA = buses[i].id;
-          const idB = buses[j].id;
-          const pA = positions[idA];
-          const pB = positions[idB];
-          if (!pA || !pB) continue;
+      for (let i = 0; i < N; i++) {
+        for (let j = 0; j < N; j++) {
+          if (i === j) continue;
+          const dx = posArr[i].x - posArr[j].x;
+          const dy = posArr[i].y - posArr[j].y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
+          const factor = (2.0 * K[i][j] * (dist - L[i][j])) / dist;
+          grad[i].x += dx * factor;
+          grad[i].y += dy * factor;
+        }
+      }
 
-          const dx = pB.x - pA.x;
-          const dy = pB.y - pA.y;
+      for (let i = 0; i < N; i++) {
+        posArr[i].x -= lr * grad[i].x;
+        posArr[i].y -= lr * grad[i].y;
+      }
+      lr *= 0.975;
+    }
+
+    // 4. Overlap Elimination (AABB Bounding Box Separation Pass)
+    const MIN_DX = 240; // 100px busbar width + clear margin
+    const MIN_DY = 150; // Bus height + generator and load lead clearances
+
+    for (let pass = 0; pass < 35; pass++) {
+      for (let i = 0; i < N; i++) {
+        for (let j = i + 1; j < N; j++) {
+          const dx = posArr[j].x - posArr[i].x;
+          const dy = posArr[j].y - posArr[i].y;
           const absDx = Math.abs(dx);
           const absDy = Math.abs(dy);
 
@@ -263,31 +181,32 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             const overlapY = MIN_DY - absDy;
 
             if (overlapX < overlapY) {
-              const pushX = overlapX / 2 + 8;
-              if (dx >= 0) {
-                pB.x += pushX;
-                pA.x -= pushX;
-              } else {
-                pB.x -= pushX;
-                pA.x += pushX;
-              }
+              const shiftX = overlapX / 2 + 5;
+              const sign = dx >= 0 ? 1 : -1;
+              posArr[j].x += sign * shiftX;
+              posArr[i].x -= sign * shiftX;
             } else {
-              const pushY = overlapY / 2 + 8;
-              if (dy >= 0) {
-                pB.y += pushY;
-                pA.y -= pushY;
-              } else {
-                pB.y -= pushY;
-                pA.y += pushY;
-              }
+              const shiftY = overlapY / 2 + 5;
+              const sign = dy >= 0 ? 1 : -1;
+              posArr[j].y += sign * shiftY;
+              posArr[i].y -= sign * shiftY;
             }
           }
         }
       }
     }
 
+    // Map back to bus.id
+    const positions: Record<number, Point> = {};
+    buses.forEach((b, i) => {
+      positions[b.id] = {
+        x: Math.round(posArr[i].x),
+        y: Math.round(posArr[i].y),
+      };
+    });
+
     return positions;
-  }, [buses]);
+  }, [buses, lines]);
 
   const handleAutoFit = useCallback(() => {
     const positions = Object.values(busPositionsRef.current);
@@ -305,21 +224,21 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       maxY = Math.max(maxY, p.y);
     });
 
-    const w = maxX - minX + 380;
-    const h = maxY - minY + 380;
+    const w = maxX - minX + 350;
+    const h = maxY - minY + 350;
     const containerW = containerRef.current?.clientWidth || 1200;
-    const containerH = containerRef.current?.clientHeight || 900;
+    const containerH = containerRef.current?.clientHeight || 880;
 
     const fitScale = Math.min(containerW / w, containerH / h, 1.0);
     setScale(Math.max(0.18, fitScale));
     setPan({
-      x: (containerW - w * fitScale) / 2 - minX * fitScale + 190 * fitScale,
-      y: (containerH - h * fitScale) / 2 - minY * fitScale + 190 * fitScale,
+      x: (containerW - w * fitScale) / 2 - minX * fitScale + 175 * fitScale,
+      y: (containerH - h * fitScale) / 2 - minY * fitScale + 175 * fitScale,
     });
   }, []);
 
   // =========================================================================
-  // Automatic Untangling on Load + Zero Snap-Back on Line Trips
+  // Automatic Untangling on Load & Persistent Coordinates across Line-Trips
   // =========================================================================
   useEffect(() => {
     if (!buses || buses.length === 0) return;
@@ -328,7 +247,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     currentModelRef.current = modelName;
     const storageKey = `nesi_sld_pos_${modelName || 'default'}`;
 
-    // 1. If positions already exist in memory for this exact model, preserve them completely
+    // 1. If coordinates already exist in memory for this model, preserve them completely
     if (!isNewModel && Object.keys(busPositionsRef.current).length >= buses.length) {
       return;
     }
@@ -424,7 +343,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     setIsPanning(false);
     if (draggingBusId !== null) {
       setDraggingBusId(null);
-      // Persist the moved position to localStorage
       if (typeof window !== 'undefined' && modelName) {
         try {
           localStorage.setItem(`nesi_sld_pos_${modelName}`, JSON.stringify(busPositionsRef.current));
@@ -549,7 +467,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-0.5 font-medium">
-            {buses.length} Substations • {lines.length} Corridors • Zero overlaps. Drag any busbar to reposition; coordinates persist.
+            {buses.length} Substations • {lines.length} Corridors • Drag any busbar to adjust; positions are preserved.
           </p>
         </div>
 
@@ -563,7 +481,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
               placeholder="Search Substation..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-8 pr-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-[#500b50] w-48 font-bold text-slate-800"
+              className="pl-8 pr-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-[#500b50] w-44 font-bold text-slate-800"
             />
             {searchQuery && (
               <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-50 max-h-52 overflow-y-auto divide-y divide-slate-100">
@@ -594,7 +512,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           <button
             onClick={handleResetLayout}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition shadow-2xs"
-            title="Reset to clean non-overlapping regional layout"
+            title="Recalculate untangled topological layout"
           >
             <RotateCcw className="h-3.5 w-3.5" />
             <span>Reset Layout</span>
@@ -678,7 +596,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
         </div>
       </div>
 
-      {/* Main Spacious Canvas Area (900px Height) */}
+      {/* Main Full-Bleed CAD Canvas (880px Height) */}
       <div className="relative w-full">
         <div
           ref={containerRef}
@@ -687,11 +605,11 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
           onWheel={handleWheel}
-          className={`h-[900px] w-full rounded-2xl border border-slate-300 bg-white relative overflow-hidden shadow-sm select-none ${
+          className={`h-[880px] w-full rounded-2xl border border-slate-300 bg-white relative overflow-hidden shadow-sm select-none ${
             isPanning ? 'cursor-grabbing' : draggingBusId !== null ? 'cursor-move' : 'cursor-grab'
           }`}
         >
-          {/* Engineering Watermark */}
+          {/* Engineering CAD Header Tag */}
           <div className="absolute top-4 left-4 z-10 flex items-center gap-2 pointer-events-none opacity-60">
             <Zap className="h-4 w-4 text-[#500b50]" />
             <span className="text-[11px] font-mono tracking-widest text-slate-900 uppercase font-black">
@@ -725,11 +643,11 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             </defs>
 
             {/* Clear CAD Background Grid */}
-            <rect x="-12000" y="-12000" width="36000" height="36000" fill="url(#stacCadGrid)" pointerEvents="none" />
+            <rect x="-16000" y="-16000" width="48000" height="48000" fill="url(#stacCadGrid)" pointerEvents="none" />
 
             <g transform={`translate(${pan.x}, ${pan.y}) scale(${scale})`}>
               {/* ========================================================================= */}
-              {/* 1. TRANSMISSION LINES WITH DYNAMIC BREAKER SUPPRESSION                     */}
+              {/* 1. TRANSMISSION LINES WITH DYNAMIC BREAKER BOXES                           */}
               {/* ========================================================================= */}
               {lines.map((line) => {
                 const posA = busPositions[line.from_bus];
@@ -755,7 +673,8 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                   pathData = `M ${posA.x} ${posA.y} L ${posB.x} ${posB.y}`;
                 }
 
-                const showBreakerBox = lineDist >= 110;
+                // Suppress breaker pill on very short lines to avoid clutter
+                const showBreakerBox = lineDist >= 115;
 
                 return (
                   <g
@@ -777,7 +696,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       className="transition-all duration-150 group-hover:stroke-[#500b50] group-hover:stroke-width-4"
                     />
 
-                    {/* Inline Breaker Indicator */}
+                    {/* STAC Inline Breaker Indicator Box */}
                     {showBreakerBox && (
                       <g transform={`translate(${midX}, ${midY})`}>
                         <rect
@@ -809,7 +728,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
               })}
 
               {/* ========================================================================= */}
-              {/* 2. RECTANGULAR BUSBARS (MOVABLE, BOLD, WITH STAC SYMBOLS)                  */}
+              {/* 2. RECTANGULAR BUSBARS (MOVABLE, BOLD, STAC SYMBOLS)                       */}
               {/* ========================================================================= */}
               {buses.map((bus) => {
                 const pos = busPositions[bus.id];
@@ -846,10 +765,10 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                     {/* Selection Indicator Beacon */}
                     {isSelected && (
                       <rect
-                        x="-58"
-                        y="-26"
-                        width="116"
-                        height="52"
+                        x="-60"
+                        y="-28"
+                        width="120"
+                        height="56"
                         rx="8"
                         fill="#500b50"
                         fillOpacity="0.12"
@@ -859,7 +778,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       />
                     )}
 
-                    {/* Generator Infeed Symbol */}
+                    {/* Generator Infeed Symbol (~ in circle) */}
                     {isGen && (
                       <g transform="translate(0, -36)">
                         <line x1="0" y1="14" x2="0" y2="36" stroke="#000000" strokeWidth="2.5" />
@@ -884,7 +803,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       </g>
                     )}
 
-                    {/* Load Drop Symbol */}
+                    {/* Load Drop Symbol (downward arrow) */}
                     {hasLoad && !isGen && (
                       <g transform="translate(0, 8)">
                         <line
@@ -910,27 +829,27 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       </g>
                     )}
 
-                    {/* Heavy Rectangular Copper Busbar */}
+                    {/* Heavy Rectangular Copper Busbar (NOT A CIRCLE) */}
                     <rect
-                      x="-48"
-                      y="-6"
-                      width="96"
-                      height="12"
-                      rx="2.5"
+                      x="-50"
+                      y="-7"
+                      width="100"
+                      height="14"
+                      rx="3"
                       fill={busBarColor}
                       stroke="#000000"
-                      strokeWidth="1.5"
+                      strokeWidth="1.8"
                       className={`transition-shadow ${
                         isDragging ? 'filter drop-shadow-lg' : 'group-hover:filter drop-shadow-md'
                       }`}
                     />
 
-                    {/* Substation Name */}
+                    {/* Substation Name Label */}
                     <text
                       x="0"
-                      y="-12"
+                      y="-13"
                       textAnchor="middle"
-                      fontSize="11.5"
+                      fontSize="12"
                       fontFamily="sans-serif"
                       fontWeight="900"
                       fill="#000000"
@@ -939,12 +858,12 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       {bus.name}
                     </text>
 
-                    {/* Voltage Reading */}
+                    {/* Voltage Magnitude Reading */}
                     <text
                       x="0"
-                      y={hasLoad && !isGen ? '52' : '22'}
+                      y={hasLoad && !isGen ? '52' : '25'}
                       textAnchor="middle"
-                      fontSize="10"
+                      fontSize="10.5"
                       fontFamily="monospace"
                       fontWeight="900"
                       fill={isUnder ? '#dc2626' : isOver ? '#d97706' : '#15803d'}
@@ -977,7 +896,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 </button>
               </div>
 
-              {/* STAC Technical Table */}
+              {/* Exact STAC Technical Data Table */}
               <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
                 <table className="w-full text-left text-[11px]">
                   <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
@@ -1056,7 +975,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 </table>
               </div>
 
-              {/* Connected Corridors with Inline Breakers */}
+              {/* Connected Branch Corridors */}
               <div className="mt-3">
                 <span className="text-[10px] uppercase font-black text-slate-500 block tracking-wider mb-1.5">
                   Connected Branch Corridors
