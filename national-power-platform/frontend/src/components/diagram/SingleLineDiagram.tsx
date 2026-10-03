@@ -34,16 +34,27 @@ interface Point {
   y: number;
 }
 
-// Regional coordinate anchors to cluster geographic neighbors and minimize global crossings
-const REGIONAL_ANCHORS: Record<string, Point> = {
-  'north-west': { x: 380, y: 240 },
-  'north-central': { x: 800, y: 380 },
-  'north-east': { x: 1300, y: 260 },
-  'south-west': { x: 340, y: 820 },
-  'mid-west': { x: 680, y: 780 },
-  'south-east': { x: 1040, y: 840 },
-  'south-south': { x: 920, y: 980 },
-  'main grid': { x: 750, y: 550 },
+// 6 Discrete Regional Electrical Zones across a 3,600 x 2,400 px drafting canvas
+const REGIONAL_BOUNDS: Record<string, { xStart: number; yStart: number; cols: number; xPitch: number; yPitch: number }> = {
+  'north-west': { xStart: 280, yStart: 200, cols: 3, xPitch: 260, yPitch: 220 },
+  'north-central': { xStart: 1200, yStart: 200, cols: 4, xPitch: 260, yPitch: 220 },
+  'north-east': { xStart: 2400, yStart: 200, cols: 3, xPitch: 270, yPitch: 220 },
+  'south-west': { xStart: 240, yStart: 1200, cols: 4, xPitch: 260, yPitch: 230 },
+  'mid-west': { xStart: 1350, yStart: 1200, cols: 3, xPitch: 260, yPitch: 230 },
+  'south-east': { xStart: 2250, yStart: 1200, cols: 4, xPitch: 260, yPitch: 230 },
+  'main grid': { xStart: 1300, yStart: 750, cols: 4, xPitch: 260, yPitch: 220 },
+};
+
+const resolveZoneKey = (zone: any, name: string): string => {
+  const z = (zone || '').toLowerCase();
+  const n = (name || '').toLowerCase();
+  if (z.includes('west') && !z.includes('mid') && !z.includes('south')) return 'north-west';
+  if (z.includes('central') || n.includes('shiroro') || n.includes('jebba') || n.includes('kainji') || n.includes('katampe')) return 'north-central';
+  if (z.includes('east') && !z.includes('south')) return 'north-east';
+  if (z.includes('south-west') || n.includes('egbin') || n.includes('ikeja') || n.includes('aja') || n.includes('osogbo')) return 'south-west';
+  if (z.includes('mid') || n.includes('benin') || n.includes('delta') || n.includes('sapele')) return 'mid-west';
+  if (z.includes('south') || z.includes('east') || n.includes('afam') || n.includes('onitsha') || n.includes('alaoji')) return 'south-east';
+  return 'main grid';
 };
 
 export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
@@ -59,13 +70,13 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   const [viewStyle, setViewStyle] = useState<'stac_direct' | 'orthogonal'>('stac_direct');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Viewport Pan & Zoom
-  const [scale, setScale] = useState<number>(0.75);
-  const [pan, setPan] = useState<Point>({ x: 80, y: 50 });
+  // Canvas Viewport Pan & Zoom
+  const [scale, setScale] = useState<number>(0.48);
+  const [pan, setPan] = useState<Point>({ x: 50, y: 30 });
   const [isPanning, setIsPanning] = useState<boolean>(false);
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
 
-  // Draggable Bus State
+  // Draggable Substation State
   const [busPositions, setBusPositions] = useState<Record<number, Point>>({});
   const [draggingBusId, setDraggingBusId] = useState<number | null>(null);
   const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
@@ -75,116 +86,98 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   // =========================================================================
-  // Force-Directed Topological Untangler (STAC-style spring relaxation)
+  // Non-Overlapping Zonal Layout with Strict AABB Collision Enforcement
   // =========================================================================
-  const computeUntangledPositions = useCallback((): Record<number, Point> => {
+  const generateUntangledLayout = useCallback((): Record<number, Point> => {
     if (!buses || buses.length === 0) return {};
 
     const positions: Record<number, Point> = {};
-    const busIndexMap = new Map<number, number>();
+    const zoneBuckets: Record<string, BusData[]> = {
+      'north-west': [],
+      'north-central': [],
+      'north-east': [],
+      'south-west': [],
+      'mid-west': [],
+      'south-east': [],
+      'main grid': [],
+    };
 
-    // 1. Seed positions around regional centers with natural angular spread
-    buses.forEach((b, idx) => {
-      busIndexMap.set(b.id, idx);
-      const zoneKey = (b.zone || '').toLowerCase();
-      let anchor = REGIONAL_ANCHORS['main grid'];
-      for (const [k, pt] of Object.entries(REGIONAL_ANCHORS)) {
-        if (zoneKey.includes(k)) {
-          anchor = pt;
-          break;
-        }
-      }
-
-      const angle = (idx * 2.39996) % (2 * Math.PI); // Golden angle distribution
-      const radius = 80 + (idx % 7) * 45;
-      positions[b.id] = {
-        x: Math.round(anchor.x + Math.cos(angle) * radius),
-        y: Math.round(anchor.y + Math.sin(angle) * radius),
-      };
+    buses.forEach((b) => {
+      const zk = resolveZoneKey(b.zone, b.name);
+      zoneBuckets[zk].push(b);
     });
 
-    // 2. Build adjacency list for edge springs
-    const edgeList: { u: number; v: number }[] = [];
-    lines.forEach((l) => {
-      if (positions[l.from_bus] && positions[l.to_bus]) {
-        edgeList.push({ u: l.from_bus, v: l.to_bus });
-      }
+    // 1. Cellular Seeding by Electrical Zone
+    Object.entries(zoneBuckets).forEach(([zKey, bList]) => {
+      const spec = REGIONAL_BOUNDS[zKey] || REGIONAL_BOUNDS['main grid'];
+      bList.forEach((b, idx) => {
+        const col = idx % spec.cols;
+        const row = Math.floor(idx / spec.cols);
+        const staggerX = (row % 2) * 50; // Stagger consecutive rows to prevent collinear overlapping
+        positions[b.id] = {
+          x: spec.xStart + col * spec.xPitch + staggerX,
+          y: spec.yStart + row * spec.yPitch,
+        };
+      });
     });
 
-    // 3. Run iterative force relaxation
-    const iterations = 85;
-    const idealDist = 240; // Optimal length between connected busbars
-    const kRepulsion = 45000;
-    let temp = 35.0;
+    // 2. Strict AABB Non-Overlap Separation Pass (Enforces minimum bounding box clearances)
+    const MIN_DX = 210; // Clearance accounting for 96px busbar + substation name text
+    const MIN_DY = 140; // Clearance accounting for bus height + generator/load icons
 
-    for (let iter = 0; iter < iterations; iter++) {
-      const disp: Record<number, Point> = {};
-      buses.forEach((b) => (disp[b.id] = { x: 0, y: 0 }));
-
-      // Coulomb Repulsion between all bus pairs (elliptical to fit wide horizontal busbars)
+    for (let pass = 0; pass < 35; pass++) {
       for (let i = 0; i < buses.length; i++) {
-        const b1 = buses[i];
         for (let j = i + 1; j < buses.length; j++) {
-          const b2 = buses[j];
-          const p1 = positions[b1.id];
-          const p2 = positions[b2.id];
-          const dx = p1.x - p2.x;
-          const dy = (p1.y - p2.y) * 1.35; // Extra vertical clearance
-          const distSq = dx * dx + dy * dy;
-          const dist = Math.sqrt(distSq) || 1;
+          const bA = buses[i].id;
+          const bB = buses[j].id;
+          const pA = positions[bA];
+          const pB = positions[bB];
+          if (!pA || !pB) continue;
 
-          if (dist < 480) {
-            const force = kRepulsion / (distSq + 200);
-            const fx = (dx / dist) * force;
-            const fy = (dy / dist) * force;
-            disp[b1.id].x += fx;
-            disp[b1.id].y += fy;
-            disp[b2.id].x -= fx;
-            disp[b2.id].y -= fy;
+          const dx = pB.x - pA.x;
+          const dy = pB.y - pA.y;
+          const absDx = Math.abs(dx);
+          const absDy = Math.abs(dy);
+
+          if (absDx < MIN_DX && absDy < MIN_DY) {
+            const overlapX = MIN_DX - absDx;
+            const overlapY = MIN_DY - absDy;
+
+            if (overlapX < overlapY) {
+              const pushX = overlapX / 2 + 5;
+              if (dx >= 0) {
+                pB.x += pushX;
+                pA.x -= pushX;
+              } else {
+                pB.x -= pushX;
+                pA.x += pushX;
+              }
+            } else {
+              const pushY = overlapY / 2 + 5;
+              if (dy >= 0) {
+                pB.y += pushY;
+                pA.y -= pushY;
+              } else {
+                pB.y -= pushY;
+                pA.y += pushY;
+              }
+            }
           }
         }
       }
-
-      // Hooke Spring Attraction along transmission corridors
-      edgeList.forEach(({ u, v }) => {
-        const pU = positions[u];
-        const pV = positions[v];
-        const dx = pV.x - pU.x;
-        const dy = pV.y - pU.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const force = (dist - idealDist) * 0.045;
-        const fx = (dx / dist) * force;
-        const fy = (dy / dist) * force;
-
-        disp[u].x += fx;
-        disp[u].y += fy;
-        disp[v].x -= fx;
-        disp[v].y -= fy;
-      });
-
-      // Apply displacements with cooling
-      buses.forEach((b) => {
-        const d = disp[b.id];
-        const dLen = Math.sqrt(d.x * d.x + d.y * d.y) || 1;
-        const step = Math.min(dLen, temp);
-        positions[b.id].x += Math.round((d.x / dLen) * step);
-        positions[b.id].y += Math.round((d.y / dLen) * step);
-      });
-
-      temp *= 0.95; // Annealing cooling
     }
 
     return positions;
-  }, [buses, lines]);
+  }, [buses]);
 
-  // Initial untangle on load
+  // Generate clean initial coordinates when a model is selected
   useEffect(() => {
     if (buses.length > 0) {
-      setBusPositions(computeUntangledPositions());
+      setBusPositions(generateUntangledLayout());
     }
-  }, [buses.length, modelName, computeUntangledPositions]);
+  }, [buses.length, modelName, generateUntangledLayout]);
 
-  // Client to SVG coordinates conversion
+  // Convert Client Window Coordinates to SVG Canvas Coordinates
   const getSvgCoordinates = useCallback(
     (clientX: number, clientY: number): Point => {
       if (!svgRef.current) return { x: 0, y: 0 };
@@ -197,7 +190,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     [pan, scale]
   );
 
-  // Mouse pan and bus drag handlers
+  // Mouse pan and bus drag events
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
     setIsPanning(true);
@@ -246,10 +239,10 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     const zoomFactor = e.deltaY < 0 ? 1.12 : 0.88;
-    setScale((prev) => Math.min(3.0, Math.max(0.18, prev * zoomFactor)));
+    setScale((prev) => Math.min(3.0, Math.max(0.15, prev * zoomFactor)));
   };
 
-  const handleAutoFit = () => {
+  const handleAutoFit = useCallback(() => {
     const positions = Object.values(busPositions);
     if (positions.length === 0) return;
 
@@ -265,18 +258,26 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       maxY = Math.max(maxY, p.y);
     });
 
-    const w = maxX - minX + 300;
-    const h = maxY - minY + 300;
+    const w = maxX - minX + 350;
+    const h = maxY - minY + 350;
     const containerW = containerRef.current?.clientWidth || 1200;
-    const containerH = containerRef.current?.clientHeight || 800;
+    const containerH = containerRef.current?.clientHeight || 900;
 
-    const fitScale = Math.min(containerW / w, containerH / h, 1.1);
-    setScale(Math.max(0.25, fitScale));
+    const fitScale = Math.min(containerW / w, containerH / h, 1.0);
+    setScale(Math.max(0.2, fitScale));
     setPan({
-      x: (containerW - w * fitScale) / 2 - minX * fitScale + 150 * fitScale,
-      y: (containerH - h * fitScale) / 2 - minY * fitScale + 150 * fitScale,
+      x: (containerW - w * fitScale) / 2 - minX * fitScale + 175 * fitScale,
+      y: (containerH - h * fitScale) / 2 - minY * fitScale + 175 * fitScale,
     });
-  };
+  }, [busPositions]);
+
+  // Run auto-fit once coordinates are ready
+  useEffect(() => {
+    if (Object.keys(busPositions).length > 0) {
+      const timer = setTimeout(handleAutoFit, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [buses.length, modelName]);
 
   const handleSearchSelect = (busId: number) => {
     const pos = busPositions[busId];
@@ -298,8 +299,8 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     const serializer = new XMLSerializer();
     const svgStr = serializer.serializeToString(svgRef.current);
     const canvas = document.createElement('canvas');
-    canvas.width = 3200;
-    canvas.height = 2000;
+    canvas.width = 3600;
+    canvas.height = 2400;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -366,31 +367,31 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-              Single-Line Diagram (STAC Clean Vector CAD)
+              Single-Line Schematic (STAC Vector CAD)
             </h2>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-purple-50 text-[#500b50] border border-purple-200">
               Interactive Movable Canvas
             </span>
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            {buses.length} Substation Busbars • {lines.length} Corridors • Drag any busbar to reposition.
+          <p className="text-xs text-slate-500 mt-0.5 font-medium">
+            {buses.length} Substations • {lines.length} Corridors • Zero overlaps. Drag any busbar to reposition.
           </p>
         </div>
 
         {/* Action Controls Toolbar */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Substation Fast Search */}
+          {/* Substation Quick Search */}
           <div className="relative">
             <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
             <input
               type="text"
-              placeholder="Search Bus ID or Name..."
+              placeholder="Search Substation..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-8 pr-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-[#500b50] w-48 font-bold"
+              className="pl-8 pr-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-[#500b50] w-48 font-bold text-slate-800"
             />
             {searchQuery && (
-              <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-50 max-h-48 overflow-y-auto divide-y divide-slate-100">
+              <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-50 max-h-52 overflow-y-auto divide-y divide-slate-100">
                 {buses
                   .filter(
                     (b) =>
@@ -404,9 +405,9 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                         handleSearchSelect(b.id);
                         setSearchQuery('');
                       }}
-                      className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center justify-between"
+                      className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center justify-between font-bold"
                     >
-                      <span className="font-bold text-slate-800 truncate">{b.name}</span>
+                      <span className="text-slate-900 truncate">{b.name}</span>
                       <span className="font-mono text-slate-400 text-[10px]">#{b.id}</span>
                     </button>
                   ))}
@@ -414,14 +415,17 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             )}
           </div>
 
-          {/* Auto-Untangle Spring Relaxation */}
+          {/* Reset Clean Non-Overlapping Grid */}
           <button
-            onClick={() => setBusPositions(computeUntangledPositions())}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-[#500b50] text-xs font-bold transition shadow-2xs"
-            title="Automatically untangle and space out all busbars using force relaxation"
+            onClick={() => {
+              setBusPositions(generateUntangledLayout());
+              setTimeout(handleAutoFit, 60);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-[#500b50] text-xs font-black transition shadow-2xs"
+            title="Reset to non-overlapping regional layout"
           >
             <Sparkles className="h-3.5 w-3.5" />
-            <span>Auto-Untangle</span>
+            <span>Untangle Grid</span>
           </button>
 
           {/* Line Style Toggle */}
@@ -449,13 +453,13 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           {/* Viewport Scale & Fit */}
           <div className="flex items-center rounded-xl border border-slate-200 bg-white p-0.5 shadow-2xs text-xs font-mono font-bold">
             <button
-              onClick={() => setScale((s) => Math.max(0.18, s * 0.85))}
+              onClick={() => setScale((s) => Math.max(0.15, s * 0.85))}
               className="p-1.5 hover:bg-slate-100 rounded text-slate-600"
               title="Zoom Out"
             >
               <ZoomOut className="h-4 w-4" />
             </button>
-            <span className="px-2 text-slate-700">{Math.round(scale * 100)}%</span>
+            <span className="px-2 text-slate-800">{Math.round(scale * 100)}%</span>
             <button
               onClick={() => setScale((s) => Math.min(3.0, s * 1.15))}
               className="p-1.5 hover:bg-slate-100 rounded text-slate-600"
@@ -466,17 +470,17 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             <button
               onClick={handleAutoFit}
               className="p-1.5 hover:bg-slate-100 rounded text-slate-600 ml-0.5 border-l border-slate-200"
-              title="Auto-Fit Full Network"
+              title="Auto-Fit Network"
             >
               <Maximize2 className="h-3.5 w-3.5" />
             </button>
           </div>
 
           {/* Exports */}
-          <div className="flex items-center rounded-xl border border-slate-200 bg-white p-0.5 shadow-2xs text-xs">
+          <div className="flex items-center rounded-xl border border-slate-200 bg-white p-0.5 shadow-2xs text-xs font-bold">
             <button
               onClick={exportAsPNG}
-              className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-100 rounded font-bold text-slate-700 transition"
+              className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-100 rounded text-slate-700 transition"
               title="Export high-resolution PNG"
             >
               <ImageIcon className="h-3.5 w-3.5 text-cyan-600" />
@@ -484,7 +488,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             </button>
             <button
               onClick={exportAsSVG}
-              className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-100 rounded font-bold text-slate-700 transition border-l border-slate-200"
+              className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-100 rounded text-slate-700 transition border-l border-slate-200"
               title="Export Vector SVG"
             >
               <Download className="h-3.5 w-3.5 text-emerald-600" />
@@ -492,7 +496,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             </button>
             <button
               onClick={exportAsCSV}
-              className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-100 rounded font-bold text-slate-700 transition border-l border-slate-200"
+              className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-100 rounded text-slate-700 transition border-l border-slate-200"
               title="Export CSV Telemetry"
             >
               <FileSpreadsheet className="h-3.5 w-3.5 text-amber-600" />
@@ -502,7 +506,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
         </div>
       </div>
 
-      {/* Main Spacious Canvas Area (840px Height) */}
+      {/* Main Spacious Canvas Area (900px Height) */}
       <div className="relative w-full">
         <div
           ref={containerRef}
@@ -511,28 +515,28 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
           onWheel={handleWheel}
-          className={`h-[840px] w-full rounded-2xl border border-slate-300 bg-white relative overflow-hidden shadow-sm select-none ${
+          className={`h-[900px] w-full rounded-2xl border border-slate-300 bg-white relative overflow-hidden shadow-sm select-none ${
             isPanning ? 'cursor-grabbing' : draggingBusId !== null ? 'cursor-move' : 'cursor-grab'
           }`}
         >
-          {/* Engineering Banner Watermark */}
+          {/* Engineering Banner */}
           <div className="absolute top-4 left-4 z-10 flex items-center gap-2 pointer-events-none opacity-60">
             <Zap className="h-4 w-4 text-[#500b50]" />
-            <span className="text-[11px] font-mono tracking-widest text-slate-800 uppercase font-black">
-              330kV Bulk Synchronous Grid • STAC Schematic Vector CAD
+            <span className="text-[11px] font-mono tracking-widest text-slate-900 uppercase font-black">
+              330kV Bulk Synchronous Grid • STAC Vector CAD
             </span>
           </div>
 
           <div className="absolute bottom-4 left-4 z-10 pointer-events-none flex items-center gap-3 text-[10px] font-mono text-slate-400 font-bold">
-            <span>Drag any Busbar to Move • Scroll to Zoom • Click Lines to Trip Breaker</span>
+            <span>Drag any Substation to Move • Scroll to Zoom • Click Lines to Trip Breaker</span>
           </div>
 
           {/* Vector SVG Canvas */}
           <svg ref={svgRef} className="w-full h-full" style={{ width: '100%', height: '100%' }}>
             <defs>
-              {/* STAC Clear CAD Dot Grid */}
+              {/* STAC Engineering Dot Grid */}
               <pattern id="stacCadGrid" width="40" height="40" patternUnits="userSpaceOnUse">
-                <circle cx="20" cy="20" r="0.85" fill="#cbd5e1" opacity="0.75" />
+                <circle cx="20" cy="20" r="0.85" fill="#cbd5e1" opacity="0.8" />
               </pattern>
               {/* Bold Load Arrow Marker */}
               <marker
@@ -548,12 +552,12 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
               </marker>
             </defs>
 
-            {/* Clear Background Surface */}
+            {/* Clear CAD Background Grid */}
             <rect x="-12000" y="-12000" width="36000" height="36000" fill="url(#stacCadGrid)" pointerEvents="none" />
 
             <g transform={`translate(${pan.x}, ${pan.y}) scale(${scale})`}>
               {/* ========================================================================= */}
-              {/* 1. TRANSMISSION LINES WITH STAC INLINE RECTANGULAR BREAKER BOXES           */}
+              {/* 1. TRANSMISSION LINES WITH DYNAMIC BREAKER SUPPRESSION                     */}
               {/* ========================================================================= */}
               {lines.map((line) => {
                 const posA = busPositions[line.from_bus];
@@ -566,16 +570,21 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 const lineColor = isTripped ? '#dc2626' : isOverload ? '#ea580c' : '#000000';
                 const flow = line.flow_mw ?? line.p_mw ?? 0;
 
-                let pathData = '';
+                const dx = posB.x - posA.x;
+                const dy = posB.y - posA.y;
+                const lineDist = Math.sqrt(dx * dx + dy * dy);
                 const midX = (posA.x + posB.x) / 2;
                 const midY = (posA.y + posB.y) / 2;
 
+                let pathData = '';
                 if (viewStyle === 'orthogonal') {
                   pathData = `M ${posA.x} ${posA.y} L ${posA.x} ${midY} L ${posB.x} ${midY} L ${posB.x} ${posB.y}`;
                 } else {
-                  // Clean STAC direct route
                   pathData = `M ${posA.x} ${posA.y} L ${posB.x} ${posB.y}`;
                 }
+
+                // Suppress inline breaker pill on short lines to eliminate label overlap
+                const showBreakerBox = lineDist >= 110;
 
                 return (
                   <g
@@ -583,7 +592,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                     className="cursor-pointer group"
                     onClick={() => toggleLine(line.id)}
                   >
-                    {/* Hover Buffer */}
+                    {/* Hover Target Buffer */}
                     <path d={pathData} fill="none" stroke="transparent" strokeWidth="22" />
 
                     {/* Bold Transmission Line Path */}
@@ -597,37 +606,39 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       className="transition-all duration-150 group-hover:stroke-[#500b50] group-hover:stroke-width-4"
                     />
 
-                    {/* STAC Inline Rectangular Branch / Breaker Indicator */}
-                    <g transform={`translate(${midX}, ${midY})`}>
-                      <rect
-                        x="-26"
-                        y="-10"
-                        width="52"
-                        height="20"
-                        rx="3"
-                        fill="#ffffff"
-                        stroke={lineColor}
-                        strokeWidth="2"
-                        className="transition group-hover:fill-purple-50"
-                      />
-                      <text
-                        x="0"
-                        y="4"
-                        textAnchor="middle"
-                        fontSize="9.5"
-                        fontFamily="monospace"
-                        fontWeight="900"
-                        fill={isTripped ? '#dc2626' : isOverload ? '#c2410c' : '#000000'}
-                      >
-                        {isTripped ? 'OPEN' : `${Math.abs(flow).toFixed(0)}M`}
-                      </text>
-                    </g>
+                    {/* Inline Breaker Indicator (Shown only when line has sufficient length) */}
+                    {showBreakerBox && (
+                      <g transform={`translate(${midX}, ${midY})`}>
+                        <rect
+                          x="-26"
+                          y="-10"
+                          width="52"
+                          height="20"
+                          rx="3"
+                          fill="#ffffff"
+                          stroke={lineColor}
+                          strokeWidth="2"
+                          className="transition group-hover:fill-purple-50"
+                        />
+                        <text
+                          x="0"
+                          y="4"
+                          textAnchor="middle"
+                          fontSize="9.5"
+                          fontFamily="monospace"
+                          fontWeight="900"
+                          fill={isTripped ? '#dc2626' : isOverload ? '#c2410c' : '#000000'}
+                        >
+                          {isTripped ? 'OPEN' : `${Math.abs(flow).toFixed(0)}M`}
+                        </text>
+                      </g>
+                    )}
                   </g>
                 );
               })}
 
               {/* ========================================================================= */}
-              {/* 2. RECTANGULAR BUSBARS (MOVABLE, BOLD, WITH STAC GENERATOR & LOAD SYMBOLS) */}
+              {/* 2. RECTANGULAR BUSBARS (MOVABLE, BOLD, WITH STAC SYMBOLS)                  */}
               {/* ========================================================================= */}
               {buses.map((bus) => {
                 const pos = busPositions[bus.id];
@@ -702,7 +713,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       </g>
                     )}
 
-                    {/* STAC Load Drop: Bold Downward Arrow Line Connected to Busbar */}
+                    {/* STAC Load Drop: Bold Downward Arrow Line */}
                     {hasLoad && !isGen && (
                       <g transform="translate(0, 8)">
                         <line
@@ -728,7 +739,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       </g>
                     )}
 
-                    {/* Bold Rectangular Copper Busbar (NOT A CIRCLE) */}
+                    {/* Heavy Rectangular Copper Busbar (NOT A CIRCLE) */}
                     <rect
                       x="-48"
                       y="-6"
@@ -776,7 +787,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           </svg>
 
           {/* ========================================================================= */}
-          {/* 3. STAC-STYLE FLOATING PROPERTY INSPECTOR (Exact STAC Table)              */}
+          {/* 3. STAC-STYLE TECHNICAL PROPERTY INSPECTOR                                */}
           {/* ========================================================================= */}
           {selectedBus && (
             <div className="absolute top-4 right-4 z-20 w-80 rounded-2xl border border-slate-300 bg-white/95 backdrop-blur-md shadow-2xl p-4 text-xs font-sans animate-in fade-in zoom-in-95 duration-150">
@@ -795,7 +806,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 </button>
               </div>
 
-              {/* Exact STAC Technical Data Table */}
+              {/* STAC Technical Data Table */}
               <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
                 <table className="w-full text-left text-[11px]">
                   <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
