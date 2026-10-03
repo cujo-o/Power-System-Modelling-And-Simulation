@@ -15,7 +15,6 @@ import {
   Layers,
   X,
   Compass,
-  Sparkles,
 } from 'lucide-react';
 
 interface SingleLineDiagramProps {
@@ -34,26 +33,142 @@ interface Point {
   y: number;
 }
 
-// 6 Discrete Regional Electrical Zones across a 3,600 x 2,400 px drafting canvas
-const REGIONAL_BOUNDS: Record<string, { xStart: number; yStart: number; cols: number; xPitch: number; yPitch: number }> = {
-  'north-west': { xStart: 280, yStart: 200, cols: 3, xPitch: 260, yPitch: 220 },
-  'north-central': { xStart: 1200, yStart: 200, cols: 4, xPitch: 260, yPitch: 220 },
-  'north-east': { xStart: 2400, yStart: 200, cols: 3, xPitch: 270, yPitch: 220 },
-  'south-west': { xStart: 240, yStart: 1200, cols: 4, xPitch: 260, yPitch: 230 },
-  'mid-west': { xStart: 1350, yStart: 1200, cols: 3, xPitch: 260, yPitch: 230 },
-  'south-east': { xStart: 2250, yStart: 1200, cols: 4, xPitch: 260, yPitch: 230 },
-  'main grid': { xStart: 1300, yStart: 750, cols: 4, xPitch: 260, yPitch: 220 },
+// 6 Discrete, non-overlapping regional drafting quadrants across a 4,000 x 2,600 px canvas
+const REGIONAL_QUADRANTS: Record<
+  string,
+  { xStart: number; yStart: number; cols: number; xPitch: number; yPitch: number }
+> = {
+  'north-west': { xStart: 280, yStart: 220, cols: 3, xPitch: 280, yPitch: 240 },
+  'north-central': { xStart: 1350, yStart: 220, cols: 4, xPitch: 280, yPitch: 240 },
+  'north-east': { xStart: 2650, yStart: 220, cols: 3, xPitch: 290, yPitch: 240 },
+  'south-west': { xStart: 260, yStart: 1350, cols: 4, xPitch: 280, yPitch: 250 },
+  'mid-west': { xStart: 1480, yStart: 1350, cols: 3, xPitch: 280, yPitch: 250 },
+  'south-east': { xStart: 2550, yStart: 1350, cols: 4, xPitch: 280, yPitch: 250 },
+  'main grid': { xStart: 1400, yStart: 800, cols: 4, xPitch: 280, yPitch: 240 },
 };
 
-const resolveZoneKey = (zone: any, name: string): string => {
+// Automatic regional classifier covering all 63 bulk stations in the Nigerian 330kV transmission network
+const classifySubstationRegion = (zone: any, rawName: string): string => {
   const z = (zone || '').toLowerCase();
-  const n = (name || '').toLowerCase();
-  if (z.includes('west') && !z.includes('mid') && !z.includes('south')) return 'north-west';
-  if (z.includes('central') || n.includes('shiroro') || n.includes('jebba') || n.includes('kainji') || n.includes('katampe')) return 'north-central';
-  if (z.includes('east') && !z.includes('south')) return 'north-east';
-  if (z.includes('south-west') || n.includes('egbin') || n.includes('ikeja') || n.includes('aja') || n.includes('osogbo')) return 'south-west';
-  if (z.includes('mid') || n.includes('benin') || n.includes('delta') || n.includes('sapele')) return 'mid-west';
-  if (z.includes('south') || z.includes('east') || n.includes('afam') || n.includes('onitsha') || n.includes('alaoji')) return 'south-east';
+  const n = (rawName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  if (
+    n.includes('kano') ||
+    n.includes('kaduna') ||
+    n.includes('kebbi') ||
+    n.includes('mando') ||
+    n.includes('funtua') ||
+    n.includes('gusau') ||
+    n.includes('rimzakara') ||
+    n.includes('kumbotso') ||
+    n.includes('katsina') ||
+    n.includes('zaria') ||
+    n.includes('sokoto') ||
+    (z.includes('west') && !z.includes('south') && !z.includes('mid'))
+  ) {
+    return 'north-west';
+  }
+
+  if (
+    n.includes('jos') ||
+    n.includes('bauchi') ||
+    n.includes('gombe') ||
+    n.includes('yola') ||
+    n.includes('maiduguri') ||
+    n.includes('damaturu') ||
+    n.includes('jalingo') ||
+    n.includes('mayobelwa') ||
+    n.includes('ashaka') ||
+    n.includes('potiskum') ||
+    (z.includes('east') && !z.includes('south'))
+  ) {
+    return 'north-east';
+  }
+
+  if (
+    n.includes('shiroro') ||
+    n.includes('jebba') ||
+    n.includes('kainji') ||
+    n.includes('katampe') ||
+    n.includes('gwagw') ||
+    n.includes('abuja') ||
+    n.includes('lokoja') ||
+    n.includes('geregu') ||
+    n.includes('ajaokuta') ||
+    n.includes('zungeru') ||
+    n.includes('makurdi') ||
+    n.includes('mcity') ||
+    n.includes('minna') ||
+    n.includes('suleja') ||
+    n.includes('keffi') ||
+    n.includes('lafia') ||
+    z.includes('central')
+  ) {
+    return 'north-central';
+  }
+
+  if (
+    n.includes('egbin') ||
+    n.includes('ikeja') ||
+    n.includes('akangba') ||
+    n.includes('aja') ||
+    n.includes('alagbon') ||
+    n.includes('lekki') ||
+    n.includes('sakete') ||
+    n.includes('osogbo') ||
+    n.includes('ayede') ||
+    n.includes('omotosho') ||
+    n.includes('olorunsogo') ||
+    n.includes('erunmu') ||
+    n.includes('ibadan') ||
+    n.includes('shagamu') ||
+    n.includes('ikorodu') ||
+    z.includes('southwest') ||
+    z.includes('south-west')
+  ) {
+    return 'south-west';
+  }
+
+  if (
+    n.includes('benin') ||
+    n.includes('sapele') ||
+    n.includes('delta') ||
+    n.includes('aladja') ||
+    n.includes('ihovbor') ||
+    n.includes('azura') ||
+    n.includes('okpai') ||
+    n.includes('asaba') ||
+    n.includes('agbor') ||
+    z.includes('mid')
+  ) {
+    return 'mid-west';
+  }
+
+  if (
+    n.includes('onitsha') ||
+    n.includes('nhaven') ||
+    n.includes('newhaven') ||
+    n.includes('ugwuaji') ||
+    n.includes('afam') ||
+    n.includes('alaoji') ||
+    n.includes('calabar') ||
+    n.includes('owerri') ||
+    n.includes('ikot') ||
+    n.includes('omoku') ||
+    n.includes('egbema') ||
+    n.includes('adiabor') ||
+    n.includes('portharcourt') ||
+    n.includes('uyo') ||
+    n.includes('aba') ||
+    n.includes('abakaliki') ||
+    z.includes('southeast') ||
+    z.includes('south-east') ||
+    z.includes('south-south') ||
+    z.includes('southsouth')
+  ) {
+    return 'south-east';
+  }
+
   return 'main grid';
 };
 
@@ -70,29 +185,33 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   const [viewStyle, setViewStyle] = useState<'stac_direct' | 'orthogonal'>('stac_direct');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Canvas Viewport Pan & Zoom
-  const [scale, setScale] = useState<number>(0.48);
-  const [pan, setPan] = useState<Point>({ x: 50, y: 30 });
+  // Viewport Pan & Zoom
+  const [scale, setScale] = useState<number>(0.46);
+  const [pan, setPan] = useState<Point>({ x: 60, y: 40 });
   const [isPanning, setIsPanning] = useState<boolean>(false);
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
 
-  // Draggable Substation State
+  // Persistent Draggable Busbar Positions
   const [busPositions, setBusPositions] = useState<Record<number, Point>>({});
+  const busPositionsRef = useRef<Record<number, Point>>({});
+  busPositionsRef.current = busPositions;
+
   const [draggingBusId, setDraggingBusId] = useState<number | null>(null);
   const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
   const [hasDragged, setHasDragged] = useState<boolean>(false);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const currentModelRef = useRef<string>('');
 
   // =========================================================================
-  // Non-Overlapping Zonal Layout with Strict AABB Collision Enforcement
+  // Automatic Untangling Engine: Zonal Grid + AABB Collision Solver
   // =========================================================================
-  const generateUntangledLayout = useCallback((): Record<number, Point> => {
+  const computeAutomaticUntangledLayout = useCallback((): Record<number, Point> => {
     if (!buses || buses.length === 0) return {};
 
     const positions: Record<number, Point> = {};
-    const zoneBuckets: Record<string, BusData[]> = {
+    const regionBuckets: Record<string, BusData[]> = {
       'north-west': [],
       'north-central': [],
       'north-east': [],
@@ -103,35 +222,35 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     };
 
     buses.forEach((b) => {
-      const zk = resolveZoneKey(b.zone, b.name);
-      zoneBuckets[zk].push(b);
+      const rKey = classifySubstationRegion(b.zone, b.name);
+      regionBuckets[rKey].push(b);
     });
 
-    // 1. Cellular Seeding by Electrical Zone
-    Object.entries(zoneBuckets).forEach(([zKey, bList]) => {
-      const spec = REGIONAL_BOUNDS[zKey] || REGIONAL_BOUNDS['main grid'];
+    // 1. Zonal Allocation
+    Object.entries(regionBuckets).forEach(([regKey, bList]) => {
+      const qSpec = REGIONAL_QUADRANTS[regKey] || REGIONAL_QUADRANTS['main grid'];
       bList.forEach((b, idx) => {
-        const col = idx % spec.cols;
-        const row = Math.floor(idx / spec.cols);
-        const staggerX = (row % 2) * 50; // Stagger consecutive rows to prevent collinear overlapping
+        const col = idx % qSpec.cols;
+        const row = Math.floor(idx / qSpec.cols);
+        const staggerX = (row % 2) * 60;
         positions[b.id] = {
-          x: spec.xStart + col * spec.xPitch + staggerX,
-          y: spec.yStart + row * spec.yPitch,
+          x: qSpec.xStart + col * qSpec.xPitch + staggerX,
+          y: qSpec.yStart + row * qSpec.yPitch,
         };
       });
     });
 
-    // 2. Strict AABB Non-Overlap Separation Pass (Enforces minimum bounding box clearances)
-    const MIN_DX = 210; // Clearance accounting for 96px busbar + substation name text
-    const MIN_DY = 140; // Clearance accounting for bus height + generator/load icons
+    // 2. Strict AABB Separation Pass (Guarantees zero overlapping between all nodes)
+    const MIN_DX = 240;
+    const MIN_DY = 150;
 
-    for (let pass = 0; pass < 35; pass++) {
+    for (let pass = 0; pass < 45; pass++) {
       for (let i = 0; i < buses.length; i++) {
         for (let j = i + 1; j < buses.length; j++) {
-          const bA = buses[i].id;
-          const bB = buses[j].id;
-          const pA = positions[bA];
-          const pB = positions[bB];
+          const idA = buses[i].id;
+          const idB = buses[j].id;
+          const pA = positions[idA];
+          const pB = positions[idB];
           if (!pA || !pB) continue;
 
           const dx = pB.x - pA.x;
@@ -144,7 +263,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             const overlapY = MIN_DY - absDy;
 
             if (overlapX < overlapY) {
-              const pushX = overlapX / 2 + 5;
+              const pushX = overlapX / 2 + 8;
               if (dx >= 0) {
                 pB.x += pushX;
                 pA.x -= pushX;
@@ -153,7 +272,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 pA.x += pushX;
               }
             } else {
-              const pushY = overlapY / 2 + 5;
+              const pushY = overlapY / 2 + 8;
               if (dy >= 0) {
                 pB.y += pushY;
                 pA.y -= pushY;
@@ -170,12 +289,79 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     return positions;
   }, [buses]);
 
-  // Generate clean initial coordinates when a model is selected
+  const handleAutoFit = useCallback(() => {
+    const positions = Object.values(busPositionsRef.current);
+    if (positions.length === 0) return;
+
+    let minX = Infinity,
+      maxX = -Infinity,
+      minY = Infinity,
+      maxY = -Infinity;
+
+    positions.forEach((p) => {
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y);
+      maxY = Math.max(maxY, p.y);
+    });
+
+    const w = maxX - minX + 380;
+    const h = maxY - minY + 380;
+    const containerW = containerRef.current?.clientWidth || 1200;
+    const containerH = containerRef.current?.clientHeight || 900;
+
+    const fitScale = Math.min(containerW / w, containerH / h, 1.0);
+    setScale(Math.max(0.18, fitScale));
+    setPan({
+      x: (containerW - w * fitScale) / 2 - minX * fitScale + 190 * fitScale,
+      y: (containerH - h * fitScale) / 2 - minY * fitScale + 190 * fitScale,
+    });
+  }, []);
+
+  // =========================================================================
+  // Automatic Untangling on Load + Zero Snap-Back on Line Trips
+  // =========================================================================
   useEffect(() => {
-    if (buses.length > 0) {
-      setBusPositions(generateUntangledLayout());
+    if (!buses || buses.length === 0) return;
+
+    const isNewModel = currentModelRef.current !== modelName;
+    currentModelRef.current = modelName;
+    const storageKey = `nesi_sld_pos_${modelName || 'default'}`;
+
+    // 1. If positions already exist in memory for this exact model, preserve them completely
+    if (!isNewModel && Object.keys(busPositionsRef.current).length >= buses.length) {
+      return;
     }
-  }, [buses.length, modelName, generateUntangledLayout]);
+
+    // 2. Check localStorage
+    if (typeof window !== 'undefined' && !isNewModel) {
+      const saved = localStorage.getItem(storageKey);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (buses.every((b) => parsed[b.id] !== undefined)) {
+            setBusPositions(parsed);
+            busPositionsRef.current = parsed;
+            return;
+          }
+        } catch (_) {}
+      }
+    }
+
+    // 3. Automatically untangle by default on model load
+    const autoUntangled = computeAutomaticUntangledLayout();
+    setBusPositions(autoUntangled);
+    busPositionsRef.current = autoUntangled;
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(autoUntangled));
+      } catch (_) {}
+    }
+
+    const timer = setTimeout(handleAutoFit, 80);
+    return () => clearTimeout(timer);
+  }, [modelName, buses.length, computeAutomaticUntangledLayout, handleAutoFit]);
 
   // Convert Client Window Coordinates to SVG Canvas Coordinates
   const getSvgCoordinates = useCallback(
@@ -216,13 +402,16 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     if (draggingBusId !== null) {
       setHasDragged(true);
       const mouseWorld = getSvgCoordinates(e.clientX, e.clientY);
-      setBusPositions((prev) => ({
-        ...prev,
-        [draggingBusId]: {
-          x: Math.round(mouseWorld.x - dragOffset.x),
-          y: Math.round(mouseWorld.y - dragOffset.y),
-        },
-      }));
+      const newPos = {
+        x: Math.round(mouseWorld.x - dragOffset.x),
+        y: Math.round(mouseWorld.y - dragOffset.y),
+      };
+
+      setBusPositions((prev) => {
+        const next = { ...prev, [draggingBusId]: newPos };
+        busPositionsRef.current = next;
+        return next;
+      });
     } else if (isPanning) {
       setPan({
         x: e.clientX - panStart.x,
@@ -233,51 +422,37 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
 
   const handleMouseUp = () => {
     setIsPanning(false);
-    setDraggingBusId(null);
+    if (draggingBusId !== null) {
+      setDraggingBusId(null);
+      // Persist the moved position to localStorage
+      if (typeof window !== 'undefined' && modelName) {
+        try {
+          localStorage.setItem(`nesi_sld_pos_${modelName}`, JSON.stringify(busPositionsRef.current));
+        } catch (_) {}
+      }
+    }
   };
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     const zoomFactor = e.deltaY < 0 ? 1.12 : 0.88;
-    setScale((prev) => Math.min(3.0, Math.max(0.15, prev * zoomFactor)));
+    setScale((prev) => Math.min(3.0, Math.max(0.12, prev * zoomFactor)));
   };
 
-  const handleAutoFit = useCallback(() => {
-    const positions = Object.values(busPositions);
-    if (positions.length === 0) return;
-
-    let minX = Infinity,
-      maxX = -Infinity,
-      minY = Infinity,
-      maxY = -Infinity;
-
-    positions.forEach((p) => {
-      minX = Math.min(minX, p.x);
-      maxX = Math.max(maxX, p.x);
-      minY = Math.min(minY, p.y);
-      maxY = Math.max(maxY, p.y);
-    });
-
-    const w = maxX - minX + 350;
-    const h = maxY - minY + 350;
-    const containerW = containerRef.current?.clientWidth || 1200;
-    const containerH = containerRef.current?.clientHeight || 900;
-
-    const fitScale = Math.min(containerW / w, containerH / h, 1.0);
-    setScale(Math.max(0.2, fitScale));
-    setPan({
-      x: (containerW - w * fitScale) / 2 - minX * fitScale + 175 * fitScale,
-      y: (containerH - h * fitScale) / 2 - minY * fitScale + 175 * fitScale,
-    });
-  }, [busPositions]);
-
-  // Run auto-fit once coordinates are ready
-  useEffect(() => {
-    if (Object.keys(busPositions).length > 0) {
-      const timer = setTimeout(handleAutoFit, 100);
-      return () => clearTimeout(timer);
+  const handleResetLayout = () => {
+    if (typeof window !== 'undefined' && modelName) {
+      localStorage.removeItem(`nesi_sld_pos_${modelName}`);
     }
-  }, [buses.length, modelName]);
+    const fresh = computeAutomaticUntangledLayout();
+    setBusPositions(fresh);
+    busPositionsRef.current = fresh;
+    if (typeof window !== 'undefined' && modelName) {
+      try {
+        localStorage.setItem(`nesi_sld_pos_${modelName}`, JSON.stringify(fresh));
+      } catch (_) {}
+    }
+    setTimeout(handleAutoFit, 60);
+  };
 
   const handleSearchSelect = (busId: number) => {
     const pos = busPositions[busId];
@@ -374,13 +549,13 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-0.5 font-medium">
-            {buses.length} Substations • {lines.length} Corridors • Zero overlaps. Drag any busbar to reposition.
+            {buses.length} Substations • {lines.length} Corridors • Zero overlaps. Drag any busbar to reposition; coordinates persist.
           </p>
         </div>
 
         {/* Action Controls Toolbar */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Substation Quick Search */}
+          {/* Substation Fast Search */}
           <div className="relative">
             <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
             <input
@@ -415,17 +590,14 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             )}
           </div>
 
-          {/* Reset Clean Non-Overlapping Grid */}
+          {/* Reset Clean Layout */}
           <button
-            onClick={() => {
-              setBusPositions(generateUntangledLayout());
-              setTimeout(handleAutoFit, 60);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-[#500b50] text-xs font-black transition shadow-2xs"
-            title="Reset to non-overlapping regional layout"
+            onClick={handleResetLayout}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition shadow-2xs"
+            title="Reset to clean non-overlapping regional layout"
           >
-            <Sparkles className="h-3.5 w-3.5" />
-            <span>Untangle Grid</span>
+            <RotateCcw className="h-3.5 w-3.5" />
+            <span>Reset Layout</span>
           </button>
 
           {/* Line Style Toggle */}
@@ -450,10 +622,10 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             </button>
           </div>
 
-          {/* Viewport Scale & Fit */}
+          {/* Viewport Zoom & Fit */}
           <div className="flex items-center rounded-xl border border-slate-200 bg-white p-0.5 shadow-2xs text-xs font-mono font-bold">
             <button
-              onClick={() => setScale((s) => Math.max(0.15, s * 0.85))}
+              onClick={() => setScale((s) => Math.max(0.12, s * 0.85))}
               className="p-1.5 hover:bg-slate-100 rounded text-slate-600"
               title="Zoom Out"
             >
@@ -519,7 +691,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             isPanning ? 'cursor-grabbing' : draggingBusId !== null ? 'cursor-move' : 'cursor-grab'
           }`}
         >
-          {/* Engineering Banner */}
+          {/* Engineering Watermark */}
           <div className="absolute top-4 left-4 z-10 flex items-center gap-2 pointer-events-none opacity-60">
             <Zap className="h-4 w-4 text-[#500b50]" />
             <span className="text-[11px] font-mono tracking-widest text-slate-900 uppercase font-black">
@@ -528,7 +700,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           </div>
 
           <div className="absolute bottom-4 left-4 z-10 pointer-events-none flex items-center gap-3 text-[10px] font-mono text-slate-400 font-bold">
-            <span>Drag any Substation to Move • Scroll to Zoom • Click Lines to Trip Breaker</span>
+            <span>Drag any Substation to Move • Scroll to Zoom • Positions Persist on Breaker Trips</span>
           </div>
 
           {/* Vector SVG Canvas */}
@@ -583,7 +755,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                   pathData = `M ${posA.x} ${posA.y} L ${posB.x} ${posB.y}`;
                 }
 
-                // Suppress inline breaker pill on short lines to eliminate label overlap
                 const showBreakerBox = lineDist >= 110;
 
                 return (
@@ -592,7 +763,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                     className="cursor-pointer group"
                     onClick={() => toggleLine(line.id)}
                   >
-                    {/* Hover Target Buffer */}
+                    {/* Hover Buffer */}
                     <path d={pathData} fill="none" stroke="transparent" strokeWidth="22" />
 
                     {/* Bold Transmission Line Path */}
@@ -606,7 +777,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       className="transition-all duration-150 group-hover:stroke-[#500b50] group-hover:stroke-width-4"
                     />
 
-                    {/* Inline Breaker Indicator (Shown only when line has sufficient length) */}
+                    {/* Inline Breaker Indicator */}
                     {showBreakerBox && (
                       <g transform={`translate(${midX}, ${midY})`}>
                         <rect
@@ -688,7 +859,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       />
                     )}
 
-                    {/* STAC Generator Infeed: Circle with Bold Sine Wave (~ ) */}
+                    {/* Generator Infeed Symbol */}
                     {isGen && (
                       <g transform="translate(0, -36)">
                         <line x1="0" y1="14" x2="0" y2="36" stroke="#000000" strokeWidth="2.5" />
@@ -713,7 +884,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       </g>
                     )}
 
-                    {/* STAC Load Drop: Bold Downward Arrow Line */}
+                    {/* Load Drop Symbol */}
                     {hasLoad && !isGen && (
                       <g transform="translate(0, 8)">
                         <line
@@ -739,7 +910,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       </g>
                     )}
 
-                    {/* Heavy Rectangular Copper Busbar (NOT A CIRCLE) */}
+                    {/* Heavy Rectangular Copper Busbar */}
                     <rect
                       x="-48"
                       y="-6"
@@ -754,7 +925,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       }`}
                     />
 
-                    {/* Bold Substation Identifier */}
+                    {/* Substation Name */}
                     <text
                       x="0"
                       y="-12"
@@ -768,7 +939,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       {bus.name}
                     </text>
 
-                    {/* Bold Voltage Magnitude Reading */}
+                    {/* Voltage Reading */}
                     <text
                       x="0"
                       y={hasLoad && !isGen ? '52' : '22'}
@@ -806,7 +977,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 </button>
               </div>
 
-              {/* STAC Technical Data Table */}
+              {/* STAC Technical Table */}
               <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
                 <table className="w-full text-left text-[11px]">
                   <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
