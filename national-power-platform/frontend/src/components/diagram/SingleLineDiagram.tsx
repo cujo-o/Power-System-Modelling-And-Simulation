@@ -33,6 +33,49 @@ interface Point {
   y: number;
 }
 
+// Intersects a ray from center with the busbar rectangle [-halfW, -halfH, halfW, halfH]
+function getBusBorderPoint(center: Point, target: Point, halfW = 50, halfH = 7): Point {
+  const dx = target.x - center.x;
+  const dy = target.y - center.y;
+  if (Math.abs(dx) < 1e-4 && Math.abs(dy) < 1e-4) return center;
+  const scaleX = Math.abs(dx) > 0 ? halfW / Math.abs(dx) : Infinity;
+  const scaleY = Math.abs(dy) > 0 ? halfH / Math.abs(dy) : Infinity;
+  const s = Math.min(scaleX, scaleY);
+  return {
+    x: center.x + dx * s,
+    y: center.y + dy * s,
+  };
+}
+
+// Computes the widest angular gap free from connected transmission lines
+function computeCleanDecoratorAngles(busPos: Point, neighborPositions: Point[]): { genAngle: number; loadAngle: number } {
+  if (!neighborPositions || neighborPositions.length === 0) {
+    return { genAngle: -Math.PI / 2, loadAngle: Math.PI / 2 };
+  }
+
+  const angles: number[] = neighborPositions.map((np) => Math.atan2(np.y - busPos.y, np.x - busPos.x));
+  angles.sort((a, b) => a - b);
+
+  const gaps: { diff: number; mid: number }[] = [];
+  for (let i = 0; i < angles.length; i++) {
+    const a1 = angles[i];
+    const a2 = angles[(i + 1) % angles.length];
+    let diff = a2 - a1;
+    if (diff <= 0) diff += 2 * Math.PI;
+
+    let mid = a1 + diff / 2.0;
+    if (mid > Math.PI) mid -= 2 * Math.PI;
+    gaps.push({ diff, mid });
+  }
+
+  gaps.sort((a, b) => b.diff - a.diff);
+
+  const genAngle = gaps[0].mid;
+  const loadAngle = gaps.length > 1 ? gaps[1].mid : genAngle + Math.PI;
+
+  return { genAngle, loadAngle };
+}
+
 export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   buses = [],
   lines = [],
@@ -66,13 +109,12 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   const currentModelRef = useRef<string>('');
 
   // =========================================================================
-  // Automatic STAC Topological Untangler (Kamada-Kawai + AABB Non-Overlap)
+  // Physical Topology Solver with Node-Node & Node-Edge Colliders
   // =========================================================================
-  const computeAutomaticUntangledLayout = useCallback((): Record<number, Point> => {
+  const solvePhysicalLayout = useCallback((): Record<number, Point> => {
     const N = buses.length;
     if (N === 0) return {};
 
-    // 1. Build Adjacency Graph from lines
     const adj: Record<number, number[]> = {};
     buses.forEach((b) => {
       adj[b.id] = [];
@@ -82,7 +124,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       if (adj[l.to_bus]) adj[l.to_bus].push(l.from_bus);
     });
 
-    // 2. All-Pairs Shortest Path Matrix D[i][j] via BFS
+    // 1. BFS Shortest Path Matrix D[i][j]
     const idToIndex = new Map<number, number>();
     buses.forEach((b, i) => idToIndex.set(b.id, i));
 
@@ -105,7 +147,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       }
     }
 
-    // Connect any disjoint islands gracefully
     let maxD = 1;
     for (let i = 0; i < N; i++) {
       for (let j = 0; j < N; j++) {
@@ -114,23 +155,22 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     }
     for (let i = 0; i < N; i++) {
       for (let j = 0; j < N; j++) {
-        if (D[i][j] >= 900) D[i][j] = maxD * 1.6;
+        if (D[i][j] >= 900) D[i][j] = maxD * 1.5;
       }
     }
 
-    // 3. Kamada-Kawai Stress Matrix
-    const idealEdgeLen = N > 30 ? 250 : 210;
+    // 2. Stress Majorization Distance Springs
+    const idealEdgeLen = N > 30 ? 260 : 210;
     const L: number[][] = Array.from({ length: N }, (_, i) =>
       Array.from({ length: N }, (_, j) => idealEdgeLen * D[i][j])
     );
     const K: number[][] = Array.from({ length: N }, (_, i) =>
-      Array.from({ length: N }, (_, j) => (i === j ? 0 : 1.0 / (D[i][j] * D[i][j] + 0.05)))
+      Array.from({ length: N }, (_, j) => (i === j ? 0 : 1.0 / (D[i][j] * D[i][j] + 0.08)))
     );
 
-    // Initial seed placement in circle
-    const cx = 1600;
-    const cy = 1200;
-    const initialRadius = Math.max(380, N * 28);
+    const cx = 1800;
+    const cy = 1300;
+    const initialRadius = Math.max(450, N * 30);
     const posArr: Point[] = buses.map((_, i) => {
       const theta = (i / N) * 2 * Math.PI;
       return {
@@ -139,9 +179,9 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       };
     });
 
-    // Run Gradient Descent Stress Minimization
-    let lr = 0.18;
-    const iterations = N > 30 ? 110 : 80;
+    // 3. Optimization Relaxation Passes
+    let lr = 0.22;
+    const iterations = N > 30 ? 95 : 70;
     for (let iter = 0; iter < iterations; iter++) {
       const grad: Point[] = Array.from({ length: N }, () => ({ x: 0, y: 0 }));
 
@@ -150,7 +190,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           if (i === j) continue;
           const dx = posArr[i].x - posArr[j].x;
           const dy = posArr[i].y - posArr[j].y;
-          const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
           const factor = (2.0 * K[i][j] * (dist - L[i][j])) / dist;
           grad[i].x += dx * factor;
           grad[i].y += dy * factor;
@@ -161,42 +201,84 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
         posArr[i].x -= lr * grad[i].x;
         posArr[i].y -= lr * grad[i].y;
       }
-      lr *= 0.975;
+      lr *= 0.97;
     }
 
-    // 4. Overlap Elimination (AABB Bounding Box Separation Pass)
-    const MIN_DX = 240; // 100px busbar width + clear margin
-    const MIN_DY = 150; // Bus height + generator and load lead clearances
+    // 4. Physical Colliders: Node-Node & Node-Edge Repulsion
+    const MIN_NODE_DIST = 220; // Radius clearance between busbars
+    const MIN_EDGE_DIST = 85;  // Clearance from intermediate lines to prevent piercing
+
+    const edgeIndices: [number, number][] = [];
+    lines.forEach((l) => {
+      const idxA = idToIndex.get(l.from_bus);
+      const idxB = idToIndex.get(l.to_bus);
+      if (idxA !== undefined && idxB !== undefined) {
+        edgeIndices.push([idxA, idxB]);
+      }
+    });
 
     for (let pass = 0; pass < 35; pass++) {
+      // Node-Node Physical Colliders
       for (let i = 0; i < N; i++) {
         for (let j = i + 1; j < N; j++) {
           const dx = posArr[j].x - posArr[i].x;
           const dy = posArr[j].y - posArr[i].y;
-          const absDx = Math.abs(dx);
-          const absDy = Math.abs(dy);
+          const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
 
-          if (absDx < MIN_DX && absDy < MIN_DY) {
-            const overlapX = MIN_DX - absDx;
-            const overlapY = MIN_DY - absDy;
+          if (dist < MIN_NODE_DIST) {
+            const overlap = (MIN_NODE_DIST - dist) * 0.5;
+            const nx = dx / dist;
+            const ny = dy / dist;
+            posArr[j].x += nx * overlap;
+            posArr[j].y += ny * overlap;
+            posArr[i].x -= nx * overlap;
+            posArr[i].y -= ny * overlap;
+          }
+        }
+      }
 
-            if (overlapX < overlapY) {
-              const shiftX = overlapX / 2 + 5;
-              const sign = dx >= 0 ? 1 : -1;
-              posArr[j].x += sign * shiftX;
-              posArr[i].x -= sign * shiftX;
-            } else {
-              const shiftY = overlapY / 2 + 5;
-              const sign = dy >= 0 ? 1 : -1;
-              posArr[j].y += sign * shiftY;
-              posArr[i].y -= sign * shiftY;
+      // Node-to-Edge Segment Colliders (prevents lines slicing through other nodes)
+      for (const [idxA, idxB] of edgeIndices) {
+        const ax = posArr[idxA].x;
+        const ay = posArr[idxA].y;
+        const bx = posArr[idxB].x;
+        const by = posArr[idxB].y;
+        const abx = bx - ax;
+        const aby = by - ay;
+        const abSq = abx * abx + aby * aby;
+        if (abSq < 1.0) continue;
+
+        for (let k = 0; k < N; k++) {
+          if (k === idxA || k === idxB) continue;
+          const px = posArr[k].x;
+          const py = posArr[k].y;
+
+          // Projection along line segment
+          const t = Math.max(0.0, Math.min(1.0, ((px - ax) * abx + (py - ay) * aby) / abSq));
+          if (t > 0.06 && t < 0.94) {
+            const projX = ax + t * abx;
+            const projY = ay + t * aby;
+            const diffX = px - projX;
+            const diffY = py - projY;
+            const dist = Math.sqrt(diffX * diffX + diffY * diffY) || 0.001;
+
+            if (dist < MIN_EDGE_DIST) {
+              const push = MIN_EDGE_DIST - dist;
+              const nx = diffX / dist;
+              const ny = diffY / dist;
+
+              posArr[k].x += nx * push * 0.9;
+              posArr[k].y += ny * push * 0.9;
+              posArr[idxA].x -= nx * push * 0.25;
+              posArr[idxA].y -= ny * push * 0.25;
+              posArr[idxB].x -= nx * push * 0.25;
+              posArr[idxB].y -= ny * push * 0.25;
             }
           }
         }
       }
     }
 
-    // Map back to bus.id
     const positions: Record<number, Point> = {};
     buses.forEach((b, i) => {
       positions[b.id] = {
@@ -224,8 +306,8 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       maxY = Math.max(maxY, p.y);
     });
 
-    const w = maxX - minX + 350;
-    const h = maxY - minY + 350;
+    const w = maxX - minX + 380;
+    const h = maxY - minY + 380;
     const containerW = containerRef.current?.clientWidth || 1200;
     const containerH = containerRef.current?.clientHeight || 880;
 
@@ -237,9 +319,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     });
   }, []);
 
-  // =========================================================================
-  // Automatic Untangling on Load & Persistent Coordinates across Line-Trips
-  // =========================================================================
+  // Compute Layout on Model Switch & Persist during Breaker Toggles
   useEffect(() => {
     if (!buses || buses.length === 0) return;
 
@@ -247,12 +327,10 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     currentModelRef.current = modelName;
     const storageKey = `nesi_sld_pos_${modelName || 'default'}`;
 
-    // 1. If coordinates already exist in memory for this model, preserve them completely
     if (!isNewModel && Object.keys(busPositionsRef.current).length >= buses.length) {
       return;
     }
 
-    // 2. Check localStorage
     if (typeof window !== 'undefined' && !isNewModel) {
       const saved = localStorage.getItem(storageKey);
       if (saved) {
@@ -267,22 +345,21 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       }
     }
 
-    // 3. Automatically untangle by default on model load
-    const autoUntangled = computeAutomaticUntangledLayout();
-    setBusPositions(autoUntangled);
-    busPositionsRef.current = autoUntangled;
+    const layout = solvePhysicalLayout();
+    setBusPositions(layout);
+    busPositionsRef.current = layout;
 
     if (typeof window !== 'undefined') {
       try {
-        localStorage.setItem(storageKey, JSON.stringify(autoUntangled));
+        localStorage.setItem(storageKey, JSON.stringify(layout));
       } catch (_) {}
     }
 
     const timer = setTimeout(handleAutoFit, 80);
     return () => clearTimeout(timer);
-  }, [modelName, buses.length, computeAutomaticUntangledLayout, handleAutoFit]);
+  }, [modelName, buses.length, solvePhysicalLayout, handleAutoFit]);
 
-  // Convert Client Window Coordinates to SVG Canvas Coordinates
+  // Convert Client Coordinates to SVG Coordinates
   const getSvgCoordinates = useCallback(
     (clientX: number, clientY: number): Point => {
       if (!svgRef.current) return { x: 0, y: 0 };
@@ -361,7 +438,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     if (typeof window !== 'undefined' && modelName) {
       localStorage.removeItem(`nesi_sld_pos_${modelName}`);
     }
-    const fresh = computeAutomaticUntangledLayout();
+    const fresh = solvePhysicalLayout();
     setBusPositions(fresh);
     busPositionsRef.current = fresh;
     if (typeof window !== 'undefined' && modelName) {
@@ -453,6 +530,24 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  // Pre-calculate clean decorator angles for each bus
+  const busDecoratorAngles = useMemo(() => {
+    const result: Record<number, { genAngle: number; loadAngle: number }> = {};
+    buses.forEach((b) => {
+      const bPos = busPositions[b.id] || { x: 0, y: 0 };
+      const connectedNeighbors = lines
+        .filter((l) => l.from_bus === b.id || l.to_bus === b.id)
+        .map((l) => {
+          const otherId = l.from_bus === b.id ? l.to_bus : l.from_bus;
+          return busPositions[otherId];
+        })
+        .filter(Boolean);
+
+      result[b.id] = computeCleanDecoratorAngles(bPos, connectedNeighbors);
+    });
+    return result;
+  }, [buses, lines, busPositions]);
+
   return (
     <div className="space-y-3 max-w-7xl mx-auto py-1">
       {/* Top Controls Header */}
@@ -467,7 +562,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-0.5 font-medium">
-            {buses.length} Substations • {lines.length} Corridors • Drag any busbar to adjust; positions are preserved.
+            {buses.length} Substations • {lines.length} Corridors • Topological force-directed layout with physical colliders.
           </p>
         </div>
 
@@ -596,7 +691,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
         </div>
       </div>
 
-      {/* Main Full-Bleed CAD Canvas (880px Height) */}
+      {/* Main Spacious Canvas Area (880px Height) */}
       <div className="relative w-full">
         <div
           ref={containerRef}
@@ -647,12 +742,16 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
 
             <g transform={`translate(${pan.x}, ${pan.y}) scale(${scale})`}>
               {/* ========================================================================= */}
-              {/* 1. TRANSMISSION LINES WITH DYNAMIC BREAKER BOXES                           */}
+              {/* 1. TRANSMISSION LINES WITH BORDER-TO-BORDER CLIPPING & ROTATED BREAKERS   */}
               {/* ========================================================================= */}
               {lines.map((line) => {
-                const posA = busPositions[line.from_bus];
-                const posB = busPositions[line.to_bus];
-                if (!posA || !posB) return null;
+                const rawPosA = busPositions[line.from_bus];
+                const rawPosB = busPositions[line.to_bus];
+                if (!rawPosA || !rawPosB) return null;
+
+                // Border-to-border clipping so lines cleanly meet the busbar edge
+                const posA = getBusBorderPoint(rawPosA, rawPosB, 50, 7);
+                const posB = getBusBorderPoint(rawPosB, rawPosA, 50, 7);
 
                 const isTripped = trippedLines.includes(line.id);
                 const loadingPercent = line.loading_percent ?? 0;
@@ -666,6 +765,13 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 const midX = (posA.x + posB.x) / 2;
                 const midY = (posA.y + posB.y) / 2;
 
+                // Rotation angle for breaker box alignment
+                let angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+                let textFlipped = false;
+                if (angleDeg > 90 || angleDeg < -90) {
+                  textFlipped = true;
+                }
+
                 let pathData = '';
                 if (viewStyle === 'orthogonal') {
                   pathData = `M ${posA.x} ${posA.y} L ${posA.x} ${midY} L ${posB.x} ${midY} L ${posB.x} ${posB.y}`;
@@ -673,7 +779,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                   pathData = `M ${posA.x} ${posA.y} L ${posB.x} ${posB.y}`;
                 }
 
-                // Suppress breaker pill on very short lines to avoid clutter
                 const showBreakerBox = lineDist >= 115;
 
                 return (
@@ -696,9 +801,9 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       className="transition-all duration-150 group-hover:stroke-[#500b50] group-hover:stroke-width-4"
                     />
 
-                    {/* STAC Inline Breaker Indicator Box */}
+                    {/* STAC Inline Breaker Indicator (Oriented along line angle) */}
                     {showBreakerBox && (
-                      <g transform={`translate(${midX}, ${midY})`}>
+                      <g transform={`translate(${midX}, ${midY}) rotate(${angleDeg})`}>
                         <rect
                           x="-26"
                           y="-10"
@@ -712,12 +817,13 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                         />
                         <text
                           x="0"
-                          y="4"
+                          y="3.5"
                           textAnchor="middle"
                           fontSize="9.5"
                           fontFamily="monospace"
                           fontWeight="900"
                           fill={isTripped ? '#dc2626' : isOverload ? '#c2410c' : '#000000'}
+                          transform={textFlipped ? 'rotate(180)' : undefined}
                         >
                           {isTripped ? 'OPEN' : `${Math.abs(flow).toFixed(0)}M`}
                         </text>
@@ -728,7 +834,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
               })}
 
               {/* ========================================================================= */}
-              {/* 2. RECTANGULAR BUSBARS (MOVABLE, BOLD, STAC SYMBOLS)                       */}
+              {/* 2. RECTANGULAR BUSBARS WITH CALCULATED FREE-ANGLE ATTACHMENTS             */}
               {/* ========================================================================= */}
               {buses.map((bus) => {
                 const pos = busPositions[bus.id];
@@ -748,6 +854,26 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                   (bus.name || '').toLowerCase().includes('slack');
 
                 const hasLoad = (bus.p_mw ?? 0) > 10;
+                const { genAngle, loadAngle } = busDecoratorAngles[bus.id] || {
+                  genAngle: -Math.PI / 2,
+                  loadAngle: Math.PI / 2,
+                };
+
+                // Free-angle coordinates for Generator
+                const genStubLen = 38;
+                const genX = Math.cos(genAngle) * genStubLen;
+                const genY = Math.sin(genAngle) * genStubLen;
+                const genBorder = getBusBorderPoint(pos, { x: pos.x + genX, y: pos.y + genY }, 50, 7);
+                const relGenBorderX = genBorder.x - pos.x;
+                const relGenBorderY = genBorder.y - pos.y;
+
+                // Free-angle coordinates for Load
+                const loadStubStart = 12;
+                const loadStubEnd = 38;
+                const loadStartX = Math.cos(loadAngle) * loadStubStart;
+                const loadStartY = Math.sin(loadAngle) * loadStubStart;
+                const loadEndX = Math.cos(loadAngle) * loadStubEnd;
+                const loadEndY = Math.sin(loadAngle) * loadStubEnd;
 
                 return (
                   <g
@@ -762,7 +888,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                     }}
                     className="cursor-move group"
                   >
-                    {/* Selection Indicator Beacon */}
+                    {/* Selection Beacon */}
                     {isSelected && (
                       <rect
                         x="-60"
@@ -778,20 +904,27 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       />
                     )}
 
-                    {/* Generator Infeed Symbol (~ in circle) */}
+                    {/* Generator Infeed Symbol (~ in circle) oriented into free angle */}
                     {isGen && (
-                      <g transform="translate(0, -36)">
-                        <line x1="0" y1="14" x2="0" y2="36" stroke="#000000" strokeWidth="2.5" />
-                        <circle cx="0" cy="0" r="14" fill="#ffffff" stroke="#000000" strokeWidth="2.5" />
+                      <g>
+                        <line
+                          x1={relGenBorderX}
+                          y1={relGenBorderY}
+                          x2={genX}
+                          y2={genY}
+                          stroke="#000000"
+                          strokeWidth="2.5"
+                        />
+                        <circle cx={genX} cy={genY} r="14" fill="#ffffff" stroke="#000000" strokeWidth="2.5" />
                         <path
-                          d="M -6 0 Q -3 -5.5 0 0 T 6 0"
+                          d={`M ${genX - 6} ${genY} Q ${genX - 3} ${genY - 5.5} ${genX} ${genY} T ${genX + 6} ${genY}`}
                           fill="none"
                           stroke="#000000"
                           strokeWidth="2.5"
                         />
                         <text
-                          x="0"
-                          y="-18"
+                          x={genX}
+                          y={genY - 17}
                           textAnchor="middle"
                           fontSize="10"
                           fill="#000000"
@@ -803,21 +936,21 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       </g>
                     )}
 
-                    {/* Load Drop Symbol (downward arrow) */}
+                    {/* Load Drop Symbol (arrow pointing into free angle) */}
                     {hasLoad && !isGen && (
-                      <g transform="translate(0, 8)">
+                      <g>
                         <line
-                          x1="0"
-                          y1="0"
-                          x2="0"
-                          y2="26"
+                          x1={loadStartX}
+                          y1={loadStartY}
+                          x2={loadEndX}
+                          y2={loadEndY}
                           stroke="#000000"
                           strokeWidth="2.5"
                           markerEnd="url(#loadArrow)"
                         />
                         <text
-                          x="0"
-                          y="40"
+                          x={loadEndX + Math.cos(loadAngle) * 14}
+                          y={loadEndY + Math.sin(loadAngle) * 14 + 3.5}
                           textAnchor="middle"
                           fontSize="9.5"
                           fontFamily="monospace"
@@ -829,7 +962,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       </g>
                     )}
 
-                    {/* Heavy Rectangular Copper Busbar (NOT A CIRCLE) */}
+                    {/* Rectangular Copper Busbar (NOT A CIRCLE) */}
                     <rect
                       x="-50"
                       y="-7"
@@ -861,7 +994,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                     {/* Voltage Magnitude Reading */}
                     <text
                       x="0"
-                      y={hasLoad && !isGen ? '52' : '25'}
+                      y="23"
                       textAnchor="middle"
                       fontSize="10.5"
                       fontFamily="monospace"
