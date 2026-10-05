@@ -31,98 +31,6 @@ interface Point {
   y: number;
 }
 
-// Geographic & topological coordinate backbone for the Nigerian 330kV transmission network
-// Placing buses according to planar grid topology prevents transmission lines from crossing over each other
-const NIGERIA_TOPOLOGICAL_ANCHORS: Record<string, Point> = {
-  // North-West Corridor
-  kano: { x: 1950, y: 350 },
-  kumbotso: { x: 1920, y: 400 },
-  rim_zakara: { x: 1980, y: 300 },
-  rimzakara: { x: 1980, y: 300 },
-  funtua: { x: 1650, y: 500 },
-  gusau: { x: 1450, y: 450 },
-  kebbi: { x: 950, y: 520 },
-  birnin_kebbi: { x: 950, y: 520 },
-  kaduna: { x: 1750, y: 800 },
-  mando: { x: 1720, y: 780 },
-  zaria: { x: 1800, y: 620 },
-
-  // North-Central & Hydro Generation Corridor
-  kainji: { x: 1050, y: 1100 },
-  jebba: { x: 1200, y: 1350 },
-  shiroro: { x: 1600, y: 1120 },
-  zungeru: { x: 1480, y: 1050 },
-  m_city: { x: 1520, y: 1200 },
-  mcity: { x: 1520, y: 1200 },
-  minna: { x: 1520, y: 1200 },
-  katampe: { x: 2000, y: 1250 },
-  abuja: { x: 2050, y: 1280 },
-  gwagwalada: { x: 1980, y: 1400 },
-  gwagw: { x: 1980, y: 1400 },
-  lokoja: { x: 1880, y: 1720 },
-  geregu: { x: 1940, y: 1780 },
-  ajaokuta: { x: 1970, y: 1820 },
-  makurdi: { x: 2450, y: 1650 },
-  lafia: { x: 2350, y: 1420 },
-
-  // North-East Corridor
-  jos: { x: 2500, y: 1050 },
-  bauchi: { x: 2850, y: 920 },
-  gombe: { x: 3250, y: 920 },
-  damaturu: { x: 3380, y: 520 },
-  maiduguri: { x: 3750, y: 500 },
-  yola: { x: 3600, y: 1450 },
-  mayo_belwa: { x: 3550, y: 1520 },
-  mayobelw: { x: 3550, y: 1520 },
-  jalingo: { x: 3050, y: 1600 },
-  wukari: { x: 2750, y: 1800 },
-
-  // South-West & Thermal Coastal Corridor
-  osogbo: { x: 1220, y: 1780 },
-  ayede: { x: 1020, y: 1900 },
-  ibadan: { x: 990, y: 1920 },
-  olorunsogo: { x: 900, y: 1800 },
-  omotosho: { x: 1300, y: 2150 },
-  ikeja: { x: 880, y: 2320 },
-  ikeja_w: { x: 850, y: 2340 },
-  akangba: { x: 910, y: 2380 },
-  egbin: { x: 1040, y: 2400 },
-  aja: { x: 1120, y: 2420 },
-  alagbon: { x: 960, y: 2440 },
-  lekki: { x: 1180, y: 2450 },
-  sakete: { x: 550, y: 2280 },
-
-  // Mid-West Delta Corridor
-  benin: { x: 1620, y: 2150 },
-  ihovbor: { x: 1680, y: 2100 },
-  azura: { x: 1700, y: 2120 },
-  sapele: { x: 1600, y: 2380 },
-  delta: { x: 1680, y: 2550 },
-  aladja: { x: 1650, y: 2580 },
-  asaba: { x: 1950, y: 2220 },
-  okpai: { x: 2000, y: 2380 },
-
-  // South-East & South-South Corridor
-  onitsha: { x: 2050, y: 2220 },
-  new_haven: { x: 2380, y: 2100 },
-  nhaven: { x: 2380, y: 2100 },
-  ugwuaji: { x: 2420, y: 2150 },
-  owerri: { x: 2180, y: 2450 },
-  alaoji: { x: 2300, y: 2600 },
-  afam: { x: 2260, y: 2750 },
-  ikot_ekpene: { x: 2520, y: 2650 },
-  calabar: { x: 2780, y: 2650 },
-  adiabor: { x: 2750, y: 2620 },
-  omoku: { x: 2060, y: 2680 },
-  egbema: { x: 2120, y: 2620 },
-};
-
-// Tests whether two line segments (p1-p2) and (p3-p4) intersect
-function checkSegmentsCross(p1: Point, p2: Point, p3: Point, p4: Point): boolean {
-  const ccw = (a: Point, b: Point, c: Point) => (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x);
-  return ccw(p1, p3, p4) !== ccw(p2, p3, p4) && ccw(p1, p2, p3) !== ccw(p1, p2, p4);
-}
-
 // Ray-box intersection for busbar border clipping
 function getBusBorderPoint(center: Point, target: Point, halfW = 50, halfH = 7): Point {
   const dx = target.x - center.x;
@@ -135,6 +43,12 @@ function getBusBorderPoint(center: Point, target: Point, halfW = 50, halfH = 7):
     x: center.x + dx * s,
     y: center.y + dy * s,
   };
+}
+
+// Tests whether two line segments (p1-p2) and (p3-p4) intersect
+function checkSegmentsCross(p1: Point, p2: Point, p3: Point, p4: Point): boolean {
+  const ccw = (a: Point, b: Point, c: Point) => (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x);
+  return ccw(p1, p3, p4) !== ccw(p2, p3, p4) && ccw(p1, p2, p3) !== ccw(p1, p2, p4);
 }
 
 // Dynamic Free-Angle Calculation: Finds the widest open angular sector away from connected lines
@@ -180,8 +94,8 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
 
   // Canvas Viewport Pan & Zoom
-  const [scale, setScale] = useState<number>(0.52);
-  const [pan, setPan] = useState<Point>({ x: 60, y: 40 });
+  const [scale, setScale] = useState<number>(0.65);
+  const [pan, setPan] = useState<Point>({ x: 80, y: 60 });
   const [isPanning, setIsPanning] = useState<boolean>(false);
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
 
@@ -194,49 +108,42 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
   const [hasDragged, setHasDragged] = useState<boolean>(false);
 
-  // Touch Pinch Gestures
-  const touchStartDistRef = useRef<number | null>(null);
-  const touchStartScaleRef = useRef<number>(scale);
-
   const containerRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const currentModelRef = useRef<string>('');
 
+  // Keep state refs updated for native non-passive wheel events
+  const scaleRef = useRef<number>(scale);
+  scaleRef.current = scale;
+  const panRef = useRef<Point>(pan);
+  panRef.current = pan;
+
   // =========================================================================
-  // Topological Planar Seeding with Multi-Stage Physics & Line Colliders
+  // Universal STAC Untangler (Circular Seeding + Fruchterman-Reingold + Colliders)
   // =========================================================================
-  const solvePlanarUntangledLayout = useCallback((): Record<number, Point> => {
+  const solveUntangledLayout = useCallback((): Record<number, Point> => {
     const N = buses.length;
     if (N === 0) return {};
 
-    const positions: Record<number, Point> = {};
     const idToIndex = new Map<number, number>();
     buses.forEach((b, i) => idToIndex.set(b.id, i));
 
-    // 1. Initial Planar Topological Seeding
-    buses.forEach((b, idx) => {
-      const cleanName = (b.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-      let matchedPoint: Point | null = null;
-      let longestMatch = 0;
+    // Dynamic canvas dimensions based on network size
+    const width = Math.max(1600, N * 60);
+    const height = Math.max(1100, N * 45);
 
-      for (const [key, pt] of Object.entries(NIGERIA_TOPOLOGICAL_ANCHORS)) {
-        const normKey = key.replace(/[^a-z0-9]/g, '');
-        if (cleanName.includes(normKey) && normKey.length > longestMatch) {
-          longestMatch = normKey.length;
-          matchedPoint = pt;
-        }
-      }
+    // 1. Initial 360-degree Circular Seeding (Guarantees open loops for 5, 14, 30, or 63 buses)
+    const radius = Math.min(width, height) * 0.38;
+    const cx = width / 2;
+    const cy = height / 2;
 
-      if (matchedPoint) {
-        positions[b.id] = { ...matchedPoint };
-      } else {
-        const col = idx % 8;
-        const row = Math.floor(idx / 8);
-        positions[b.id] = { x: 500 + col * 320, y: 400 + row * 260 };
-      }
+    const posArr: Point[] = buses.map((_, i) => {
+      const theta = (i / N) * 2 * Math.PI;
+      return {
+        x: cx + Math.cos(theta) * radius,
+        y: cy + Math.sin(theta) * radius,
+      };
     });
-
-    const posArr: Point[] = buses.map((b) => ({ ...positions[b.id] }));
 
     const edgePairs: [number, number][] = [];
     lines.forEach((l) => {
@@ -247,92 +154,150 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       }
     });
 
-    // 2. Physical Layout Passes (Node-Node, Node-Edge & Line-Line Colliders)
-    const MIN_NODE_DIST = 220; // Minimum distance between any two busbars
-    const MIN_EDGE_DIST = 95;  // Minimum clearance from any line to prevent slicing through nodes
+    // 2. Fruchterman-Reingold Force Relaxation with Multi-Pass Colliders
+    const area = width * height;
+    const k = Math.sqrt(area / Math.max(1, N)) * 1.15;
+    const kSq = k * k;
 
-    for (let pass = 0; pass < 45; pass++) {
-      // A. Node-Node Colliders (Separates all substations)
+    let temp = width / 7.0;
+    const iterations = N > 30 ? 130 : 90;
+    const dt = temp / iterations;
+
+    const MIN_NODE_DIST = 210; // Clearance between busbars
+    const MIN_EDGE_DIST = 85;  // Clearance from transmission lines
+
+    for (let it = 0; it < iterations; it++) {
+      const disp: Point[] = Array.from({ length: N }, () => ({ x: 0, y: 0 }));
+
+      // A. Repulsion between all node pairs
       for (let i = 0; i < N; i++) {
-        for (let j = i + 1; j < N; j++) {
-          const dx = posArr[j].x - posArr[i].x;
-          const dy = posArr[j].y - posArr[i].y;
-          const dist = Math.hypot(dx, dy) || 1;
-
-          if (dist < MIN_NODE_DIST) {
-            const overlap = (MIN_NODE_DIST - dist) * 0.5;
-            const nx = dx / dist;
-            const ny = dy / dist;
-            posArr[j].x += nx * overlap;
-            posArr[j].y += ny * overlap;
-            posArr[i].x -= nx * overlap;
-            posArr[i].y -= ny * overlap;
+        for (let j = 0; j < N; j++) {
+          if (i === j) continue;
+          const dx = posArr[i].x - posArr[j].x;
+          const dy = posArr[i].y - posArr[j].y;
+          const dist = Math.hypot(dx, dy) || 1.0;
+          if (dist < 1000) {
+            const f = kSq / dist;
+            disp[i].x += (dx / dist) * f;
+            disp[i].y += (dy / dist) * f;
           }
         }
       }
 
-      // B. Line-to-Node Colliders (Prevents lines from cutting through unrelated nodes)
+      // B. Spring Attraction along transmission lines
+      for (const [u, v] of edgePairs) {
+        const dx = posArr[v].x - posArr[u].x;
+        const dy = posArr[v].y - posArr[u].y;
+        const dist = Math.hypot(dx, dy) || 1.0;
+        const f = (dist * dist) / k;
+        disp[u].x += (dx / dist) * f;
+        disp[u].y += (dy / dist) * f;
+        disp[v].x -= (dx / dist) * f;
+        disp[v].y -= (dy / dist) * f;
+      }
+
+      // C. Node-to-Edge Colliders (Prevents lines from slicing through other nodes)
       for (const [u, v] of edgePairs) {
         const ax = posArr[u].x, ay = posArr[u].y;
         const bx = posArr[v].x, by = posArr[v].y;
         const abx = bx - ax, aby = by - ay;
         const abSq = abx * abx + aby * aby;
-        if (abSq < 1) continue;
+        if (abSq < 1.0) continue;
 
-        for (let k = 0; k < N; k++) {
-          if (k === u || k === v) continue;
-          const px = posArr[k].x, py = posArr[k].y;
+        for (let kIdx = 0; kIdx < N; kIdx++) {
+          if (kIdx === u || kIdx === v) continue;
+          const px = posArr[kIdx].x, py = posArr[kIdx].y;
           const t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / abSq));
 
-          if (t > 0.05 && t < 0.95) {
+          if (t > 0.06 && t < 0.94) {
             const projX = ax + t * abx;
             const projY = ay + t * aby;
             const diffX = px - projX;
             const diffY = py - projY;
-            const dist = Math.hypot(diffX, diffY) || 1;
+            const dist = Math.hypot(diffX, diffY) || 1.0;
 
             if (dist < MIN_EDGE_DIST) {
-              const push = (MIN_EDGE_DIST - dist) * 0.9;
-              const nx = diffX / dist;
-              const ny = diffY / dist;
-              posArr[k].x += nx * push;
-              posArr[k].y += ny * push;
+              const push = (MIN_EDGE_DIST - dist) * 1.4;
+              disp[kIdx].x += (diffX / dist) * push;
+              disp[kIdx].y += (diffY / dist) * push;
+              disp[u].x -= (diffX / dist) * push * 0.5 * (1 - t);
+              disp[u].y -= (diffX / dist) * push * 0.5 * (1 - t);
+              disp[v].x -= (diffX / dist) * push * 0.5 * t;
+              disp[v].y -= (diffX / dist) * push * 0.5 * t;
             }
           }
         }
       }
 
-      // C. Line-to-Line Colliders (Edge-Edge Anti-Crossing Forces)
+      // D. Edge-to-Edge Anti-Crossing Forces
       for (let i = 0; i < edgePairs.length; i++) {
         const [u1, v1] = edgePairs[i];
-        const p1 = posArr[u1], p2 = posArr[v1];
-
         for (let j = i + 1; j < edgePairs.length; j++) {
           const [u2, v2] = edgePairs[j];
-          if (u1 === u2 || u1 === v2 || v1 === u2 || v1 === v2) continue; // Sharing an endpoint is normal
+          if (u1 === u2 || u1 === v2 || v1 === u2 || v1 === v2) continue;
 
-          const p3 = posArr[u2], p4 = posArr[v2];
-
-          // If lines cross, apply strong repelling impulse perpendicular to line trajectories
-          if (checkSegmentsCross(p1, p2, p3, p4)) {
-            const d1x = p2.x - p1.x, d1y = p2.y - p1.y;
+          if (checkSegmentsCross(posArr[u1], posArr[v1], posArr[u2], posArr[v2])) {
+            const d1x = posArr[v1].x - posArr[u1].x;
+            const d1y = posArr[v1].y - posArr[u1].y;
             const len1 = Math.hypot(d1x, d1y) || 1;
             const norm1x = -d1y / len1, norm1y = d1x / len1;
 
-            const d2x = p4.x - p3.x, d2y = p4.y - p3.y;
+            const d2x = posArr[v2].x - posArr[u2].x;
+            const d2y = posArr[v2].y - posArr[u2].y;
             const len2 = Math.hypot(d2x, d2y) || 1;
             const norm2x = -d2y / len2, norm2y = d2x / len2;
 
-            const pushMag = 18;
-            posArr[u1].x += norm2x * pushMag;
-            posArr[u1].y += norm2y * pushMag;
-            posArr[v1].x += norm2x * pushMag;
-            posArr[v1].y += norm2y * pushMag;
+            const pushMag = 16.0;
+            disp[u1].x += norm2x * pushMag;
+            disp[u1].y += norm2y * pushMag;
+            disp[v1].x += norm2x * pushMag;
+            disp[v1].y += norm2y * pushMag;
+            disp[u2].x += norm1x * pushMag;
+            disp[u2].y += norm1y * pushMag;
+            disp[v2].x += norm1x * pushMag;
+            disp[v2].y += norm1y * pushMag;
+          }
+        }
+      }
 
-            posArr[u2].x += norm1x * pushMag;
-            posArr[u2].y += norm1y * pushMag;
-            posArr[v2].x += norm1x * pushMag;
-            posArr[v2].y += norm1y * pushMag;
+      // Apply displacements with cooling
+      for (let i = 0; i < N; i++) {
+        const dLen = Math.hypot(disp[i].x, disp[i].y) || 1.0;
+        const step = Math.min(dLen, temp);
+        posArr[i].x += (disp[i].x / dLen) * step;
+        posArr[i].y += (disp[i].y / dLen) * step;
+      }
+
+      temp -= dt;
+    }
+
+    // 3. Strict AABB Bounding Box Separation Pass
+    const MIN_DX = 210;
+    const MIN_DY = 120;
+
+    for (let pass = 0; pass < 35; pass++) {
+      for (let i = 0; i < N; i++) {
+        for (let j = i + 1; j < N; j++) {
+          const dx = posArr[j].x - posArr[i].x;
+          const dy = posArr[j].y - posArr[i].y;
+          const absDx = Math.abs(dx);
+          const absDy = Math.abs(dy);
+
+          if (absDx < MIN_DX && absDy < MIN_DY) {
+            const overlapX = MIN_DX - absDx;
+            const overlapY = MIN_DY - absDy;
+
+            if (overlapX < overlapY) {
+              const pushX = overlapX / 2 + 4;
+              const sign = dx >= 0 ? 1 : -1;
+              posArr[j].x += sign * pushX;
+              posArr[i].x -= sign * pushX;
+            } else {
+              const pushY = overlapY / 2 + 4;
+              const sign = dy >= 0 ? 1 : -1;
+              posArr[j].y += sign * pushY;
+              posArr[i].y -= sign * pushY;
+            }
           }
         }
       }
@@ -361,17 +326,22 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       maxY = Math.max(maxY, p.y);
     });
 
-    const w = maxX - minX + 380;
-    const h = maxY - minY + 380;
+    const w = maxX - minX + 320;
+    const h = maxY - minY + 320;
     const containerW = containerRef.current?.clientWidth || 1200;
     const containerH = containerRef.current?.clientHeight || 880;
 
     const fitScale = Math.min(containerW / w, containerH / h, 1.0);
-    setScale(Math.max(0.18, fitScale));
-    setPan({
-      x: (containerW - w * fitScale) / 2 - minX * fitScale + 175 * fitScale,
-      y: (containerH - h * fitScale) / 2 - minY * fitScale + 175 * fitScale,
-    });
+    const newScale = Math.max(0.18, fitScale);
+    const newPan = {
+      x: (containerW - w * fitScale) / 2 - minX * fitScale + 160 * fitScale,
+      y: (containerH - h * fitScale) / 2 - minY * fitScale + 160 * fitScale,
+    };
+
+    setScale(newScale);
+    setPan(newPan);
+    scaleRef.current = newScale;
+    panRef.current = newPan;
   }, []);
 
   // Compute Layout on Model Load & Persist during Breaker Toggles
@@ -400,7 +370,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       }
     }
 
-    const layout = solvePlanarUntangledLayout();
+    const layout = solveUntangledLayout();
     setBusPositions(layout);
     busPositionsRef.current = layout;
 
@@ -412,7 +382,56 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
 
     const timer = setTimeout(handleAutoFit, 80);
     return () => clearTimeout(timer);
-  }, [modelName, buses.length, solvePlanarUntangledLayout, handleAutoFit]);
+  }, [modelName, buses.length, solveUntangledLayout, handleAutoFit]);
+
+  // =========================================================================
+  // Non-Passive Native Wheel Listener: Traps Pinch & Zoom to the SLD Container
+  // (Prevents the browser webpage from zooming when hovering over the SLD)
+  // =========================================================================
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleNativeWheel = (e: WheelEvent) => {
+      e.preventDefault(); // Traps zoom to canvas; prevents browser window zoom!
+      e.stopPropagation();
+
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      let zoomFactor: number;
+      if (e.ctrlKey) {
+        // Trackpad pinch gesture
+        zoomFactor = Math.exp(-e.deltaY * 0.012);
+      } else {
+        // Standard mouse scroll wheel
+        zoomFactor = e.deltaY < 0 ? 1.14 : 0.88;
+      }
+
+      const currScale = scaleRef.current;
+      const currPan = panRef.current;
+      const nextScale = Math.min(3.5, Math.max(0.12, currScale * zoomFactor));
+
+      const mouseWorldX = (mouseX - currPan.x) / currScale;
+      const mouseWorldY = (mouseY - currPan.y) / currScale;
+
+      const nextPan = {
+        x: mouseX - mouseWorldX * nextScale,
+        y: mouseY - mouseWorldY * nextScale,
+      };
+
+      setScale(nextScale);
+      setPan(nextPan);
+      scaleRef.current = nextScale;
+      panRef.current = nextPan;
+    };
+
+    container.addEventListener('wheel', handleNativeWheel, { passive: false });
+    return () => {
+      container.removeEventListener('wheel', handleNativeWheel);
+    };
+  }, []);
 
   // Convert Client Window Coordinates to SVG Canvas Coordinates
   const getSvgCoordinates = useCallback(
@@ -427,82 +446,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     [pan, scale]
   );
 
-  // =========================================================================
-  // Smooth Touchpad Pinch-to-Zoom & Cursor-Centered Mouse Wheel Zoom
-  // =========================================================================
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    if (!containerRef.current) return;
-
-    const rect = containerRef.current.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    // Detect pinch gesture (trackpad sends e.ctrlKey = true) vs traditional mouse wheel
-    let zoomFactor: number;
-    if (e.ctrlKey) {
-      // Smooth Trackpad Pinch Gesture
-      zoomFactor = Math.exp(-e.deltaY * 0.012);
-    } else {
-      // Standard Mouse Scroll Wheel
-      zoomFactor = e.deltaY < 0 ? 1.14 : 0.88;
-    }
-
-    const nextScale = Math.min(3.5, Math.max(0.12, scale * zoomFactor));
-
-    // Anchor zooming precisely around the cursor position
-    const mouseWorldX = (mouseX - pan.x) / scale;
-    const mouseWorldY = (mouseY - pan.y) / scale;
-
-    const nextPanX = mouseX - mouseWorldX * nextScale;
-    const nextPanY = mouseY - mouseWorldY * nextScale;
-
-    setScale(nextScale);
-    setPan({ x: nextPanX, y: nextPanY });
-  };
-
-  // Touchscreen / Mobile Dual-Finger Pinch
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (e.touches.length === 2) {
-      const dist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      touchStartDistRef.current = dist;
-      touchStartScaleRef.current = scale;
-    }
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (e.touches.length === 2 && touchStartDistRef.current && containerRef.current) {
-      e.preventDefault();
-      const currentDist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      const ratio = currentDist / touchStartDistRef.current;
-      const nextScale = Math.min(3.5, Math.max(0.12, touchStartScaleRef.current * ratio));
-
-      const rect = containerRef.current.getBoundingClientRect();
-      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
-      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
-
-      const mouseWorldX = (midX - pan.x) / scale;
-      const mouseWorldY = (midY - pan.y) / scale;
-
-      setScale(nextScale);
-      setPan({
-        x: midX - mouseWorldX * nextScale,
-        y: midY - mouseWorldY * nextScale,
-      });
-    }
-  };
-
-  const handleTouchEnd = () => {
-    touchStartDistRef.current = null;
-  };
-
-  // Canvas Mouse Drag Panning
+  // Mouse pan and bus drag events
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
     setIsPanning(true);
@@ -539,10 +483,12 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
         return next;
       });
     } else if (isPanning) {
-      setPan({
+      const nextPan = {
         x: e.clientX - panStart.x,
         y: e.clientY - panStart.y,
-      });
+      };
+      setPan(nextPan);
+      panRef.current = nextPan;
     }
   };
 
@@ -562,7 +508,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     if (typeof window !== 'undefined' && modelName) {
       localStorage.removeItem(`nesi_sld_pos_${modelName}`);
     }
-    const fresh = solvePlanarUntangledLayout();
+    const fresh = solveUntangledLayout();
     setBusPositions(fresh);
     busPositionsRef.current = fresh;
     if (typeof window !== 'undefined' && modelName) {
@@ -578,10 +524,12 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     if (pos && containerRef.current) {
       const containerW = containerRef.current.clientWidth;
       const containerH = containerRef.current.clientHeight;
-      setPan({
+      const nextPan = {
         x: containerW / 2 - pos.x * scale,
         y: containerH / 2 - pos.y * scale,
-      });
+      };
+      setPan(nextPan);
+      panRef.current = nextPan;
       const b = buses.find((item) => item.id === busId);
       if (b) setSelectedBus(b);
     }
@@ -694,7 +642,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
 
   return (
     <div className="space-y-3 max-w-7xl mx-auto py-1">
-      {/* Top Controls Header (Zoom buttons removed as requested) */}
+      {/* Top Controls Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 border-b border-slate-200 gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -779,7 +727,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             </button>
           </div>
 
-          {/* Scale Indicator & Full Auto-Fit View (No button zooming) */}
+          {/* Scale Indicator & Full Auto-Fit View */}
           <div className="flex items-center rounded-xl border border-slate-200 bg-white px-3 py-1 shadow-2xs text-xs font-mono font-bold text-slate-700 gap-2">
             <span>{Math.round(scale * 100)}%</span>
             <button
@@ -829,10 +777,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
-          onWheel={handleWheel}
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
           className={`h-[880px] w-full rounded-2xl border border-slate-300 bg-white relative overflow-hidden shadow-sm select-none ${
             isPanning ? 'cursor-grabbing' : draggingBusId !== null ? 'cursor-move' : 'cursor-grab'
           }`}
@@ -882,7 +826,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 const rawPosB = busPositions[line.to_bus];
                 if (!rawPosA || !rawPosB) return null;
 
-                // STAC MultiLineEdge normal vector offset (prevents parallel circuit overlap)
+                // STAC MultiLineEdge normal vector offset
                 const laneOffset = multiLineOffsets.get(line.id) || 0;
                 const cdx = rawPosB.x - rawPosA.x;
                 const cdy = rawPosB.y - rawPosA.y;
@@ -945,7 +889,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       className="transition-all duration-150 group-hover:stroke-[#500b50] group-hover:stroke-width-4"
                     />
 
-                    {/* STAC Inline Breaker Indicator (Oriented along line angle) */}
+                    {/* STAC Inline Breaker Indicator */}
                     {showBreakerBox && (
                       <g transform={`translate(${midX}, ${midY}) rotate(${angleDeg})`}>
                         <rect
@@ -1048,7 +992,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       />
                     )}
 
-                    {/* Generator Infeed Symbol (~ in circle) oriented into free angle */}
+                    {/* Generator Infeed Symbol (~ in circle) */}
                     {isGen && (
                       <g>
                         <line
@@ -1080,7 +1024,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       </g>
                     )}
 
-                    {/* Load Drop Symbol (arrow pointing into free angle) */}
+                    {/* Load Drop Symbol */}
                     {hasLoad && !isGen && (
                       <g>
                         <line
