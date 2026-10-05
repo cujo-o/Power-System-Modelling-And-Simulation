@@ -31,8 +31,8 @@ interface Point {
   y: number;
 }
 
-// Ray-box intersection for busbar border clipping
-function getBusBorderPoint(center: Point, target: Point, halfW = 50, halfH = 7): Point {
+// Ray-box intersection for busbar border clipping (76px x 8px)
+function getBusBorderPoint(center: Point, target: Point, halfW = 38, halfH = 5): Point {
   const dx = target.x - center.x;
   const dy = target.y - center.y;
   if (Math.abs(dx) < 1e-4 && Math.abs(dy) < 1e-4) return center;
@@ -94,7 +94,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
 
   // Canvas Viewport Pan & Zoom
-  const [scale, setScale] = useState<number>(0.65);
+  const [scale, setScale] = useState<number>(0.85);
   const [pan, setPan] = useState<Point>({ x: 80, y: 60 });
   const [isPanning, setIsPanning] = useState<boolean>(false);
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
@@ -119,7 +119,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   panRef.current = pan;
 
   // =========================================================================
-  // Universal STAC Untangler (Circular Seeding + Fruchterman-Reingold + Colliders)
+  // Condensed Topological Untangler (Compact Links + Anti-Crossing Colliders)
   // =========================================================================
   const solveUntangledLayout = useCallback((): Record<number, Point> => {
     const N = buses.length;
@@ -128,55 +128,75 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     const idToIndex = new Map<number, number>();
     buses.forEach((b, i) => idToIndex.set(b.id, i));
 
-    // Dynamic canvas dimensions based on network size
-    const width = Math.max(1600, N * 60);
-    const height = Math.max(1100, N * 45);
-
-    // 1. Initial 360-degree Circular Seeding (Guarantees open loops for 5, 14, 30, or 63 buses)
-    const radius = Math.min(width, height) * 0.38;
-    const cx = width / 2;
-    const cy = height / 2;
-
-    const posArr: Point[] = buses.map((_, i) => {
-      const theta = (i / N) * 2 * Math.PI;
-      return {
-        x: cx + Math.cos(theta) * radius,
-        y: cy + Math.sin(theta) * radius,
-      };
-    });
-
+    // Adjacency graph
+    const adj: number[][] = Array.from({ length: N }, () => []);
     const edgePairs: [number, number][] = [];
     lines.forEach((l) => {
       const u = idToIndex.get(l.from_bus);
       const v = idToIndex.get(l.to_bus);
       if (u !== undefined && v !== undefined && u !== v) {
+        adj[u].push(v);
+        adj[v].push(u);
         edgePairs.push([u, v]);
       }
     });
 
-    // 2. Fruchterman-Reingold Force Relaxation with Multi-Pass Colliders
-    const area = width * height;
-    const k = Math.sqrt(area / Math.max(1, N)) * 1.15;
-    const kSq = k * k;
+    // BFS Topological Ordering for circular seeding
+    const visited = new Set<number>();
+    const bfsOrder: number[] = [];
+    for (let i = 0; i < N; i++) {
+      if (!visited.has(i)) {
+        const queue = [i];
+        visited.add(i);
+        while (queue.length > 0) {
+          const curr = queue.shift()!;
+          bfsOrder.push(curr);
+          for (const nbr of adj[curr]) {
+            if (!visited.has(nbr)) {
+              visited.add(nbr);
+              queue.push(nbr);
+            }
+          }
+        }
+      }
+    }
 
-    let temp = width / 7.0;
-    const iterations = N > 30 ? 130 : 90;
+    // Condensed Dimensions: Compact radius keeps lines short and connected
+    const radius = N <= 8 ? 130 : Math.min(320, N * 8);
+    const cx = 800;
+    const cy = 550;
+
+    const posArr: Point[] = Array.from({ length: N }, () => ({ x: 0, y: 0 }));
+    bfsOrder.forEach((nodeIdx, orderIdx) => {
+      const theta = (orderIdx / N) * 2 * Math.PI;
+      posArr[nodeIdx] = {
+        x: cx + Math.cos(theta) * radius,
+        y: cy + Math.sin(theta) * radius,
+      };
+    });
+
+    // Ideal edge length: Tight, compact link spacing
+    const idealEdgeLen = N <= 8 ? 130 : Math.max(85, 125 - N * 0.45);
+    const kSq = idealEdgeLen * idealEdgeLen;
+
+    let temp = Math.min(120, radius * 0.7);
+    const iterations = N > 30 ? 140 : 90;
     const dt = temp / iterations;
 
-    const MIN_NODE_DIST = 210; // Clearance between busbars
-    const MIN_EDGE_DIST = 85;  // Clearance from transmission lines
+    const MIN_NODE_DIST = 105; // Tight busbar clearance
+    const MIN_EDGE_DIST = 55;  // Clearance from lines
 
     for (let it = 0; it < iterations; it++) {
       const disp: Point[] = Array.from({ length: N }, () => ({ x: 0, y: 0 }));
 
-      // A. Repulsion between all node pairs
+      // A. Repulsion between nodes
       for (let i = 0; i < N; i++) {
         for (let j = 0; j < N; j++) {
           if (i === j) continue;
           const dx = posArr[i].x - posArr[j].x;
           const dy = posArr[i].y - posArr[j].y;
           const dist = Math.hypot(dx, dy) || 1.0;
-          if (dist < 1000) {
+          if (dist < 600) {
             const f = kSq / dist;
             disp[i].x += (dx / dist) * f;
             disp[i].y += (dy / dist) * f;
@@ -189,14 +209,14 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
         const dx = posArr[v].x - posArr[u].x;
         const dy = posArr[v].y - posArr[u].y;
         const dist = Math.hypot(dx, dy) || 1.0;
-        const f = (dist * dist) / k;
+        const f = (dist * dist) / idealEdgeLen;
         disp[u].x += (dx / dist) * f;
         disp[u].y += (dy / dist) * f;
         disp[v].x -= (dx / dist) * f;
         disp[v].y -= (dy / dist) * f;
       }
 
-      // C. Node-to-Edge Colliders (Prevents lines from slicing through other nodes)
+      // C. Node-to-Edge Colliders (Prevents lines slicing through other nodes)
       for (const [u, v] of edgePairs) {
         const ax = posArr[u].x, ay = posArr[u].y;
         const bx = posArr[v].x, by = posArr[v].y;
@@ -209,7 +229,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           const px = posArr[kIdx].x, py = posArr[kIdx].y;
           const t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / abSq));
 
-          if (t > 0.06 && t < 0.94) {
+          if (t > 0.08 && t < 0.92) {
             const projX = ax + t * abx;
             const projY = ay + t * aby;
             const diffX = px - projX;
@@ -217,13 +237,13 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             const dist = Math.hypot(diffX, diffY) || 1.0;
 
             if (dist < MIN_EDGE_DIST) {
-              const push = (MIN_EDGE_DIST - dist) * 1.4;
+              const push = (MIN_EDGE_DIST - dist) * 1.2;
               disp[kIdx].x += (diffX / dist) * push;
               disp[kIdx].y += (diffY / dist) * push;
-              disp[u].x -= (diffX / dist) * push * 0.5 * (1 - t);
-              disp[u].y -= (diffX / dist) * push * 0.5 * (1 - t);
-              disp[v].x -= (diffX / dist) * push * 0.5 * t;
-              disp[v].y -= (diffX / dist) * push * 0.5 * t;
+              disp[u].x -= (diffX / dist) * push * 0.4 * (1 - t);
+              disp[u].y -= (diffX / dist) * push * 0.4 * (1 - t);
+              disp[v].x -= (diffX / dist) * push * 0.4 * t;
+              disp[v].y -= (diffX / dist) * push * 0.4 * t;
             }
           }
         }
@@ -247,7 +267,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             const len2 = Math.hypot(d2x, d2y) || 1;
             const norm2x = -d2y / len2, norm2y = d2x / len2;
 
-            const pushMag = 16.0;
+            const pushMag = 12.0;
             disp[u1].x += norm2x * pushMag;
             disp[u1].y += norm2y * pushMag;
             disp[v1].x += norm2x * pushMag;
@@ -271,11 +291,11 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       temp -= dt;
     }
 
-    // 3. Strict AABB Bounding Box Separation Pass
-    const MIN_DX = 210;
-    const MIN_DY = 120;
+    // 3. Compact Bounding Box Separation Pass
+    const MIN_DX = 92;
+    const MIN_DY = 55;
 
-    for (let pass = 0; pass < 35; pass++) {
+    for (let pass = 0; pass < 25; pass++) {
       for (let i = 0; i < N; i++) {
         for (let j = i + 1; j < N; j++) {
           const dx = posArr[j].x - posArr[i].x;
@@ -288,12 +308,12 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             const overlapY = MIN_DY - absDy;
 
             if (overlapX < overlapY) {
-              const pushX = overlapX / 2 + 4;
+              const pushX = overlapX / 2 + 2;
               const sign = dx >= 0 ? 1 : -1;
               posArr[j].x += sign * pushX;
               posArr[i].x -= sign * pushX;
             } else {
-              const pushY = overlapY / 2 + 4;
+              const pushY = overlapY / 2 + 2;
               const sign = dy >= 0 ? 1 : -1;
               posArr[j].y += sign * pushY;
               posArr[i].y -= sign * pushY;
@@ -326,16 +346,17 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       maxY = Math.max(maxY, p.y);
     });
 
-    const w = maxX - minX + 320;
-    const h = maxY - minY + 320;
+    const w = maxX - minX + 220;
+    const h = maxY - minY + 220;
     const containerW = containerRef.current?.clientWidth || 1200;
-    const containerH = containerRef.current?.clientHeight || 880;
+    const containerH = containerRef.current?.clientHeight || 850;
 
-    const fitScale = Math.min(containerW / w, containerH / h, 1.0);
-    const newScale = Math.max(0.18, fitScale);
+    // Normal, comfortable scale range for condensed diagrams
+    const fitScale = Math.min(containerW / w, containerH / h, 1.25);
+    const newScale = Math.max(0.40, fitScale);
     const newPan = {
-      x: (containerW - w * fitScale) / 2 - minX * fitScale + 160 * fitScale,
-      y: (containerH - h * fitScale) / 2 - minY * fitScale + 160 * fitScale,
+      x: (containerW - w * newScale) / 2 - minX * newScale + 110 * newScale,
+      y: (containerH - h * newScale) / 2 - minY * newScale + 110 * newScale,
     };
 
     setScale(newScale);
@@ -385,15 +406,15 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   }, [modelName, buses.length, solveUntangledLayout, handleAutoFit]);
 
   // =========================================================================
-  // Non-Passive Native Wheel Listener: Traps Pinch & Zoom to the SLD Container
-  // (Prevents the browser webpage from zooming when hovering over the SLD)
+  // Non-Passive Native Wheel Listener: Smooth, Dynamic Touchpad/Mouse Zoom
+  // Traps pinch gestures to the container to prevent webpage zoom
   // =========================================================================
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const handleNativeWheel = (e: WheelEvent) => {
-      e.preventDefault(); // Traps zoom to canvas; prevents browser window zoom!
+      e.preventDefault(); // Prevents whole-page browser zoom
       e.stopPropagation();
 
       const rect = container.getBoundingClientRect();
@@ -402,17 +423,23 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
 
       let zoomFactor: number;
       if (e.ctrlKey) {
-        // Trackpad pinch gesture
-        zoomFactor = Math.exp(-e.deltaY * 0.012);
+        // Trackpad pinch gesture: smooth, granular continuous scaling
+        const clampedDelta = Math.max(-30, Math.min(30, e.deltaY));
+        zoomFactor = Math.exp(-clampedDelta * 0.005);
       } else {
-        // Standard mouse scroll wheel
-        zoomFactor = e.deltaY < 0 ? 1.14 : 0.88;
+        // Standard mouse wheel notch: gentle 5% step per notch
+        const clampedDelta = Math.max(-80, Math.min(80, e.deltaY));
+        zoomFactor = Math.exp(-clampedDelta * 0.0018);
       }
+
+      // Smooth step clamp: changes smoothly by 2%-5% per event (no sudden 74% -> 14% plunge)
+      zoomFactor = Math.min(1.05, Math.max(0.95, zoomFactor));
 
       const currScale = scaleRef.current;
       const currPan = panRef.current;
-      const nextScale = Math.min(3.5, Math.max(0.12, currScale * zoomFactor));
+      const nextScale = Math.min(3.5, Math.max(0.25, currScale * zoomFactor));
 
+      // Zoom accurately centered around the cursor position
       const mouseWorldX = (mouseX - currPan.x) / currScale;
       const mouseWorldY = (mouseY - currPan.y) / currScale;
 
@@ -433,7 +460,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     };
   }, []);
 
-  // Convert Client Window Coordinates to SVG Canvas Coordinates
+  // Convert Client Coordinates to SVG Coordinates
   const getSvgCoordinates = useCallback(
     (clientX: number, clientY: number): Point => {
       if (!svgRef.current) return { x: 0, y: 0 };
@@ -541,8 +568,8 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     const serializer = new XMLSerializer();
     const svgStr = serializer.serializeToString(svgRef.current);
     const canvas = document.createElement('canvas');
-    canvas.width = 3800;
-    canvas.height = 2600;
+    canvas.width = 3000;
+    canvas.height = 2000;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -633,7 +660,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     corridorMap.forEach((lineIds) => {
       const count = lineIds.length;
       lineIds.forEach((id, idx) => {
-        const offset = (idx - (count - 1) / 2) * 24; // 24px parallel lane separation
+        const offset = (idx - (count - 1) / 2) * 18; // 18px compact parallel lane separation
         offsetMap.set(id, offset);
       });
     });
@@ -646,15 +673,12 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 border-b border-slate-200 gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-              Single-Line Schematic (STAC Vector CAD)
-            </h2>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-purple-50 text-[#500b50] border border-purple-200">
               Interactive Movable Canvas
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-0.5 font-medium">
-            {buses.length} Substations • {lines.length} Corridors • Topological planarity with line colliders. Pinch touchpad or mouse wheel to zoom.
+            {buses.length} Substations • {lines.length} Corridors • Condensed planar topology. Pinch touchpad or mouse wheel to zoom.
           </p>
         </div>
 
@@ -769,7 +793,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
         </div>
       </div>
 
-      {/* Main Spacious Canvas Area (880px Height) */}
+      {/* Main Spacious Canvas Area */}
       <div className="relative w-full">
         <div
           ref={containerRef}
@@ -777,7 +801,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
-          className={`h-[880px] w-full rounded-2xl border border-slate-300 bg-white relative overflow-hidden shadow-sm select-none ${
+          className={`h-[850px] w-full rounded-2xl border border-slate-300 bg-white relative overflow-hidden shadow-sm select-none ${
             isPanning ? 'cursor-grabbing' : draggingBusId !== null ? 'cursor-move' : 'cursor-grab'
           }`}
         >
@@ -790,7 +814,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           </div>
 
           <div className="absolute bottom-4 left-4 z-10 pointer-events-none flex items-center gap-3 text-[10px] font-mono text-slate-400 font-bold">
-            <span>Pinch Touchpad or Scroll to Zoom Around Cursor • Drag any Bus to Move</span>
+            <span>Pinch Touchpad or Scroll to Zoom Gently Around Cursor • Drag any Bus to Adjust</span>
           </div>
 
           {/* Vector SVG Canvas */}
@@ -806,8 +830,8 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 viewBox="0 0 10 10"
                 refX="5"
                 refY="5"
-                markerWidth="6"
-                markerHeight="6"
+                markerWidth="5"
+                markerHeight="5"
                 orient="auto-start-reverse"
               >
                 <path d="M 0 0 L 10 5 L 0 10 z" fill="#000000" />
@@ -815,18 +839,18 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             </defs>
 
             {/* Clear CAD Background Grid */}
-            <rect x="-16000" y="-16000" width="48000" height="48000" fill="url(#stacCadGrid)" pointerEvents="none" />
+            <rect x="-10000" y="-10000" width="30000" height="30000" fill="url(#stacCadGrid)" pointerEvents="none" />
 
             <g transform={`translate(${pan.x}, ${pan.y}) scale(${scale})`}>
               {/* ========================================================================= */}
-              {/* 1. TRANSMISSION LINES WITH STAC MULTI-LINE OFFSETS & ROTATED BREAKERS     */}
+              {/* 1. TRANSMISSION LINES WITH COMPACT INLINE BREAKERS & PARALLEL LANES        */}
               {/* ========================================================================= */}
               {lines.map((line) => {
                 const rawPosA = busPositions[line.from_bus];
                 const rawPosB = busPositions[line.to_bus];
                 if (!rawPosA || !rawPosB) return null;
 
-                // STAC MultiLineEdge normal vector offset
+                // Normal vector lane offset for parallel circuits
                 const laneOffset = multiLineOffsets.get(line.id) || 0;
                 const cdx = rawPosB.x - rawPosA.x;
                 const cdy = rawPosB.y - rawPosA.y;
@@ -837,9 +861,9 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 const shiftedPosA = { x: rawPosA.x + normX * laneOffset, y: rawPosA.y + normY * laneOffset };
                 const shiftedPosB = { x: rawPosB.x + normX * laneOffset, y: rawPosB.y + normY * laneOffset };
 
-                // Border-to-border clipping so lines cleanly meet the busbar edge
-                const posA = getBusBorderPoint(shiftedPosA, shiftedPosB, 50, 7);
-                const posB = getBusBorderPoint(shiftedPosB, shiftedPosA, 50, 7);
+                // Compact border clipping (38px half-width, 5px half-height)
+                const posA = getBusBorderPoint(shiftedPosA, shiftedPosB, 38, 5);
+                const posB = getBusBorderPoint(shiftedPosB, shiftedPosA, 38, 5);
 
                 const isTripped = trippedLines.includes(line.id);
                 const loadingPercent = line.loading_percent ?? 0;
@@ -853,7 +877,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 const midX = (posA.x + posB.x) / 2;
                 const midY = (posA.y + posB.y) / 2;
 
-                // Rotation angle for breaker box alignment
                 let angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
                 let textFlipped = false;
                 if (angleDeg > 90 || angleDeg < -90) {
@@ -867,7 +890,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                   pathData = `M ${posA.x} ${posA.y} L ${posB.x} ${posB.y}`;
                 }
 
-                const showBreakerBox = lineDist >= 115;
+                const showBreakerBox = lineDist >= 60;
 
                 return (
                   <g
@@ -876,38 +899,38 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                     onClick={() => toggleLine(line.id)}
                   >
                     {/* Hover Buffer */}
-                    <path d={pathData} fill="none" stroke="transparent" strokeWidth="22" />
+                    <path d={pathData} fill="none" stroke="transparent" strokeWidth="18" />
 
                     {/* Bold Transmission Line Path */}
                     <path
                       d={pathData}
                       fill="none"
                       stroke={lineColor}
-                      strokeWidth={isTripped ? 2.5 : 3.5}
-                      strokeDasharray={isTripped ? '8 6' : undefined}
+                      strokeWidth={isTripped ? 2 : 2.75}
+                      strokeDasharray={isTripped ? '6 4' : undefined}
                       strokeOpacity={isTripped ? 0.35 : 0.95}
-                      className="transition-all duration-150 group-hover:stroke-[#500b50] group-hover:stroke-width-4"
+                      className="transition-all duration-150 group-hover:stroke-[#500b50] group-hover:stroke-width-3"
                     />
 
-                    {/* STAC Inline Breaker Indicator */}
+                    {/* Compact STAC In-line Breaker Indicator */}
                     {showBreakerBox && (
                       <g transform={`translate(${midX}, ${midY}) rotate(${angleDeg})`}>
                         <rect
-                          x="-26"
-                          y="-10"
-                          width="52"
-                          height="20"
-                          rx="3"
+                          x="-18"
+                          y="-7.5"
+                          width="36"
+                          height="15"
+                          rx="2"
                           fill="#ffffff"
                           stroke={lineColor}
-                          strokeWidth="2"
+                          strokeWidth="1.5"
                           className="transition group-hover:fill-purple-50"
                         />
                         <text
                           x="0"
-                          y="3.5"
+                          y="2.5"
                           textAnchor="middle"
-                          fontSize="9.5"
+                          fontSize="8"
                           fontFamily="monospace"
                           fontWeight="900"
                           fill={isTripped ? '#dc2626' : isOverload ? '#c2410c' : '#000000'}
@@ -922,7 +945,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
               })}
 
               {/* ========================================================================= */}
-              {/* 2. RECTANGULAR BUSBARS WITH CALCULATED FREE-ANGLE ATTACHMENTS             */}
+              {/* 2. RECTANGULAR BUSBARS (COMPACT CAD BUSBARS WITH STAC ATTACHMENTS)        */}
               {/* ========================================================================= */}
               {buses.map((bus) => {
                 const pos = busPositions[bus.id];
@@ -948,16 +971,16 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 };
 
                 // Free-angle coordinates for Generator
-                const genStubLen = 38;
+                const genStubLen = 28;
                 const genX = Math.cos(genAngle) * genStubLen;
                 const genY = Math.sin(genAngle) * genStubLen;
-                const genBorder = getBusBorderPoint(pos, { x: pos.x + genX, y: pos.y + genY }, 50, 7);
+                const genBorder = getBusBorderPoint(pos, { x: pos.x + genX, y: pos.y + genY }, 38, 5);
                 const relGenBorderX = genBorder.x - pos.x;
                 const relGenBorderY = genBorder.y - pos.y;
 
                 // Free-angle coordinates for Load
-                const loadStubStart = 12;
-                const loadStubEnd = 38;
+                const loadStubStart = 9;
+                const loadStubEnd = 28;
                 const loadStartX = Math.cos(loadAngle) * loadStubStart;
                 const loadStartY = Math.sin(loadAngle) * loadStubStart;
                 const loadEndX = Math.cos(loadAngle) * loadStubEnd;
@@ -979,16 +1002,16 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                     {/* Selection Beacon */}
                     {isSelected && (
                       <rect
-                        x="-60"
-                        y="-28"
-                        width="120"
-                        height="56"
-                        rx="8"
+                        x="-46"
+                        y="-20"
+                        width="92"
+                        height="40"
+                        rx="6"
                         fill="#500b50"
                         fillOpacity="0.12"
                         stroke="#500b50"
-                        strokeWidth="2.5"
-                        strokeDasharray="5 3"
+                        strokeWidth="2"
+                        strokeDasharray="4 2"
                       />
                     )}
 
@@ -1001,20 +1024,20 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                           x2={genX}
                           y2={genY}
                           stroke="#000000"
-                          strokeWidth="2.5"
+                          strokeWidth="2"
                         />
-                        <circle cx={genX} cy={genY} r="14" fill="#ffffff" stroke="#000000" strokeWidth="2.5" />
+                        <circle cx={genX} cy={genY} r="11" fill="#ffffff" stroke="#000000" strokeWidth="2" />
                         <path
-                          d={`M ${genX - 6} ${genY} Q ${genX - 3} ${genY - 5.5} ${genX} ${genY} T ${genX + 6} ${genY}`}
+                          d={`M ${genX - 5} ${genY} Q ${genX - 2.5} ${genY - 4.5} ${genX} ${genY} T ${genX + 5} ${genY}`}
                           fill="none"
                           stroke="#000000"
-                          strokeWidth="2.5"
+                          strokeWidth="2"
                         />
                         <text
                           x={genX}
-                          y={genY - 17}
+                          y={genY - 14}
                           textAnchor="middle"
-                          fontSize="10"
+                          fontSize="9"
                           fill="#000000"
                           fontFamily="monospace"
                           fontWeight="900"
@@ -1033,14 +1056,14 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                           x2={loadEndX}
                           y2={loadEndY}
                           stroke="#000000"
-                          strokeWidth="2.5"
+                          strokeWidth="2"
                           markerEnd="url(#loadArrow)"
                         />
                         <text
-                          x={loadEndX + Math.cos(loadAngle) * 14}
-                          y={loadEndY + Math.sin(loadAngle) * 14 + 3.5}
+                          x={loadEndX + Math.cos(loadAngle) * 11}
+                          y={loadEndY + Math.sin(loadAngle) * 11 + 3}
                           textAnchor="middle"
-                          fontSize="9.5"
+                          fontSize="8.5"
                           fontFamily="monospace"
                           fontWeight="900"
                           fill="#1e293b"
@@ -1050,16 +1073,16 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       </g>
                     )}
 
-                    {/* Rectangular Copper Busbar (NOT A CIRCLE) */}
+                    {/* Condensed Rectangular Copper Busbar (76px x 8px) */}
                     <rect
-                      x="-50"
-                      y="-7"
-                      width="100"
-                      height="14"
-                      rx="3"
+                      x="-38"
+                      y="-4.5"
+                      width="76"
+                      height="9"
+                      rx="2"
                       fill={busBarColor}
                       stroke="#000000"
-                      strokeWidth="1.8"
+                      strokeWidth="1.4"
                       className={`transition-shadow ${
                         isDragging ? 'filter drop-shadow-lg' : 'group-hover:filter drop-shadow-md'
                       }`}
@@ -1068,13 +1091,13 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                     {/* Substation Name Label */}
                     <text
                       x="0"
-                      y="-13"
+                      y="-10"
                       textAnchor="middle"
-                      fontSize="12"
+                      fontSize="10"
                       fontFamily="sans-serif"
                       fontWeight="900"
                       fill="#000000"
-                      letterSpacing="0.3px"
+                      letterSpacing="0.2px"
                     >
                       {bus.name}
                     </text>
@@ -1082,9 +1105,9 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                     {/* Voltage Magnitude Reading */}
                     <text
                       x="0"
-                      y="23"
+                      y="18"
                       textAnchor="middle"
-                      fontSize="10.5"
+                      fontSize="9"
                       fontFamily="monospace"
                       fontWeight="900"
                       fill={isUnder ? '#dc2626' : isOver ? '#d97706' : '#15803d'}
