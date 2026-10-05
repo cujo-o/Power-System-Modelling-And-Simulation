@@ -3,8 +3,6 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { BusData, LineData } from '@/types/grid';
 import {
-  ZoomIn,
-  ZoomOut,
   Maximize2,
   RotateCcw,
   Download,
@@ -33,7 +31,99 @@ interface Point {
   y: number;
 }
 
-// Intersects a ray from center with the busbar rectangle [-halfW, -halfH, halfW, halfH]
+// Geographic & topological coordinate backbone for the Nigerian 330kV transmission network
+// Placing buses according to planar grid topology prevents transmission lines from crossing over each other
+const NIGERIA_TOPOLOGICAL_ANCHORS: Record<string, Point> = {
+  // North-West Corridor
+  kano: { x: 1950, y: 350 },
+  kumbotso: { x: 1920, y: 400 },
+  rim_zakara: { x: 1980, y: 300 },
+  rimzakara: { x: 1980, y: 300 },
+  funtua: { x: 1650, y: 500 },
+  gusau: { x: 1450, y: 450 },
+  kebbi: { x: 950, y: 520 },
+  birnin_kebbi: { x: 950, y: 520 },
+  kaduna: { x: 1750, y: 800 },
+  mando: { x: 1720, y: 780 },
+  zaria: { x: 1800, y: 620 },
+
+  // North-Central & Hydro Generation Corridor
+  kainji: { x: 1050, y: 1100 },
+  jebba: { x: 1200, y: 1350 },
+  shiroro: { x: 1600, y: 1120 },
+  zungeru: { x: 1480, y: 1050 },
+  m_city: { x: 1520, y: 1200 },
+  mcity: { x: 1520, y: 1200 },
+  minna: { x: 1520, y: 1200 },
+  katampe: { x: 2000, y: 1250 },
+  abuja: { x: 2050, y: 1280 },
+  gwagwalada: { x: 1980, y: 1400 },
+  gwagw: { x: 1980, y: 1400 },
+  lokoja: { x: 1880, y: 1720 },
+  geregu: { x: 1940, y: 1780 },
+  ajaokuta: { x: 1970, y: 1820 },
+  makurdi: { x: 2450, y: 1650 },
+  lafia: { x: 2350, y: 1420 },
+
+  // North-East Corridor
+  jos: { x: 2500, y: 1050 },
+  bauchi: { x: 2850, y: 920 },
+  gombe: { x: 3250, y: 920 },
+  damaturu: { x: 3380, y: 520 },
+  maiduguri: { x: 3750, y: 500 },
+  yola: { x: 3600, y: 1450 },
+  mayo_belwa: { x: 3550, y: 1520 },
+  mayobelw: { x: 3550, y: 1520 },
+  jalingo: { x: 3050, y: 1600 },
+  wukari: { x: 2750, y: 1800 },
+
+  // South-West & Thermal Coastal Corridor
+  osogbo: { x: 1220, y: 1780 },
+  ayede: { x: 1020, y: 1900 },
+  ibadan: { x: 990, y: 1920 },
+  olorunsogo: { x: 900, y: 1800 },
+  omotosho: { x: 1300, y: 2150 },
+  ikeja: { x: 880, y: 2320 },
+  ikeja_w: { x: 850, y: 2340 },
+  akangba: { x: 910, y: 2380 },
+  egbin: { x: 1040, y: 2400 },
+  aja: { x: 1120, y: 2420 },
+  alagbon: { x: 960, y: 2440 },
+  lekki: { x: 1180, y: 2450 },
+  sakete: { x: 550, y: 2280 },
+
+  // Mid-West Delta Corridor
+  benin: { x: 1620, y: 2150 },
+  ihovbor: { x: 1680, y: 2100 },
+  azura: { x: 1700, y: 2120 },
+  sapele: { x: 1600, y: 2380 },
+  delta: { x: 1680, y: 2550 },
+  aladja: { x: 1650, y: 2580 },
+  asaba: { x: 1950, y: 2220 },
+  okpai: { x: 2000, y: 2380 },
+
+  // South-East & South-South Corridor
+  onitsha: { x: 2050, y: 2220 },
+  new_haven: { x: 2380, y: 2100 },
+  nhaven: { x: 2380, y: 2100 },
+  ugwuaji: { x: 2420, y: 2150 },
+  owerri: { x: 2180, y: 2450 },
+  alaoji: { x: 2300, y: 2600 },
+  afam: { x: 2260, y: 2750 },
+  ikot_ekpene: { x: 2520, y: 2650 },
+  calabar: { x: 2780, y: 2650 },
+  adiabor: { x: 2750, y: 2620 },
+  omoku: { x: 2060, y: 2680 },
+  egbema: { x: 2120, y: 2620 },
+};
+
+// Tests whether two line segments (p1-p2) and (p3-p4) intersect
+function checkSegmentsCross(p1: Point, p2: Point, p3: Point, p4: Point): boolean {
+  const ccw = (a: Point, b: Point, c: Point) => (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x);
+  return ccw(p1, p3, p4) !== ccw(p2, p3, p4) && ccw(p1, p2, p3) !== ccw(p1, p2, p4);
+}
+
+// Ray-box intersection for busbar border clipping
 function getBusBorderPoint(center: Point, target: Point, halfW = 50, halfH = 7): Point {
   const dx = target.x - center.x;
   const dy = target.y - center.y;
@@ -47,7 +137,7 @@ function getBusBorderPoint(center: Point, target: Point, halfW = 50, halfH = 7):
   };
 }
 
-// STAC Dynamic Free-Angle Calculation: Finds the widest open angular sector
+// Dynamic Free-Angle Calculation: Finds the widest open angular sector away from connected lines
 function computeCleanDecoratorAngles(busPos: Point, neighborPositions: Point[]): { genAngle: number; loadAngle: number } {
   if (!neighborPositions || neighborPositions.length === 0) {
     return { genAngle: -Math.PI / 2, loadAngle: Math.PI / 2 };
@@ -90,8 +180,8 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
 
   // Canvas Viewport Pan & Zoom
-  const [scale, setScale] = useState<number>(0.55);
-  const [pan, setPan] = useState<Point>({ x: 80, y: 60 });
+  const [scale, setScale] = useState<number>(0.52);
+  const [pan, setPan] = useState<Point>({ x: 60, y: 40 });
   const [isPanning, setIsPanning] = useState<boolean>(false);
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
 
@@ -104,193 +194,71 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
   const [hasDragged, setHasDragged] = useState<boolean>(false);
 
+  // Touch Pinch Gestures
+  const touchStartDistRef = useRef<number | null>(null);
+  const touchStartScaleRef = useRef<number>(scale);
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const currentModelRef = useRef<string>('');
 
   // =========================================================================
-  // STAC Automatic Untangler (Spectral Laplacian + Physical Colliders)
+  // Topological Planar Seeding with Multi-Stage Physics & Line Colliders
   // =========================================================================
-  const solvePhysicalLayout = useCallback((): Record<number, Point> => {
+  const solvePlanarUntangledLayout = useCallback((): Record<number, Point> => {
     const N = buses.length;
     if (N === 0) return {};
 
+    const positions: Record<number, Point> = {};
     const idToIndex = new Map<number, number>();
     buses.forEach((b, i) => idToIndex.set(b.id, i));
 
-    // Adjacency Matrix
-    const A = Array.from({ length: N }, () => Array(N).fill(0));
-    const deg = Array(N).fill(0);
+    // 1. Initial Planar Topological Seeding
+    buses.forEach((b, idx) => {
+      const cleanName = (b.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      let matchedPoint: Point | null = null;
+      let longestMatch = 0;
 
+      for (const [key, pt] of Object.entries(NIGERIA_TOPOLOGICAL_ANCHORS)) {
+        const normKey = key.replace(/[^a-z0-9]/g, '');
+        if (cleanName.includes(normKey) && normKey.length > longestMatch) {
+          longestMatch = normKey.length;
+          matchedPoint = pt;
+        }
+      }
+
+      if (matchedPoint) {
+        positions[b.id] = { ...matchedPoint };
+      } else {
+        const col = idx % 8;
+        const row = Math.floor(idx / 8);
+        positions[b.id] = { x: 500 + col * 320, y: 400 + row * 260 };
+      }
+    });
+
+    const posArr: Point[] = buses.map((b) => ({ ...positions[b.id] }));
+
+    const edgePairs: [number, number][] = [];
     lines.forEach((l) => {
       const u = idToIndex.get(l.from_bus);
       const v = idToIndex.get(l.to_bus);
       if (u !== undefined && v !== undefined && u !== v) {
-        A[u][v] = 1;
-        A[v][u] = 1;
-        deg[u]++;
-        deg[v]++;
+        edgePairs.push([u, v]);
       }
     });
 
-    for (let i = 0; i < N; i++) {
-      if (deg[i] === 0) deg[i] = 1;
-    }
+    // 2. Physical Layout Passes (Node-Node, Node-Edge & Line-Line Colliders)
+    const MIN_NODE_DIST = 220; // Minimum distance between any two busbars
+    const MIN_EDGE_DIST = 95;  // Minimum clearance from any line to prevent slicing through nodes
 
-    // 1. Spectral Laplacian Embedding (Power Iteration on Random Walk matrix P = D^-1 A)
-    const v1 = Array(N).fill(1 / Math.sqrt(N));
-
-    // Eigenvector 2
-    let v2 = buses.map((_, i) => Math.sin(i * 1.7) + 0.1);
-    for (let it = 0; it < 50; it++) {
-      let dot = 0;
-      for (let i = 0; i < N; i++) dot += v2[i] * v1[i];
-      for (let i = 0; i < N; i++) v2[i] -= dot * v1[i];
-      let norm = Math.hypot(...v2) || 1;
-      for (let i = 0; i < N; i++) v2[i] /= norm;
-
-      const nextV = Array(N).fill(0);
-      for (let i = 0; i < N; i++) {
-        for (let j = 0; j < N; j++) {
-          if (A[i][j]) nextV[i] += (v2[j] / deg[i]);
-        }
-      }
-      v2 = nextV;
-    }
-
-    // Eigenvector 3
-    let v3 = buses.map((_, i) => Math.cos(i * 2.3) + 0.2);
-    for (let it = 0; it < 50; it++) {
-      let dot1 = 0, dot2 = 0;
-      for (let i = 0; i < N; i++) {
-        dot1 += v3[i] * v1[i];
-        dot2 += v3[i] * v2[i];
-      }
-      for (let i = 0; i < N; i++) v3[i] -= (dot1 * v1[i] + dot2 * v2[i]);
-      let norm = Math.hypot(...v3) || 1;
-      for (let i = 0; i < N; i++) v3[i] /= norm;
-
-      const nextV = Array(N).fill(0);
-      for (let i = 0; i < N; i++) {
-        for (let j = 0; j < N; j++) {
-          if (A[i][j]) nextV[i] += (v3[j] / deg[i]);
-        }
-      }
-      v3 = nextV;
-    }
-
-    // Scale Spectral Coordinates onto Canvas
-    let minX = Math.min(...v2), maxX = Math.max(...v2);
-    let minY = Math.min(...v3), maxY = Math.max(...v3);
-    let spanX = maxX - minX || 1;
-    let spanY = maxY - minY || 1;
-
-    const canvasW = 3400;
-    const canvasH = 2400;
-    const posArr: Point[] = buses.map((_, i) => ({
-      x: 400 + ((v2[i] - minX) / spanX) * (canvasW - 800),
-      y: 300 + ((v3[i] - minY) / spanY) * (canvasH - 600),
-    }));
-
-    // 2. Physical Spring-Embedder & Bounding Box Colliders Pass
-    const idealEdgeLen = 280;
-    const edgeIndices: [number, number][] = [];
-    lines.forEach((l) => {
-      const u = idToIndex.get(l.from_bus);
-      const v = idToIndex.get(l.to_bus);
-      if (u !== undefined && v !== undefined && u !== v) {
-        edgeIndices.push([u, v]);
-      }
-    });
-
-    const MIN_NODE_DIST = 240; // Collision distance between busbars
-    const MIN_EDGE_DIST = 90;  // Anti-piercing distance from line segments
-
-    for (let step = 0; step < 75; step++) {
-      const forces: Point[] = Array.from({ length: N }, () => ({ x: 0, y: 0 }));
-
-      // Coulomb Repulsion
+    for (let pass = 0; pass < 45; pass++) {
+      // A. Node-Node Colliders (Separates all substations)
       for (let i = 0; i < N; i++) {
         for (let j = i + 1; j < N; j++) {
           const dx = posArr[j].x - posArr[i].x;
           const dy = posArr[j].y - posArr[i].y;
           const dist = Math.hypot(dx, dy) || 1;
-          if (dist < 750) {
-            const f = 75000 / (dist * dist);
-            const fx = (dx / dist) * f;
-            const fy = (dy / dist) * f;
-            forces[i].x -= fx;
-            forces[i].y -= fy;
-            forces[j].x += fx;
-            forces[j].y += fy;
-          }
-        }
-      }
 
-      // Hooke Spring Attraction
-      for (const [u, v] of edgeIndices) {
-        const dx = posArr[v].x - posArr[u].x;
-        const dy = posArr[v].y - posArr[u].y;
-        const dist = Math.hypot(dx, dy) || 1;
-        const f = 0.04 * (dist - idealEdgeLen);
-        const fx = (dx / dist) * f;
-        const fy = (dy / dist) * f;
-        forces[u].x += fx;
-        forces[u].y += fy;
-        forces[v].x -= fx;
-        forces[v].y -= fy;
-      }
-
-      // Edge-Node Collider (Anti-piercing forces)
-      for (const [u, v] of edgeIndices) {
-        const ax = posArr[u].x, ay = posArr[u].y;
-        const bx = posArr[v].x, by = posArr[v].y;
-        const abx = bx - ax, aby = by - ay;
-        const abSq = abx * abx + aby * aby;
-        if (abSq < 1) continue;
-
-        for (let k = 0; k < N; k++) {
-          if (k === u || k === v) continue;
-          const px = posArr[k].x, py = posArr[k].y;
-          const t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / abSq));
-          if (t > 0.06 && t < 0.94) {
-            const projX = ax + t * abx;
-            const projY = ay + t * aby;
-            const diffX = px - projX;
-            const diffY = py - projY;
-            const dist = Math.hypot(diffX, diffY) || 1;
-            if (dist < MIN_EDGE_DIST) {
-              const push = (MIN_EDGE_DIST - dist) * 1.5;
-              const fx = (diffX / dist) * push;
-              const fy = (diffY / dist) * push;
-              forces[k].x += fx;
-              forces[k].y += fy;
-              forces[u].x -= fx * 0.5 * (1 - t);
-              forces[u].y -= fy * 0.5 * (1 - t);
-              forces[v].x -= fx * 0.5 * t;
-              forces[v].y -= fy * 0.5 * t;
-            }
-          }
-        }
-      }
-
-      // Integrate Forces with Cooling
-      const temp = Math.max(1.5, 28 * (1 - step / 75));
-      for (let i = 0; i < N; i++) {
-        const flen = Math.hypot(forces[i].x, forces[i].y);
-        if (flen > 0) {
-          const s = Math.min(flen, temp) / flen;
-          posArr[i].x += forces[i].x * s;
-          posArr[i].y += forces[i].y * s;
-        }
-      }
-
-      // Hard Node-Node Overlap Resolution
-      for (let i = 0; i < N; i++) {
-        for (let j = i + 1; j < N; j++) {
-          const dx = posArr[j].x - posArr[i].x;
-          const dy = posArr[j].y - posArr[i].y;
-          const dist = Math.hypot(dx, dy) || 1;
           if (dist < MIN_NODE_DIST) {
             const overlap = (MIN_NODE_DIST - dist) * 0.5;
             const nx = dx / dist;
@@ -302,17 +270,83 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           }
         }
       }
+
+      // B. Line-to-Node Colliders (Prevents lines from cutting through unrelated nodes)
+      for (const [u, v] of edgePairs) {
+        const ax = posArr[u].x, ay = posArr[u].y;
+        const bx = posArr[v].x, by = posArr[v].y;
+        const abx = bx - ax, aby = by - ay;
+        const abSq = abx * abx + aby * aby;
+        if (abSq < 1) continue;
+
+        for (let k = 0; k < N; k++) {
+          if (k === u || k === v) continue;
+          const px = posArr[k].x, py = posArr[k].y;
+          const t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / abSq));
+
+          if (t > 0.05 && t < 0.95) {
+            const projX = ax + t * abx;
+            const projY = ay + t * aby;
+            const diffX = px - projX;
+            const diffY = py - projY;
+            const dist = Math.hypot(diffX, diffY) || 1;
+
+            if (dist < MIN_EDGE_DIST) {
+              const push = (MIN_EDGE_DIST - dist) * 0.9;
+              const nx = diffX / dist;
+              const ny = diffY / dist;
+              posArr[k].x += nx * push;
+              posArr[k].y += ny * push;
+            }
+          }
+        }
+      }
+
+      // C. Line-to-Line Colliders (Edge-Edge Anti-Crossing Forces)
+      for (let i = 0; i < edgePairs.length; i++) {
+        const [u1, v1] = edgePairs[i];
+        const p1 = posArr[u1], p2 = posArr[v1];
+
+        for (let j = i + 1; j < edgePairs.length; j++) {
+          const [u2, v2] = edgePairs[j];
+          if (u1 === u2 || u1 === v2 || v1 === u2 || v1 === v2) continue; // Sharing an endpoint is normal
+
+          const p3 = posArr[u2], p4 = posArr[v2];
+
+          // If lines cross, apply strong repelling impulse perpendicular to line trajectories
+          if (checkSegmentsCross(p1, p2, p3, p4)) {
+            const d1x = p2.x - p1.x, d1y = p2.y - p1.y;
+            const len1 = Math.hypot(d1x, d1y) || 1;
+            const norm1x = -d1y / len1, norm1y = d1x / len1;
+
+            const d2x = p4.x - p3.x, d2y = p4.y - p3.y;
+            const len2 = Math.hypot(d2x, d2y) || 1;
+            const norm2x = -d2y / len2, norm2y = d2x / len2;
+
+            const pushMag = 18;
+            posArr[u1].x += norm2x * pushMag;
+            posArr[u1].y += norm2y * pushMag;
+            posArr[v1].x += norm2x * pushMag;
+            posArr[v1].y += norm2y * pushMag;
+
+            posArr[u2].x += norm1x * pushMag;
+            posArr[u2].y += norm1y * pushMag;
+            posArr[v2].x += norm1x * pushMag;
+            posArr[v2].y += norm1y * pushMag;
+          }
+        }
+      }
     }
 
-    const positions: Record<number, Point> = {};
+    const finalPositions: Record<number, Point> = {};
     buses.forEach((b, i) => {
-      positions[b.id] = {
+      finalPositions[b.id] = {
         x: Math.round(posArr[i].x),
         y: Math.round(posArr[i].y),
       };
     });
 
-    return positions;
+    return finalPositions;
   }, [buses, lines]);
 
   const handleAutoFit = useCallback(() => {
@@ -340,7 +374,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     });
   }, []);
 
-  // Compute Layout on Model Switch & Persist during Breaker Toggles
+  // Compute Layout on Model Load & Persist during Breaker Toggles
   useEffect(() => {
     if (!buses || buses.length === 0) return;
 
@@ -366,7 +400,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       }
     }
 
-    const layout = solvePhysicalLayout();
+    const layout = solvePlanarUntangledLayout();
     setBusPositions(layout);
     busPositionsRef.current = layout;
 
@@ -378,7 +412,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
 
     const timer = setTimeout(handleAutoFit, 80);
     return () => clearTimeout(timer);
-  }, [modelName, buses.length, solvePhysicalLayout, handleAutoFit]);
+  }, [modelName, buses.length, solvePlanarUntangledLayout, handleAutoFit]);
 
   // Convert Client Window Coordinates to SVG Canvas Coordinates
   const getSvgCoordinates = useCallback(
@@ -393,7 +427,82 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     [pan, scale]
   );
 
-  // Mouse pan and bus drag events
+  // =========================================================================
+  // Smooth Touchpad Pinch-to-Zoom & Cursor-Centered Mouse Wheel Zoom
+  // =========================================================================
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    if (!containerRef.current) return;
+
+    const rect = containerRef.current.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // Detect pinch gesture (trackpad sends e.ctrlKey = true) vs traditional mouse wheel
+    let zoomFactor: number;
+    if (e.ctrlKey) {
+      // Smooth Trackpad Pinch Gesture
+      zoomFactor = Math.exp(-e.deltaY * 0.012);
+    } else {
+      // Standard Mouse Scroll Wheel
+      zoomFactor = e.deltaY < 0 ? 1.14 : 0.88;
+    }
+
+    const nextScale = Math.min(3.5, Math.max(0.12, scale * zoomFactor));
+
+    // Anchor zooming precisely around the cursor position
+    const mouseWorldX = (mouseX - pan.x) / scale;
+    const mouseWorldY = (mouseY - pan.y) / scale;
+
+    const nextPanX = mouseX - mouseWorldX * nextScale;
+    const nextPanY = mouseY - mouseWorldY * nextScale;
+
+    setScale(nextScale);
+    setPan({ x: nextPanX, y: nextPanY });
+  };
+
+  // Touchscreen / Mobile Dual-Finger Pinch
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      touchStartDistRef.current = dist;
+      touchStartScaleRef.current = scale;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && touchStartDistRef.current && containerRef.current) {
+      e.preventDefault();
+      const currentDist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      const ratio = currentDist / touchStartDistRef.current;
+      const nextScale = Math.min(3.5, Math.max(0.12, touchStartScaleRef.current * ratio));
+
+      const rect = containerRef.current.getBoundingClientRect();
+      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+
+      const mouseWorldX = (midX - pan.x) / scale;
+      const mouseWorldY = (midY - pan.y) / scale;
+
+      setScale(nextScale);
+      setPan({
+        x: midX - mouseWorldX * nextScale,
+        y: midY - mouseWorldY * nextScale,
+      });
+    }
+  };
+
+  const handleTouchEnd = () => {
+    touchStartDistRef.current = null;
+  };
+
+  // Canvas Mouse Drag Panning
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
     setIsPanning(true);
@@ -449,17 +558,11 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     }
   };
 
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const zoomFactor = e.deltaY < 0 ? 1.12 : 0.88;
-    setScale((prev) => Math.min(3.0, Math.max(0.12, prev * zoomFactor)));
-  };
-
   const handleResetLayout = () => {
     if (typeof window !== 'undefined' && modelName) {
       localStorage.removeItem(`nesi_sld_pos_${modelName}`);
     }
-    const fresh = solvePhysicalLayout();
+    const fresh = solvePlanarUntangledLayout();
     setBusPositions(fresh);
     busPositionsRef.current = fresh;
     if (typeof window !== 'undefined' && modelName) {
@@ -490,8 +593,8 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     const serializer = new XMLSerializer();
     const svgStr = serializer.serializeToString(svgRef.current);
     const canvas = document.createElement('canvas');
-    canvas.width = 3600;
-    canvas.height = 2400;
+    canvas.width = 3800;
+    canvas.height = 2600;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -582,7 +685,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     corridorMap.forEach((lineIds) => {
       const count = lineIds.length;
       lineIds.forEach((id, idx) => {
-        const offset = (idx - (count - 1) / 2) * 22; // 22px parallel lane separation
+        const offset = (idx - (count - 1) / 2) * 24; // 24px parallel lane separation
         offsetMap.set(id, offset);
       });
     });
@@ -591,7 +694,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
 
   return (
     <div className="space-y-3 max-w-7xl mx-auto py-1">
-      {/* Top Controls Header */}
+      {/* Top Controls Header (Zoom buttons removed as requested) */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 border-b border-slate-200 gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -603,7 +706,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-0.5 font-medium">
-            {buses.length} Substations • {lines.length} Corridors • Topological force-directed layout with physical colliders.
+            {buses.length} Substations • {lines.length} Corridors • Topological planarity with line colliders. Pinch touchpad or mouse wheel to zoom.
           </p>
         </div>
 
@@ -676,26 +779,12 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             </button>
           </div>
 
-          {/* Viewport Zoom & Fit */}
-          <div className="flex items-center rounded-xl border border-slate-200 bg-white p-0.5 shadow-2xs text-xs font-mono font-bold">
-            <button
-              onClick={() => setScale((s) => Math.max(0.12, s * 0.85))}
-              className="p-1.5 hover:bg-slate-100 rounded text-slate-600"
-              title="Zoom Out"
-            >
-              <ZoomOut className="h-4 w-4" />
-            </button>
-            <span className="px-2 text-slate-800">{Math.round(scale * 100)}%</span>
-            <button
-              onClick={() => setScale((s) => Math.min(3.0, s * 1.15))}
-              className="p-1.5 hover:bg-slate-100 rounded text-slate-600"
-              title="Zoom In"
-            >
-              <ZoomIn className="h-4 w-4" />
-            </button>
+          {/* Scale Indicator & Full Auto-Fit View (No button zooming) */}
+          <div className="flex items-center rounded-xl border border-slate-200 bg-white px-3 py-1 shadow-2xs text-xs font-mono font-bold text-slate-700 gap-2">
+            <span>{Math.round(scale * 100)}%</span>
             <button
               onClick={handleAutoFit}
-              className="p-1.5 hover:bg-slate-100 rounded text-slate-600 ml-0.5 border-l border-slate-200"
+              className="p-1 hover:bg-slate-100 rounded text-slate-600 border-l border-slate-200 pl-2"
               title="Auto-Fit Network"
             >
               <Maximize2 className="h-3.5 w-3.5" />
@@ -741,6 +830,9 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
           onWheel={handleWheel}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
           className={`h-[880px] w-full rounded-2xl border border-slate-300 bg-white relative overflow-hidden shadow-sm select-none ${
             isPanning ? 'cursor-grabbing' : draggingBusId !== null ? 'cursor-move' : 'cursor-grab'
           }`}
@@ -754,7 +846,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           </div>
 
           <div className="absolute bottom-4 left-4 z-10 pointer-events-none flex items-center gap-3 text-[10px] font-mono text-slate-400 font-bold">
-            <span>Drag any Substation to Move • Scroll to Zoom • Positions Persist on Breaker Trips</span>
+            <span>Pinch Touchpad or Scroll to Zoom Around Cursor • Drag any Bus to Move</span>
           </div>
 
           {/* Vector SVG Canvas */}
