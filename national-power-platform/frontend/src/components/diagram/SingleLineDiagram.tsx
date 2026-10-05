@@ -47,7 +47,7 @@ function getBusBorderPoint(center: Point, target: Point, halfW = 50, halfH = 7):
   };
 }
 
-// Computes the widest angular gap free from connected transmission lines
+// STAC Dynamic Free-Angle Calculation: Finds the widest open angular sector
 function computeCleanDecoratorAngles(busPos: Point, neighborPositions: Point[]): { genAngle: number; loadAngle: number } {
   if (!neighborPositions || neighborPositions.length === 0) {
     return { genAngle: -Math.PI / 2, loadAngle: Math.PI / 2 };
@@ -109,122 +109,188 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   const currentModelRef = useRef<string>('');
 
   // =========================================================================
-  // Physical Topology Solver with Node-Node & Node-Edge Colliders
+  // STAC Automatic Untangler (Spectral Laplacian + Physical Colliders)
   // =========================================================================
   const solvePhysicalLayout = useCallback((): Record<number, Point> => {
     const N = buses.length;
     if (N === 0) return {};
 
-    const adj: Record<number, number[]> = {};
-    buses.forEach((b) => {
-      adj[b.id] = [];
-    });
-    lines.forEach((l) => {
-      if (adj[l.from_bus]) adj[l.from_bus].push(l.to_bus);
-      if (adj[l.to_bus]) adj[l.to_bus].push(l.from_bus);
-    });
-
-    // 1. BFS Shortest Path Matrix D[i][j]
     const idToIndex = new Map<number, number>();
     buses.forEach((b, i) => idToIndex.set(b.id, i));
 
-    const D: number[][] = Array.from({ length: N }, () => Array(N).fill(999));
-    for (let i = 0; i < N; i++) {
-      D[i][i] = 0;
-      const queue: number[] = [buses[i].id];
-      while (queue.length > 0) {
-        const currId = queue.shift()!;
-        const currIdx = idToIndex.get(currId)!;
-        const d = D[i][currIdx];
-        const neighbors = adj[currId] || [];
-        for (const nbrId of neighbors) {
-          const nbrIdx = idToIndex.get(nbrId);
-          if (nbrIdx !== undefined && D[i][nbrIdx] > d + 1) {
-            D[i][nbrIdx] = d + 1;
-            queue.push(nbrId);
-          }
-        }
-      }
-    }
+    // Adjacency Matrix
+    const A = Array.from({ length: N }, () => Array(N).fill(0));
+    const deg = Array(N).fill(0);
 
-    let maxD = 1;
-    for (let i = 0; i < N; i++) {
-      for (let j = 0; j < N; j++) {
-        if (D[i][j] < 900 && D[i][j] > maxD) maxD = D[i][j];
+    lines.forEach((l) => {
+      const u = idToIndex.get(l.from_bus);
+      const v = idToIndex.get(l.to_bus);
+      if (u !== undefined && v !== undefined && u !== v) {
+        A[u][v] = 1;
+        A[v][u] = 1;
+        deg[u]++;
+        deg[v]++;
       }
-    }
-    for (let i = 0; i < N; i++) {
-      for (let j = 0; j < N; j++) {
-        if (D[i][j] >= 900) D[i][j] = maxD * 1.5;
-      }
-    }
-
-    // 2. Stress Majorization Distance Springs
-    const idealEdgeLen = N > 30 ? 260 : 210;
-    const L: number[][] = Array.from({ length: N }, (_, i) =>
-      Array.from({ length: N }, (_, j) => idealEdgeLen * D[i][j])
-    );
-    const K: number[][] = Array.from({ length: N }, (_, i) =>
-      Array.from({ length: N }, (_, j) => (i === j ? 0 : 1.0 / (D[i][j] * D[i][j] + 0.08)))
-    );
-
-    const cx = 1800;
-    const cy = 1300;
-    const initialRadius = Math.max(450, N * 30);
-    const posArr: Point[] = buses.map((_, i) => {
-      const theta = (i / N) * 2 * Math.PI;
-      return {
-        x: cx + Math.cos(theta) * initialRadius,
-        y: cy + Math.sin(theta) * initialRadius,
-      };
     });
 
-    // 3. Optimization Relaxation Passes
-    let lr = 0.22;
-    const iterations = N > 30 ? 95 : 70;
-    for (let iter = 0; iter < iterations; iter++) {
-      const grad: Point[] = Array.from({ length: N }, () => ({ x: 0, y: 0 }));
+    for (let i = 0; i < N; i++) {
+      if (deg[i] === 0) deg[i] = 1;
+    }
 
+    // 1. Spectral Laplacian Embedding (Power Iteration on Random Walk matrix P = D^-1 A)
+    const v1 = Array(N).fill(1 / Math.sqrt(N));
+
+    // Eigenvector 2
+    let v2 = buses.map((_, i) => Math.sin(i * 1.7) + 0.1);
+    for (let it = 0; it < 50; it++) {
+      let dot = 0;
+      for (let i = 0; i < N; i++) dot += v2[i] * v1[i];
+      for (let i = 0; i < N; i++) v2[i] -= dot * v1[i];
+      let norm = Math.hypot(...v2) || 1;
+      for (let i = 0; i < N; i++) v2[i] /= norm;
+
+      const nextV = Array(N).fill(0);
       for (let i = 0; i < N; i++) {
         for (let j = 0; j < N; j++) {
-          if (i === j) continue;
-          const dx = posArr[i].x - posArr[j].x;
-          const dy = posArr[i].y - posArr[j].y;
-          const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
-          const factor = (2.0 * K[i][j] * (dist - L[i][j])) / dist;
-          grad[i].x += dx * factor;
-          grad[i].y += dy * factor;
+          if (A[i][j]) nextV[i] += (v2[j] / deg[i]);
         }
       }
-
-      for (let i = 0; i < N; i++) {
-        posArr[i].x -= lr * grad[i].x;
-        posArr[i].y -= lr * grad[i].y;
-      }
-      lr *= 0.97;
+      v2 = nextV;
     }
 
-    // 4. Physical Colliders: Node-Node & Node-Edge Repulsion
-    const MIN_NODE_DIST = 220; // Radius clearance between busbars
-    const MIN_EDGE_DIST = 85;  // Clearance from intermediate lines to prevent piercing
+    // Eigenvector 3
+    let v3 = buses.map((_, i) => Math.cos(i * 2.3) + 0.2);
+    for (let it = 0; it < 50; it++) {
+      let dot1 = 0, dot2 = 0;
+      for (let i = 0; i < N; i++) {
+        dot1 += v3[i] * v1[i];
+        dot2 += v3[i] * v2[i];
+      }
+      for (let i = 0; i < N; i++) v3[i] -= (dot1 * v1[i] + dot2 * v2[i]);
+      let norm = Math.hypot(...v3) || 1;
+      for (let i = 0; i < N; i++) v3[i] /= norm;
 
+      const nextV = Array(N).fill(0);
+      for (let i = 0; i < N; i++) {
+        for (let j = 0; j < N; j++) {
+          if (A[i][j]) nextV[i] += (v3[j] / deg[i]);
+        }
+      }
+      v3 = nextV;
+    }
+
+    // Scale Spectral Coordinates onto Canvas
+    let minX = Math.min(...v2), maxX = Math.max(...v2);
+    let minY = Math.min(...v3), maxY = Math.max(...v3);
+    let spanX = maxX - minX || 1;
+    let spanY = maxY - minY || 1;
+
+    const canvasW = 3400;
+    const canvasH = 2400;
+    const posArr: Point[] = buses.map((_, i) => ({
+      x: 400 + ((v2[i] - minX) / spanX) * (canvasW - 800),
+      y: 300 + ((v3[i] - minY) / spanY) * (canvasH - 600),
+    }));
+
+    // 2. Physical Spring-Embedder & Bounding Box Colliders Pass
+    const idealEdgeLen = 280;
     const edgeIndices: [number, number][] = [];
     lines.forEach((l) => {
-      const idxA = idToIndex.get(l.from_bus);
-      const idxB = idToIndex.get(l.to_bus);
-      if (idxA !== undefined && idxB !== undefined) {
-        edgeIndices.push([idxA, idxB]);
+      const u = idToIndex.get(l.from_bus);
+      const v = idToIndex.get(l.to_bus);
+      if (u !== undefined && v !== undefined && u !== v) {
+        edgeIndices.push([u, v]);
       }
     });
 
-    for (let pass = 0; pass < 35; pass++) {
-      // Node-Node Physical Colliders
+    const MIN_NODE_DIST = 240; // Collision distance between busbars
+    const MIN_EDGE_DIST = 90;  // Anti-piercing distance from line segments
+
+    for (let step = 0; step < 75; step++) {
+      const forces: Point[] = Array.from({ length: N }, () => ({ x: 0, y: 0 }));
+
+      // Coulomb Repulsion
       for (let i = 0; i < N; i++) {
         for (let j = i + 1; j < N; j++) {
           const dx = posArr[j].x - posArr[i].x;
           const dy = posArr[j].y - posArr[i].y;
-          const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
+          const dist = Math.hypot(dx, dy) || 1;
+          if (dist < 750) {
+            const f = 75000 / (dist * dist);
+            const fx = (dx / dist) * f;
+            const fy = (dy / dist) * f;
+            forces[i].x -= fx;
+            forces[i].y -= fy;
+            forces[j].x += fx;
+            forces[j].y += fy;
+          }
+        }
+      }
 
+      // Hooke Spring Attraction
+      for (const [u, v] of edgeIndices) {
+        const dx = posArr[v].x - posArr[u].x;
+        const dy = posArr[v].y - posArr[u].y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const f = 0.04 * (dist - idealEdgeLen);
+        const fx = (dx / dist) * f;
+        const fy = (dy / dist) * f;
+        forces[u].x += fx;
+        forces[u].y += fy;
+        forces[v].x -= fx;
+        forces[v].y -= fy;
+      }
+
+      // Edge-Node Collider (Anti-piercing forces)
+      for (const [u, v] of edgeIndices) {
+        const ax = posArr[u].x, ay = posArr[u].y;
+        const bx = posArr[v].x, by = posArr[v].y;
+        const abx = bx - ax, aby = by - ay;
+        const abSq = abx * abx + aby * aby;
+        if (abSq < 1) continue;
+
+        for (let k = 0; k < N; k++) {
+          if (k === u || k === v) continue;
+          const px = posArr[k].x, py = posArr[k].y;
+          const t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / abSq));
+          if (t > 0.06 && t < 0.94) {
+            const projX = ax + t * abx;
+            const projY = ay + t * aby;
+            const diffX = px - projX;
+            const diffY = py - projY;
+            const dist = Math.hypot(diffX, diffY) || 1;
+            if (dist < MIN_EDGE_DIST) {
+              const push = (MIN_EDGE_DIST - dist) * 1.5;
+              const fx = (diffX / dist) * push;
+              const fy = (diffY / dist) * push;
+              forces[k].x += fx;
+              forces[k].y += fy;
+              forces[u].x -= fx * 0.5 * (1 - t);
+              forces[u].y -= fy * 0.5 * (1 - t);
+              forces[v].x -= fx * 0.5 * t;
+              forces[v].y -= fy * 0.5 * t;
+            }
+          }
+        }
+      }
+
+      // Integrate Forces with Cooling
+      const temp = Math.max(1.5, 28 * (1 - step / 75));
+      for (let i = 0; i < N; i++) {
+        const flen = Math.hypot(forces[i].x, forces[i].y);
+        if (flen > 0) {
+          const s = Math.min(flen, temp) / flen;
+          posArr[i].x += forces[i].x * s;
+          posArr[i].y += forces[i].y * s;
+        }
+      }
+
+      // Hard Node-Node Overlap Resolution
+      for (let i = 0; i < N; i++) {
+        for (let j = i + 1; j < N; j++) {
+          const dx = posArr[j].x - posArr[i].x;
+          const dy = posArr[j].y - posArr[i].y;
+          const dist = Math.hypot(dx, dy) || 1;
           if (dist < MIN_NODE_DIST) {
             const overlap = (MIN_NODE_DIST - dist) * 0.5;
             const nx = dx / dist;
@@ -233,47 +299,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             posArr[j].y += ny * overlap;
             posArr[i].x -= nx * overlap;
             posArr[i].y -= ny * overlap;
-          }
-        }
-      }
-
-      // Node-to-Edge Segment Colliders (prevents lines slicing through other nodes)
-      for (const [idxA, idxB] of edgeIndices) {
-        const ax = posArr[idxA].x;
-        const ay = posArr[idxA].y;
-        const bx = posArr[idxB].x;
-        const by = posArr[idxB].y;
-        const abx = bx - ax;
-        const aby = by - ay;
-        const abSq = abx * abx + aby * aby;
-        if (abSq < 1.0) continue;
-
-        for (let k = 0; k < N; k++) {
-          if (k === idxA || k === idxB) continue;
-          const px = posArr[k].x;
-          const py = posArr[k].y;
-
-          // Projection along line segment
-          const t = Math.max(0.0, Math.min(1.0, ((px - ax) * abx + (py - ay) * aby) / abSq));
-          if (t > 0.06 && t < 0.94) {
-            const projX = ax + t * abx;
-            const projY = ay + t * aby;
-            const diffX = px - projX;
-            const diffY = py - projY;
-            const dist = Math.sqrt(diffX * diffX + diffY * diffY) || 0.001;
-
-            if (dist < MIN_EDGE_DIST) {
-              const push = MIN_EDGE_DIST - dist;
-              const nx = diffX / dist;
-              const ny = diffY / dist;
-
-              posArr[k].x += nx * push * 0.9;
-              posArr[k].y += ny * push * 0.9;
-              posArr[idxA].x -= nx * push * 0.25;
-              posArr[idxA].y -= ny * push * 0.25;
-              posArr[idxB].x -= nx * push * 0.25;
-              posArr[idxB].y -= ny * push * 0.25;
-            }
           }
         }
       }
@@ -294,11 +319,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     const positions = Object.values(busPositionsRef.current);
     if (positions.length === 0) return;
 
-    let minX = Infinity,
-      maxX = -Infinity,
-      minY = Infinity,
-      maxY = -Infinity;
-
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     positions.forEach((p) => {
       minX = Math.min(minX, p.x);
       maxX = Math.max(maxX, p.x);
@@ -359,7 +380,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     return () => clearTimeout(timer);
   }, [modelName, buses.length, solvePhysicalLayout, handleAutoFit]);
 
-  // Convert Client Coordinates to SVG Coordinates
+  // Convert Client Window Coordinates to SVG Canvas Coordinates
   const getSvgCoordinates = useCallback(
     (clientX: number, clientY: number): Point => {
       if (!svgRef.current) return { x: 0, y: 0 };
@@ -547,6 +568,26 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     });
     return result;
   }, [buses, lines, busPositions]);
+
+  // STAC MultiLineEdge normal vector grouping: Prevents parallel lines from overlapping
+  const multiLineOffsets = useMemo(() => {
+    const corridorMap = new Map<string, number[]>();
+    lines.forEach((l) => {
+      const key = l.from_bus < l.to_bus ? `${l.from_bus}_${l.to_bus}` : `${l.to_bus}_${l.from_bus}`;
+      if (!corridorMap.has(key)) corridorMap.set(key, []);
+      corridorMap.get(key)!.push(l.id);
+    });
+
+    const offsetMap = new Map<number, number>();
+    corridorMap.forEach((lineIds) => {
+      const count = lineIds.length;
+      lineIds.forEach((id, idx) => {
+        const offset = (idx - (count - 1) / 2) * 22; // 22px parallel lane separation
+        offsetMap.set(id, offset);
+      });
+    });
+    return offsetMap;
+  }, [lines]);
 
   return (
     <div className="space-y-3 max-w-7xl mx-auto py-1">
@@ -742,16 +783,27 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
 
             <g transform={`translate(${pan.x}, ${pan.y}) scale(${scale})`}>
               {/* ========================================================================= */}
-              {/* 1. TRANSMISSION LINES WITH BORDER-TO-BORDER CLIPPING & ROTATED BREAKERS   */}
+              {/* 1. TRANSMISSION LINES WITH STAC MULTI-LINE OFFSETS & ROTATED BREAKERS     */}
               {/* ========================================================================= */}
               {lines.map((line) => {
                 const rawPosA = busPositions[line.from_bus];
                 const rawPosB = busPositions[line.to_bus];
                 if (!rawPosA || !rawPosB) return null;
 
+                // STAC MultiLineEdge normal vector offset (prevents parallel circuit overlap)
+                const laneOffset = multiLineOffsets.get(line.id) || 0;
+                const cdx = rawPosB.x - rawPosA.x;
+                const cdy = rawPosB.y - rawPosA.y;
+                const cLen = Math.hypot(cdx, cdy) || 1;
+                const normX = -cdy / cLen;
+                const normY = cdx / cLen;
+
+                const shiftedPosA = { x: rawPosA.x + normX * laneOffset, y: rawPosA.y + normY * laneOffset };
+                const shiftedPosB = { x: rawPosB.x + normX * laneOffset, y: rawPosB.y + normY * laneOffset };
+
                 // Border-to-border clipping so lines cleanly meet the busbar edge
-                const posA = getBusBorderPoint(rawPosA, rawPosB, 50, 7);
-                const posB = getBusBorderPoint(rawPosB, rawPosA, 50, 7);
+                const posA = getBusBorderPoint(shiftedPosA, shiftedPosB, 50, 7);
+                const posB = getBusBorderPoint(shiftedPosB, shiftedPosA, 50, 7);
 
                 const isTripped = trippedLines.includes(line.id);
                 const loadingPercent = line.loading_percent ?? 0;
@@ -761,7 +813,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
 
                 const dx = posB.x - posA.x;
                 const dy = posB.y - posA.y;
-                const lineDist = Math.sqrt(dx * dx + dy * dy);
+                const lineDist = Math.hypot(dx, dy);
                 const midX = (posA.x + posB.x) / 2;
                 const midY = (posA.y + posB.y) / 2;
 
