@@ -576,6 +576,10 @@ export const GridStabilityTab: React.FC<Props> = ({
       {/* Divergence Notice */}
       {divergedNotice && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
+            <span>{divergedNotice}</span>
+          </div>
           {activeModel && (
             <button
               onClick={() => onActivateModel(activeModel.id)}
@@ -758,7 +762,12 @@ export const GridStabilityTab: React.FC<Props> = ({
                   className="border border-slate-300 rounded px-2.5 py-1 text-xs w-44 bg-white"
                 />
                 <button
-                  onClick={onReset}
+                  onClick={() => {
+                    onReset();
+                    if (activeModel?.id) {
+                      onActivateModel(activeModel.id);
+                    }
+                  }}
                   className="flex items-center gap-1 px-2.5 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold"
                 >
                   <RotateCcw className="h-3 w-3" />
@@ -1134,13 +1143,18 @@ export const GridStabilityTab: React.FC<Props> = ({
       {workspaceTab === 'planning' && (
         <div className="space-y-4">
           <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 flex items-center justify-between">
-            
+            <div className="flex items-center gap-2">
+              <Info className="h-4 w-4 text-blue-600 shrink-0" />
+              <span>
+                <strong>In-Memory Sandbox Guarantee:</strong> All additions and isolations here test network expansion in memory. The original `.m` base file in Supabase is never altered.
+              </span>
+            </div>
             {totalSandboxModifications > 0 && (
               <button
                 onClick={onReset}
                 className="px-2.5 py-1 rounded bg-white border border-blue-300 text-blue-800 font-bold hover:bg-blue-100 shrink-0 ml-2"
               >
-                Clear
+                Clear Sandbox
               </button>
             )}
           </div>
@@ -1196,7 +1210,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                   <select
                     value={newSubKv}
                     onChange={(e) => setNewSubKv(Number(e.target.value))}
-                    className="w-full border border-slate-300 rounded px-2 py-1.5 bg-white"
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 bg-white"
                   >
                     <option value={330}>330 kV Bulk</option>
                     <option value={132}>132 kV Sub-T</option>
@@ -1213,7 +1227,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                     min="1"
                     value={tieLengthKm}
                     onChange={(e) => setTieLengthKm(Number(e.target.value))}
-                    className="w-full border border-slate-300 rounded px-2 py-1.5 font-mono"
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono"
                   />
                 </div>
 
@@ -1227,7 +1241,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                     min="0"
                     value={newSubDemand}
                     onChange={(e) => setNewSubDemand(Number(e.target.value))}
-                    className="w-full border border-slate-300 rounded px-2 py-1.5 font-mono"
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono"
                   />
                 </div>
               </div>
@@ -1270,7 +1284,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                   <select
                     value={newLineFrom}
                     onChange={(e) => setNewLineFrom(Number(e.target.value))}
-                    className="w-full border border-slate-300 rounded px-2 py-1.5 bg-white font-semibold"
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 bg-white font-semibold"
                   >
                     {buses.map((b) => (
                       <option key={b.id} value={b.id}>
@@ -1288,7 +1302,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                   <select
                     value={newLineTo}
                     onChange={(e) => setNewLineTo(Number(e.target.value))}
-                    className="w-full border border-slate-300 rounded px-2 py-1.5 bg-white font-semibold"
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 bg-white font-semibold"
                   >
                     {buses.map((b) => (
                       <option key={b.id} value={b.id}>
@@ -1310,7 +1324,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                     min="1"
                     value={newLineLength}
                     onChange={(e) => setNewLineLength(Number(e.target.value))}
-                    className="w-full border border-slate-300 rounded px-2 py-1.5 font-mono"
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono"
                   />
                 </div>
 
@@ -1322,7 +1336,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                   <select
                     value={newLineConductor}
                     onChange={(e) => setNewLineConductor(e.target.value)}
-                    className="w-full border border-slate-300 rounded px-2 py-1.5 bg-white font-semibold"
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 bg-white font-semibold"
                   >
                     <option value="Bison 330kV">Bison 330kV</option>
                     <option value="Bear 330kV">Bear 330kV</option>
@@ -1369,7 +1383,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                   <select
                     value={newGenBus}
                     onChange={(e) => setNewGenBus(Number(e.target.value))}
-                    className="w-full border border-slate-300 rounded px-2 py-1.5 bg-white font-semibold"
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 bg-white font-semibold"
                   >
                     {buses.map((b) => (
                       <option key={b.id} value={b.id}>
@@ -1389,7 +1403,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                     min="1"
                     value={newGenP}
                     onChange={(e) => setNewGenP(Number(e.target.value))}
-                    className="w-full border border-slate-300 rounded px-2 py-1.5 font-mono"
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono"
                   />
                 </div>
 
@@ -1405,7 +1419,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                     max="1.10"
                     value={newGenVm}
                     onChange={(e) => setNewGenVm(Number(e.target.value))}
-                    className="w-full border border-slate-300 rounded px-2 py-1.5 font-mono"
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono"
                   />
                 </div>
               </div>
