@@ -92,7 +92,7 @@ export const GridStabilityTab: React.FC<Props> = ({
 }) => {
   const activeModel = models.find((m) => m.is_active);
 
-  // Workflow view: Starts at model selection screen
+  // Initial screen is always model selection
   const [viewMode, setViewMode] = useState<'select_model' | 'workspace'>('select_model');
 
   // Sub-tabs inside workspace
@@ -107,7 +107,7 @@ export const GridStabilityTab: React.FC<Props> = ({
   const [platformFilter, setPlatformFilter] = useState<string>('ALL');
   const [busSearchQuery, setBusSearchQuery] = useState('');
 
-  // Cascade State
+  // Cascade State (Numeric input with preset buttons)
   const [cascadeThreshold, setCascadeThreshold] = useState<number>(100);
   const [initialTripLine, setInitialTripLine] = useState<number>(0);
   const [cascadeLoading, setCascadeLoading] = useState(false);
@@ -144,7 +144,7 @@ export const GridStabilityTab: React.FC<Props> = ({
   // Regional Planning State: 4. Decommission Sandbox
   const [selectedDecommissionBus, setSelectedDecommissionBus] = useState<number>(1);
 
-  // Debounced parameter updates
+  // Debounced input handler for live recalculation
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleLiveParamChange = (field: keyof ExtendedPowerFlowVariables, value: any) => {
@@ -191,7 +191,7 @@ export const GridStabilityTab: React.FC<Props> = ({
         setLoadSharingResult(data);
       }
     } catch (err) {
-      console.warn('Load sharing calculation notice:', err);
+      console.warn('Load sharing calculation error:', err);
     } finally {
       setLoadSharingLoading(false);
     }
@@ -494,7 +494,7 @@ export const GridStabilityTab: React.FC<Props> = ({
   // =========================================================================
   return (
     <div className="space-y-4 max-w-7xl mx-auto py-1 text-slate-800">
-      {/* Workspace Top Bar with "Switch Model" button and Subtabs */}
+      {/* Top Workspace Header Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 gap-3">
         <div className="flex items-center gap-2">
           <button
@@ -506,13 +506,11 @@ export const GridStabilityTab: React.FC<Props> = ({
             <span>Switch Model</span>
           </button>
 
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-black text-sm text-slate-900 tracking-tight">{currentDisplayName}</span>
-              <span className="text-[10px] font-mono px-2 py-0.2 rounded bg-emerald-100 text-emerald-800 font-bold">
-                {buses.length} Substations • {lines.length} Branches
-              </span>
-            </div>
+          <div className="flex items-center gap-2">
+            <span className="font-black text-sm text-slate-900 tracking-tight">{currentDisplayName}</span>
+            <span className="text-[10px] font-mono px-2 py-0.2 rounded bg-emerald-100 text-emerald-800 font-bold">
+              {buses.length} Substations • {lines.length} Branches
+            </span>
           </div>
         </div>
 
@@ -565,7 +563,7 @@ export const GridStabilityTab: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Divergence Notice */}
+      {/* Styled Diagnostics Banner */}
       {divergedNotice && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700">
           <div className="flex items-center gap-2">
@@ -585,9 +583,7 @@ export const GridStabilityTab: React.FC<Props> = ({
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* WORKSPACE SUBTAB 1: OPERATIONAL DECK                                      */}
-      {/* ========================================================================= */}
+      {/* WORKSPACE SUBTAB 1: OPERATIONAL DECK */}
       {workspaceTab === 'deck' && (
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
@@ -877,9 +873,7 @@ export const GridStabilityTab: React.FC<Props> = ({
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* WORKSPACE SUBTAB 2: LOAD SHARING                                          */}
-      {/* ========================================================================= */}
+      {/* WORKSPACE SUBTAB 2: LOAD SHARING */}
       {workspaceTab === 'load_sharing' && (
         <div className="space-y-4">
           <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -922,7 +916,6 @@ export const GridStabilityTab: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Parallel Circuits Impedance Division */}
           {loadSharingResult?.parallel_corridors && loadSharingResult.parallel_corridors.length > 0 && (
             <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
               <div className="flex items-center justify-between pb-2 border-b border-slate-100">
@@ -954,7 +947,6 @@ export const GridStabilityTab: React.FC<Props> = ({
             </div>
           )}
 
-          {/* Generator Allocation Table */}
           <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-2xs">
             <div className="p-2.5 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-700">
               Synchronous Governor Droop Allocation Table
@@ -987,9 +979,7 @@ export const GridStabilityTab: React.FC<Props> = ({
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* WORKSPACE SUBTAB 3: CASCADING FAILURE                                     */}
-      {/* ========================================================================= */}
+      {/* WORKSPACE SUBTAB 3: CASCADING FAILURE */}
       {workspaceTab === 'cascade' && (
         <div className="space-y-4">
           <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-3">
@@ -1121,9 +1111,7 @@ export const GridStabilityTab: React.FC<Props> = ({
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* WORKSPACE SUBTAB 4: REGIONAL PLANNING                                     */}
-      {/* ========================================================================= */}
+      {/* WORKSPACE SUBTAB 4: REGIONAL PLANNING */}
       {workspaceTab === 'planning' && (
         <div className="space-y-4">
           <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 flex items-center justify-between">
@@ -1144,7 +1132,7 @@ export const GridStabilityTab: React.FC<Props> = ({
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Tool 1: Propose Substation WITH Required Interconnection */}
+            {/* 1. Propose Substation WITH Required Interconnection */}
             <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
               <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-100">
                 <Plus className="h-4 w-4 text-[#500b50]" />
@@ -1238,7 +1226,7 @@ export const GridStabilityTab: React.FC<Props> = ({
               </button>
             </div>
 
-            {/* Tool 2: Connect Standalone Transmission Line */}
+            {/* 2. Connect Independent Line Corridor */}
             <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
               <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-100">
                 <Plus className="h-4 w-4 text-[#500b50]" />
@@ -1337,7 +1325,7 @@ export const GridStabilityTab: React.FC<Props> = ({
               </button>
             </div>
 
-            {/* Tool 3: Propose Power Plant */}
+            {/* 3. Propose Power Plant */}
             <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
               <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-100">
                 <Plus className="h-4 w-4 text-[#500b50]" />
@@ -1416,7 +1404,7 @@ export const GridStabilityTab: React.FC<Props> = ({
               </button>
             </div>
 
-            {/* Tool 4: Sandbox Node Deletion / Decommissioning */}
+            {/* 4. Sandbox Node Deletion / Decommissioning */}
             <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
               <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-100">
                 <Trash2 className="h-4 w-4 text-rose-600" />
