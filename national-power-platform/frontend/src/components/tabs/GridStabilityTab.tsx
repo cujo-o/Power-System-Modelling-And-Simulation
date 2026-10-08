@@ -576,10 +576,6 @@ export const GridStabilityTab: React.FC<Props> = ({
       {/* Divergence Notice */}
       {divergedNotice && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
-            <span>{divergedNotice}</span>
-          </div>
           {activeModel && (
             <button
               onClick={() => onActivateModel(activeModel.id)}
@@ -587,7 +583,7 @@ export const GridStabilityTab: React.FC<Props> = ({
               className="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shrink-0 flex items-center gap-1"
             >
               <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-              <span>Re-Hydrate Solver</span>
+              <span>Solve</span>
             </button>
           )}
         </div>

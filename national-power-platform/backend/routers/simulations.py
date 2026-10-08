@@ -209,7 +209,7 @@ def get_sim_router(model_registry: Dict[str, Any], get_active_net_fn):
             try:
                 pp.rundcpp(temp_net)
                 converged = True
-                solver_notice = "Operating near voltage collapse cliff. Demonstrating AC Continuation load flow solution."
+                
 
                 slack_v = vars_deck.slackVoltagePu
                 shunt_boost = (vars_deck.shuntMvarCompensation / 1000.0) * 0.08
