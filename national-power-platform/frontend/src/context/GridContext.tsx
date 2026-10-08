@@ -93,9 +93,8 @@ function normalizeRawModel(m: any): GridModelMeta {
     total_demand_mw: Number(m?.total_demand_mw ?? m?.demand_mw ?? 0),
     domain: String(domain),
     is_active: Boolean(m?.is_active),
-    converged: Boolean(m?.converged ?? m?.is_converged ?? true),
-    is_default: Boolean(m?.is_default ?? m?.default ?? false),
-  };
+    network_payload: m?.network_payload || m?.payload,
+  } as GridModelMeta;
 }
 
 const GridContext = createContext<GridContextType | null>(null);
@@ -133,7 +132,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     throw lastError || new Error('Connection to backend failed.');
   }, []);
 
-  // Fetch models from Supabase table: grid_models
   const fetchModels = useCallback(async () => {
     setModelsLoading(true);
     let retrieved: GridModelMeta[] = [];
@@ -187,7 +185,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setModelsLoading(false);
   }, []);
 
-  // Run AC Power Flow
   const runSimulation = useCallback(
     async (customVars?: any, customTrips?: any) => {
       setLoading(true);
@@ -250,7 +247,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     [pfVariables, trippedLines, apiFetch]
   );
 
-  // Activate model: Hydrates into backend Pandapower memory if not present
   const activateModel = useCallback(
     async (id: string) => {
       setLoading(true);
@@ -280,8 +276,9 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } catch {}
       }
 
-      // Step 1: Attempt activation via backend route POST /api/models/activate/{model_id}
       let inMemory = false;
+
+      // 1. Try activating directly if already in backend memory: POST /api/models/activate/{model_id}
       try {
         const resName = await apiFetch(`/api/models/activate/${encodeURIComponent(modelName)}`, {
           method: 'POST',
@@ -298,19 +295,64 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } catch {}
       }
 
-      // Step 2: If 404 (Render wiped in-memory model_registry on wake-up), hydrate from Supabase Storage
-      if (!inMemory && supabase) {
-        try {
-          let fileBlob: Blob | null = null;
-          const { data: d1 } = await supabase.storage.from('models').download(modelName);
-          if (d1) {
-            fileBlob = d1;
-          } else {
-            const { data: d2 } = await supabase.storage.from('models').download(`${modelIdentifier}.m`);
-            if (d2) fileBlob = d2;
-          }
+      // 2. If 404 (Render wiped in-memory model_registry on wake-up), hydrate from Supabase
+      if (!inMemory) {
+        let payload = (targetModel as any)?.network_payload;
 
-          if (fileBlob) {
+        if (!payload && supabase) {
+          try {
+            const { data } = await supabase
+              .from('grid_models')
+              .select('*')
+              .or(`id.eq.${modelIdentifier},name.eq.${modelName}`)
+              .single();
+            if (data?.network_payload) payload = data.network_payload;
+            else if (data?.payload) payload = data.payload;
+          } catch {}
+        }
+
+        if (payload) {
+          try {
+            const loadRes = await apiFetch('/api/models/load-payload', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: modelIdentifier,
+                name: modelName,
+                voltage_level: targetModel?.voltage_level || '330kV',
+                domain: targetModel?.domain || 'Static & Dynamic',
+                platform: targetModel?.platform || 'MATPOWER',
+                network_payload: payload,
+              }),
+            });
+            if (loadRes && loadRes.ok) inMemory = true;
+          } catch (e) {
+            console.warn('load-payload hydration error:', e);
+          }
+        }
+      }
+
+      // 3. Fallback: Download file from Supabase Storage bucket and send to /api/models/upload
+      if (!inMemory && supabase) {
+        const candidateBuckets = ['models', 'grid_models', 'grid-models', 'model_files'];
+        let fileBlob: Blob | null = null;
+        for (const bucket of candidateBuckets) {
+          try {
+            const { data: d1 } = await supabase.storage.from(bucket).download(modelName);
+            if (d1) {
+              fileBlob = d1;
+              break;
+            }
+            const { data: d2 } = await supabase.storage.from(bucket).download(`${modelIdentifier}.m`);
+            if (d2) {
+              fileBlob = d2;
+              break;
+            }
+          } catch {}
+        }
+
+        if (fileBlob) {
+          try {
             const formData = new FormData();
             formData.append('file', fileBlob, modelName.endsWith('.m') ? modelName : `${modelName}.m`);
             const uploadRes = await apiFetch('/api/models/upload', {
@@ -319,10 +361,17 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             });
             if (uploadRes && uploadRes.ok) {
               inMemory = true;
+              const uploadJson = await uploadRes.json();
+              if (uploadJson.network_payload) {
+                await supabase
+                  .from('grid_models')
+                  .update({ network_payload: uploadJson.network_payload })
+                  .eq('id', modelIdentifier);
+              }
             }
+          } catch (e) {
+            console.warn('Storage upload hydration error:', e);
           }
-        } catch (e) {
-          console.warn('Hydration from Supabase Storage failed:', e);
         }
       }
 
