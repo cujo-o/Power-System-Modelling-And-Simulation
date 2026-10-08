@@ -7,6 +7,7 @@ import {
   GridModelMeta,
   NewBusElement,
   NewLineElement,
+  NewGenElement,
   CascadeResult,
 } from '@/types/grid';
 import { ExtendedPowerFlowVariables } from '@/context/GridContext';
@@ -27,10 +28,9 @@ import {
   Trash2,
   Lock,
   UploadCloud,
-  CheckCircle2,
+  ChevronLeft,
   Info,
-  Radio,
-  SlidersHorizontal,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface Props {
@@ -59,8 +59,8 @@ interface Props {
 }
 
 const TooltipBadge: React.FC<{ content: string }> = ({ content }) => (
-  <span className="relative group inline-flex items-center ml-1 align-baseline">
-    <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-600 hover:bg-[#500b50] hover:text-white cursor-help transition">
+  <span className="relative group inline-flex items-center ml-1 align-baseline cursor-help">
+    <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-600 hover:bg-[#500b50] hover:text-white transition">
       ?
     </span>
     <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block w-56 rounded-lg bg-slate-900 p-2 text-[11px] font-normal normal-case leading-snug text-white shadow-xl z-50 text-center">
@@ -96,47 +96,68 @@ export const GridStabilityTab: React.FC<Props> = ({
 }) => {
   const activeModel = models.find((m) => m.is_active);
 
-  const [activeTab, setActiveTab] = useState<'deck' | 'models' | 'load_sharing' | 'cascade' | 'planning'>('deck');
+  // Workflow view: First view is always model selection until a model is selected
+  const [viewMode, setViewMode] = useState<'select_model' | 'workspace'>('select_model');
+
+  // Sub-tabs inside workspace
+  const [workspaceTab, setWorkspaceTab] = useState<'deck' | 'load_sharing' | 'cascade' | 'planning'>('deck');
   const [deckView, setDeckView] = useState<'buses' | 'lines'>('buses');
   const [activatingId, setActivatingId] = useState<string | null>(null);
 
-  // Filter & Search
+  // Search & Filter
   const [modelSearchQuery, setModelSearchQuery] = useState('');
+  const [domainFilter, setDomainFilter] = useState<'ALL' | 'Static' | 'Dynamic'>('ALL');
+  const [voltageFilter, setVoltageFilter] = useState<'ALL' | '330kV' | '132kV' | '130kV'>('ALL');
+  const [platformFilter, setPlatformFilter] = useState<string>('ALL');
   const [busSearchQuery, setBusSearchQuery] = useState('');
 
-  // Cascade Slider & Results
+  // Cascade State
   const [cascadeThreshold, setCascadeThreshold] = useState<number>(100);
   const [initialTripLine, setInitialTripLine] = useState<number>(0);
   const [cascadeLoading, setCascadeLoading] = useState(false);
   const [cascadeResult, setCascadeResult] = useState<CascadeResult | null>(null);
 
-  // Dynamic Load Sharing
-  const [loadSharingMode, setLoadSharingMode] = useState<'branches' | 'generators'>('branches');
+  // Load Sharing State
   const [loadStepMw, setLoadStepMw] = useState<number>(300);
   const [dampingD, setDampingD] = useState<number>(1.2);
   const [loadSharingLoading, setLoadSharingLoading] = useState(false);
   const [loadSharingResult, setLoadSharingResult] = useState<any>(null);
 
-  // Planning Sandbox State
-  const [newSubstationName, setNewSubstationName] = useState('');
-  const [newSubstationKv, setNewSubstationKv] = useState(330);
-  const [newSubstationZone, setNewSubstationZone] = useState('North-Central');
-  const [newSubstationDemand, setNewSubstationDemand] = useState(40);
-  const [connectToBusId, setConnectToBusId] = useState<number>(buses[0]?.id || 1);
-  const [tieLineLength, setTieLineLength] = useState(45);
+  // Regional Planning State: 1. Substation + Tie
+  const [newSubName, setNewSubName] = useState('');
+  const [newSubKv, setNewSubKv] = useState(330);
+  const [newSubZone, setNewSubZone] = useState('North-Central');
+  const [newSubDemand, setNewSubDemand] = useState(45);
+  const [connectToExistingBus, setConnectToExistingBus] = useState<number>(1);
+  const [tieLengthKm, setTieLengthKm] = useState(55);
   const [tieConductor, setTieConductor] = useState('Bison 330kV');
-  const [selectedDecommissionBus, setSelectedDecommissionBus] = useState<number>(buses[0]?.id || 1);
 
-  // Real-time Debounce for Operational Sliders
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // Regional Planning State: 2. Standalone Branch
+  const [newLineName, setNewLineName] = useState('');
+  const [newLineFrom, setNewLineFrom] = useState<number>(1);
+  const [newLineTo, setNewLineTo] = useState<number>(2);
+  const [newLineLength, setNewLineLength] = useState(65);
+  const [newLineConductor, setNewLineConductor] = useState('Bison 330kV');
+
+  // Regional Planning State: 3. Standalone Plant
+  const [newGenName, setNewGenName] = useState('');
+  const [newGenBus, setNewGenBus] = useState<number>(1);
+  const [newGenP, setNewGenP] = useState(150);
+  const [newGenVm, setNewGenVm] = useState(1.03);
+
+  // Regional Planning State: 4. Decommission Sandbox
+  const [selectedDecommissionBus, setSelectedDecommissionBus] = useState<number>(1);
+
+  // Debounced real-time execution for inputs
+  const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleLiveParamChange = (field: keyof ExtendedPowerFlowVariables, value: any) => {
     setPfVariables((prev) => {
       const updated = { ...prev, [field]: value };
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      debounceTimerRef.current = setTimeout(() => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
         runSimulation();
-      }, 300);
+      }, 350);
       return updated;
     });
   };
@@ -148,13 +169,15 @@ export const GridStabilityTab: React.FC<Props> = ({
   }, [lines, initialTripLine]);
 
   useEffect(() => {
-    if (buses.length > 0 && !buses.some((b) => b.id === connectToBusId)) {
-      setConnectToBusId(buses[0].id);
-      setSelectedDecommissionBus(buses[0].id);
+    if (buses.length > 0) {
+      if (!buses.some((b) => b.id === connectToExistingBus)) setConnectToExistingBus(buses[0].id);
+      if (!buses.some((b) => b.id === newLineFrom)) setNewLineFrom(buses[0].id);
+      if (!buses.some((b) => b.id === newLineTo)) setNewLineTo(buses[1]?.id || buses[0].id);
+      if (!buses.some((b) => b.id === newGenBus)) setNewGenBus(buses[0].id);
+      if (!buses.some((b) => b.id === selectedDecommissionBus)) setSelectedDecommissionBus(buses[0].id);
     }
-  }, [buses, connectToBusId]);
+  }, [buses, connectToExistingBus, newLineFrom, newLineTo, newGenBus, selectedDecommissionBus]);
 
-  // Load Sharing Solver
   const runLoadSharingCalculation = async () => {
     setLoadSharingLoading(true);
     try {
@@ -172,17 +195,42 @@ export const GridStabilityTab: React.FC<Props> = ({
         setLoadSharingResult(data);
       }
     } catch (err) {
-      console.warn('Load sharing solver error:', err);
+      console.warn('Load sharing calculation error:', err);
     } finally {
       setLoadSharingLoading(false);
     }
   };
 
   useEffect(() => {
-    if (activeTab === 'load_sharing') {
+    if (workspaceTab === 'load_sharing') {
       runLoadSharingCalculation();
     }
-  }, [activeTab, modelName]);
+  }, [workspaceTab, modelName]);
+
+  const filteredModels = useMemo(() => {
+    return models.filter((m) => {
+      const matchesDomain =
+        domainFilter === 'ALL' ||
+        (domainFilter === 'Static' && ((m.domain || '').includes('Static') || (m.domain || '').includes('Steady'))) ||
+        (domainFilter === 'Dynamic' && (m.domain || '').includes('Dynamic'));
+
+      const level = (m.voltage_level || '').toLowerCase();
+      const matchesVoltage =
+        voltageFilter === 'ALL' ||
+        (voltageFilter === '330kV' && level.includes('330')) ||
+        (voltageFilter === '132kV' && (level.includes('132') || level.includes('130'))) ||
+        (voltageFilter === '130kV' && (level.includes('130') || level.includes('132')));
+
+      const matchesPlatform =
+        platformFilter === 'ALL' || (m.platform || '').toLowerCase().includes(platformFilter.toLowerCase());
+
+      const matchesSearch =
+        (m.name || '').toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
+        (m.voltage_level || '').toLowerCase().includes(modelSearchQuery.toLowerCase());
+
+      return matchesDomain && matchesVoltage && matchesPlatform && matchesSearch;
+    });
+  }, [models, domainFilter, voltageFilter, platformFilter, modelSearchQuery]);
 
   const filteredBuses = useMemo(() => {
     if (!busSearchQuery.trim()) return buses;
@@ -195,42 +243,40 @@ export const GridStabilityTab: React.FC<Props> = ({
     );
   }, [buses, busSearchQuery]);
 
-  const filteredModels = useMemo(() => {
-    if (!modelSearchQuery.trim()) return models;
-    const q = modelSearchQuery.toLowerCase();
-    return models.filter((m) => m.name.toLowerCase().includes(q) || m.voltage_level.toLowerCase().includes(q));
-  }, [models, modelSearchQuery]);
-
-  const handleActivate = async (id: string) => {
+  // Model selection handler
+  const handleSelectModel = async (id: string) => {
     setActivatingId(id);
     try {
       await onActivateModel(id);
-      setActiveTab('deck');
+      setViewMode('workspace');
+      setWorkspaceTab('deck');
     } finally {
       setActivatingId(null);
     }
   };
 
-  // Add Proposed Substation AND its Interconnection Tie in one step
+  // 1. Propose Substation with required Interconnection
   const handleAddProposedSubstation = () => {
-    if (!newSubstationName.trim()) return;
+    if (!newSubName.trim()) return;
 
     const newBusItem: NewBusElement = {
-      name: newSubstationName.trim(),
-      vn_kv: newSubstationKv,
-      zone: newSubstationZone,
-      p_mw: newSubstationDemand,
-      q_mvar: newSubstationDemand * 0.35,
+      name: newSubName.trim(),
+      vn_kv: newSubKv,
+      zone: newSubZone,
+      p_mw: newSubDemand,
+      q_mvar: newSubDemand * 0.35,
     };
 
-    const targetExisting = buses.find((b) => b.id === connectToBusId);
+    const targetBus = buses.find((b) => b.id === connectToExistingBus);
+    const assignedNewBusId = buses.length + pfVariables.newBuses.length + 1;
+
     const newLineItem: NewLineElement = {
-      name: `${targetExisting?.name || 'Bus'}-${newSubstationName.trim()}`,
-      from_bus: connectToBusId,
-      to_bus: buses.length + (pfVariables.newBuses.length + 1),
-      length_km: tieLineLength,
+      name: `${targetBus?.name || 'Bus'}-${newSubName.trim()}`,
+      from_bus: connectToExistingBus,
+      to_bus: assignedNewBusId,
+      length_km: tieLengthKm,
       conductor_type: tieConductor,
-      vn_kv: newSubstationKv,
+      vn_kv: newSubKv,
     };
 
     setPfVariables((prev) => ({
@@ -239,38 +285,253 @@ export const GridStabilityTab: React.FC<Props> = ({
       newLines: [...prev.newLines, newLineItem],
     }));
 
-    setNewSubstationName('');
-    setTimeout(runSimulation, 80);
+    setNewSubName('');
+    setTimeout(runSimulation, 60);
+  };
+
+  // 2. Connect Independent Line
+  const handleAddLine = () => {
+    if (!newLineName.trim()) return;
+    const item: NewLineElement = {
+      name: newLineName.trim(),
+      from_bus: newLineFrom,
+      to_bus: newLineTo,
+      length_km: newLineLength,
+      conductor_type: newLineConductor,
+      vn_kv: newLineConductor.includes('330') ? 330 : 132,
+    };
+    setPfVariables((prev) => ({ ...prev, newLines: [...prev.newLines, item] }));
+    setNewLineName('');
+    setTimeout(runSimulation, 60);
+  };
+
+  // 3. Propose Generator
+  const handleAddGen = () => {
+    if (!newGenName.trim()) return;
+    const item: NewGenElement = {
+      name: newGenName.trim(),
+      bus: newGenBus,
+      p_mw: newGenP,
+      vm_pu: newGenVm,
+      p_max_mw: newGenP * 1.5,
+    };
+    setPfVariables((prev) => ({ ...prev, newGenerators: [...prev.newGenerators, item] }));
+    setNewGenName('');
+    setTimeout(runSimulation, 60);
   };
 
   const currentDisplayName = activeModel?.name || modelName || 'Active Grid Model';
-  const totalModifications =
+  const totalSandboxModifications =
     pfVariables.newBuses.length +
     pfVariables.newLines.length +
+    pfVariables.newGenerators.length +
     (pfVariables.disabledBuses?.length || 0);
 
-  return (
-    <div className="space-y-4 max-w-7xl mx-auto py-1 text-slate-800">
-      {/* Top Header Toolbar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 gap-3">
-        <div>
-          <h2 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-            <span>Grid Stability &amp; Simulation Studio</span>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-purple-100 text-[#500b50] font-bold">
-              {currentDisplayName}
+  // =========================================================================
+  // VIEW 1: INITIAL MODEL SELECTION SCREEN (The FIRST screen user sees)
+  // =========================================================================
+  if (viewMode === 'select_model') {
+    return (
+      <div className="space-y-4 max-w-7xl mx-auto py-1 text-slate-800">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 gap-3">
+          <div>
+            <h2 className="text-xl font-black text-slate-900 tracking-tight">
+              Grid Stability &amp; Simulation Studio
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Select an uploaded transmission network to launch the operational studio.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-mono font-bold text-slate-500 bg-white border border-slate-200 px-2.5 py-1 rounded-lg">
+              {filteredModels.length} of {models.length} Models Registered
             </span>
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Real-time AC parameters, N-1 contingency analysis, dynamic load division, and sandbox expansion.
-          </p>
+            {onRefreshModels && (
+              <button
+                onClick={() => onRefreshModels()}
+                disabled={modelsLoading}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 hover:text-slate-900 font-semibold"
+                title="Refresh Model List"
+              >
+                <RefreshCw className={`h-3 w-3 ${modelsLoading ? 'animate-spin' : ''}`} />
+                <span>Refresh</span>
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* Compact EMS Tab Strip */}
+        {/* Filter Toolbar */}
+        <div className="p-3.5 rounded-xl border border-slate-200 bg-white shadow-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">Search Model</label>
+              <input
+                type="text"
+                placeholder="Search case name..."
+                value={modelSearchQuery}
+                onChange={(e) => setModelSearchQuery(e.target.value)}
+                className="w-full border border-slate-300 rounded px-2.5 py-1.5 focus:outline-none focus:border-[#500b50]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">Domain</label>
+              <select
+                value={domainFilter}
+                onChange={(e: any) => setDomainFilter(e.target.value)}
+                className="w-full border border-slate-300 rounded px-2.5 py-1.5 bg-white font-semibold"
+              >
+                <option value="ALL">All Domains</option>
+                <option value="Static">Static Power Flow</option>
+                <option value="Dynamic">Dynamic &amp; Transient</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">Voltage Class</label>
+              <select
+                value={voltageFilter}
+                onChange={(e: any) => setVoltageFilter(e.target.value)}
+                className="w-full border border-slate-300 rounded px-2.5 py-1.5 bg-white font-semibold"
+              >
+                <option value="ALL">All Classes</option>
+                <option value="330kV">330 kV Bulk Backbone</option>
+                <option value="132kV">132 kV Sub-Transmission</option>
+                <option value="130kV">130 kV Regional Feeder</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">Format</label>
+              <select
+                value={platformFilter}
+                onChange={(e) => setPlatformFilter(e.target.value)}
+                className="w-full border border-slate-300 rounded px-2.5 py-1.5 bg-white font-semibold"
+              >
+                <option value="ALL">All Formats</option>
+                <option value="MATPOWER">MATPOWER (.m)</option>
+                <option value="PSAT">PSAT / .130</option>
+                <option value="DIgSILENT">DIgSILENT PowerFactory</option>
+                <option value="ETAP">ETAP</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Models Grid */}
+        {filteredModels.length === 0 ? (
+          <div className="p-10 text-center rounded-xl border border-dashed border-slate-300 bg-white space-y-2">
+            <UploadCloud className="h-8 w-8 text-[#500b50] mx-auto" />
+            <p className="text-sm font-bold text-slate-800">
+              {modelsLoading ? 'Querying model storage...' : 'No Simulation Models Available'}
+            </p>
+            <p className="text-xs text-slate-500">
+              Upload transmission networks in the Ingestion module to begin.
+            </p>
+            <button
+              onClick={() => onNavigateTab('Upload & Ingestion')}
+              className="mt-2 px-3 py-1.5 rounded-lg bg-[#500b50] text-white text-xs font-bold"
+            >
+              Go to Upload
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {filteredModels.map((m) => {
+              const isCurrent = m.is_active || m.name === currentDisplayName;
+
+              return (
+                <div
+                  key={m.id}
+                  className={`p-4 rounded-xl border bg-white shadow-2xs flex flex-col justify-between transition ${
+                    isCurrent ? 'border-emerald-600 ring-2 ring-emerald-500/20' : 'border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-50 text-[#500b50] border border-purple-200">
+                          {m.voltage_level}
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-600">
+                          {m.platform}
+                        </span>
+                      </div>
+
+                      {isCurrent && (
+                        <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <Check className="h-3 w-3" />
+                          <span>Active in Memory</span>
+                        </span>
+                      )}
+                    </div>
+
+                    <div>
+                      <h3 className="font-bold text-sm text-slate-900">{m.name}</h3>
+                      <p className="text-xs text-slate-500 font-mono mt-0.5">
+                        {m.buses} Substations • {m.branches} Corridors • {(m.total_installed_mw || 0).toLocaleString()} MW
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleSelectModel(m.id)}
+                    disabled={activatingId !== null}
+                    className={`mt-4 w-full py-2 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                      isCurrent ? 'bg-emerald-700 text-white hover:bg-emerald-800' : 'bg-[#500b50] text-white hover:bg-[#680f68]'
+                    }`}
+                  >
+                    {activatingId === m.id ? (
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Zap className="h-3.5 w-3.5 text-amber-300" />
+                    )}
+                    <span>{isCurrent ? 'Open Operational Workspace' : 'Activate & Launch Workspace'}</span>
+                    <ArrowRight className="h-3.5 w-3.5 ml-1" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // VIEW 2: FULL OPERATIONAL WORKSPACE (Only visible once a model is clicked)
+  // =========================================================================
+  return (
+    <div className="space-y-4 max-w-7xl mx-auto py-1 text-slate-800">
+      {/* Workspace Top Bar with "Switch Model" button and Subtabs */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 gap-3">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setViewMode('select_model')}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 transition"
+            title="Return to Model Registry"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+            <span>Switch Model</span>
+          </button>
+
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-black text-sm text-slate-900 tracking-tight">{currentDisplayName}</span>
+              <span className="text-[10px] font-mono px-2 py-0.2 rounded bg-emerald-100 text-emerald-800 font-bold">
+                {buses.length} Substations • {lines.length} Branches
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Subtabs Navigation */}
         <div className="flex flex-wrap items-center rounded-xl border border-slate-200 bg-white p-1 text-xs font-bold shadow-xs gap-1">
           <button
-            onClick={() => setActiveTab('deck')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition ${
-              activeTab === 'deck' ? 'bg-[#500b50] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            onClick={() => setWorkspaceTab('deck')}
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg transition ${
+              workspaceTab === 'deck' ? 'bg-[#500b50] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <Sliders className="h-3.5 w-3.5" />
@@ -278,29 +539,19 @@ export const GridStabilityTab: React.FC<Props> = ({
           </button>
 
           <button
-            onClick={() => setActiveTab('models')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition ${
-              activeTab === 'models' ? 'bg-[#500b50] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            onClick={() => setWorkspaceTab('load_sharing')}
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg transition ${
+              workspaceTab === 'load_sharing' ? 'bg-[#500b50] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Search className="h-3.5 w-3.5" />
-            <span>Models ({models.length})</span>
+            <Activity className="h-3.5 w-3.5 text-emerald-400" />
+            <span>Load Sharing (P–f)</span>
           </button>
 
           <button
-            onClick={() => setActiveTab('load_sharing')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition ${
-              activeTab === 'load_sharing' ? 'bg-[#500b50] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Activity className="h-3.5 w-3.5 text-emerald-500" />
-            <span>Load Sharing</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('cascade')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition ${
-              activeTab === 'cascade' ? 'bg-[#500b50] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            onClick={() => setWorkspaceTab('cascade')}
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg transition ${
+              workspaceTab === 'cascade' ? 'bg-[#500b50] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <Power className="h-3.5 w-3.5 text-rose-500" />
@@ -308,192 +559,177 @@ export const GridStabilityTab: React.FC<Props> = ({
           </button>
 
           <button
-            onClick={() => setActiveTab('planning')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition relative ${
-              activeTab === 'planning' ? 'bg-[#500b50] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            onClick={() => setWorkspaceTab('planning')}
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg transition relative ${
+              workspaceTab === 'planning' ? 'bg-[#500b50] text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <GitBranch className="h-3.5 w-3.5 text-blue-500" />
             <span>Regional Planning</span>
-            {totalModifications > 0 && (
+            {totalSandboxModifications > 0 && (
               <span className="ml-1 px-1.5 py-0.2 rounded-full bg-blue-600 text-white text-[10px] font-bold">
-                {totalModifications}
+                {totalSandboxModifications}
               </span>
             )}
           </button>
         </div>
       </div>
 
-      {/* ========================================================================= */}
-      {/* 1. OPERATIONAL DECK                                                       */}
-      {/* ========================================================================= */}
-      {activeTab === 'deck' && (
-        <div className="space-y-4">
-          {/* Divergence / Status Banner */}
-          {divergedNotice && (
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
-                <span>{divergedNotice}</span>
-              </div>
-              {activeModel && (
-                <button
-                  onClick={() => onActivateModel(activeModel.id)}
-                  disabled={loading}
-                  className="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shrink-0 flex items-center gap-1"
-                >
-                  <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-                  <span>Re-Hydrate Solver</span>
-                </button>
-              )}
-            </div>
+      {/* Divergence Notice */}
+      {divergedNotice && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
+            <span>{divergedNotice}</span>
+          </div>
+          {activeModel && (
+            <button
+              onClick={() => onActivateModel(activeModel.id)}
+              disabled={loading}
+              className="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shrink-0 flex items-center gap-1"
+            >
+              <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+              <span>Re-Hydrate Solver</span>
+            </button>
           )}
+        </div>
+      )}
 
-          {/* Real-Time Parameter Sliders Strip */}
-          <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <SlidersHorizontal className="h-4 w-4 text-[#500b50]" />
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-800">
-                  Live Operational Variable Sliders
+      {/* ========================================================================= */}
+      {/* WORKSPACE SUBTAB 1: OPERATIONAL DECK (No Sliders, Live-Updating Inputs)   */}
+      {/* ========================================================================= */}
+      {workspaceTab === 'deck' && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
+            {/* Demand Scale */}
+            <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                <span className="flex items-center">
+                  Demand Scale
+                  <TooltipBadge content="System-wide load scaling factor. Proportioned live across all bulk consumption nodes." />
                 </span>
+                <span className="font-mono text-[#500b50] font-bold">{Math.round((pfVariables.loadMultiplier || 1.0) * 100)}%</span>
               </div>
-              <div className="flex items-center gap-1.5 text-xs text-emerald-700 font-bold font-mono">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>Auto-Re-Solving Live</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-              {/* Demand Scale */}
-              <div className="space-y-1.5 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                  <span className="flex items-center">
-                    Demand Scale
-                    <TooltipBadge content="System-wide load scaling factor. Proportioned across all bulk consumption nodes in real-time." />
-                  </span>
-                  <span className="font-mono text-[#500b50]">{Math.round((pfVariables.loadMultiplier || 1.0) * 100)}%</span>
-                </div>
+              <div className="flex items-center gap-1">
                 <input
-                  type="range"
-                  min="40"
-                  max="220"
+                  type="number"
                   step="5"
+                  min="40"
+                  max="250"
                   value={Math.round((pfVariables.loadMultiplier || 1.0) * 100)}
                   onChange={(e) => handleLiveParamChange('loadMultiplier', parseFloat(e.target.value) / 100)}
-                  className="w-full accent-[#500b50] cursor-pointer"
+                  className="w-full font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded px-2.5 py-1 text-xs focus:border-[#500b50] focus:outline-none"
                 />
-                <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                  <span>40%</span>
-                  <span>100% (Base)</span>
-                  <span>220%</span>
-                </div>
+                <span className="text-slate-400 text-xs font-mono font-bold">%</span>
               </div>
-
-              {/* Power Factor */}
-              <div className="space-y-1.5 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                  <span className="flex items-center">
-                    Power Factor (cos φ)
-                    <TooltipBadge content="Operating active-to-apparent power ratio. Determines inductive reactive MVAR consumption." />
-                  </span>
-                  <span className="font-mono text-[#500b50]">{(pfVariables.targetPowerFactor || 0.9).toFixed(2)}</span>
-                </div>
-                <input
-                  type="range"
-                  min="0.75"
-                  max="1.0"
-                  step="0.01"
-                  value={pfVariables.targetPowerFactor || 0.9}
-                  onChange={(e) => handleLiveParamChange('targetPowerFactor', parseFloat(e.target.value))}
-                  className="w-full accent-[#500b50] cursor-pointer"
-                />
-                <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                  <span>0.75 Inductive</span>
-                  <span>1.0 Unity</span>
-                </div>
+              <div className="flex gap-1 pt-1">
+                {[80, 100, 120, 150].map((pct) => (
+                  <button
+                    key={pct}
+                    onClick={() => handleLiveParamChange('loadMultiplier', pct / 100)}
+                    className="flex-1 py-0.5 text-[10px] font-mono font-bold rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
+                  >
+                    {pct}%
+                  </button>
+                ))}
               </div>
+            </div>
 
-              {/* Slack Voltage */}
-              <div className="space-y-1.5 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                  <span className="flex items-center">
-                    Slack Voltage ($V_0$)
-                    <TooltipBadge content="Voltage setpoint magnitude at the grid reference / swing generator in per-unit." />
-                  </span>
-                  <span className="font-mono text-[#500b50]">{(pfVariables.slackVoltagePu || 1.05).toFixed(3)} pu</span>
-                </div>
+            {/* Power Factor */}
+            <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                <span className="flex items-center">
+                  Power Factor (cos φ)
+                  <TooltipBadge content="Operating active-to-apparent power ratio. Determines inductive reactive MVAR consumption." />
+                </span>
+                <span className="font-mono text-[#500b50] font-bold">{(pfVariables.targetPowerFactor || 0.9).toFixed(2)}</span>
+              </div>
+              <input
+                type="number"
+                step="0.01"
+                min="0.75"
+                max="1.0"
+                value={pfVariables.targetPowerFactor || 0.9}
+                onChange={(e) => handleLiveParamChange('targetPowerFactor', parseFloat(e.target.value))}
+                className="w-full font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded px-2.5 py-1 text-xs focus:border-[#500b50] focus:outline-none"
+              />
+              <span className="text-[10px] text-slate-400 font-mono block">Range: 0.75 – 1.00</span>
+            </div>
+
+            {/* Slack Voltage */}
+            <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                <span className="flex items-center">
+                  Slack Voltage ($V_0$)
+                  <TooltipBadge content="Terminal voltage setpoint magnitude at the reference swing bus in per-unit." />
+                </span>
+                <span className="font-mono text-[#500b50] font-bold">{(pfVariables.slackVoltagePu || 1.05).toFixed(3)}</span>
+              </div>
+              <div className="flex items-center gap-1">
                 <input
-                  type="range"
+                  type="number"
+                  step="0.005"
                   min="0.95"
                   max="1.15"
-                  step="0.005"
                   value={pfVariables.slackVoltagePu || 1.05}
                   onChange={(e) => handleLiveParamChange('slackVoltagePu', parseFloat(e.target.value))}
-                  className="w-full accent-[#500b50] cursor-pointer"
+                  className="w-full font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded px-2.5 py-1 text-xs focus:border-[#500b50] focus:outline-none"
                 />
-                <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                  <span>0.95 pu</span>
-                  <span>1.05 pu</span>
-                  <span>1.15 pu</span>
-                </div>
+                <span className="text-slate-400 text-xs font-mono">pu</span>
               </div>
+              <span className="text-[10px] text-slate-400 font-mono block">Nominal: 1.000 pu</span>
+            </div>
 
-              {/* Shunt Compensation */}
-              <div className="space-y-1.5 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                  <span className="flex items-center">
-                    Shunt MVAR ($\Delta Q$)
-                    <TooltipBadge content="Grid reactive support. Positive values inject capacitive MVAR to lift low voltages; negative absorbs MVAR." />
-                  </span>
-                  <span className="font-mono text-[#500b50]">{pfVariables.shuntMvarCompensation || 0} MVAR</span>
-                </div>
+            {/* Shunt MVAR */}
+            <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                <span className="flex items-center">
+                  Shunt MVAR ($\Delta Q$)
+                  <TooltipBadge content="Grid reactive support. Positive injects capacitive MVAR to boost voltage; negative absorbs MVAR." />
+                </span>
+                <span className="font-mono text-[#500b50] font-bold">{pfVariables.shuntMvarCompensation || 0}</span>
+              </div>
+              <div className="flex items-center gap-1">
                 <input
-                  type="range"
-                  min="-300"
-                  max="600"
+                  type="number"
                   step="25"
                   value={pfVariables.shuntMvarCompensation || 0}
                   onChange={(e) => handleLiveParamChange('shuntMvarCompensation', parseFloat(e.target.value))}
-                  className="w-full accent-[#500b50] cursor-pointer"
+                  className="w-full font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded px-2.5 py-1 text-xs focus:border-[#500b50] focus:outline-none"
                 />
-                <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                  <span>-300 React</span>
-                  <span>0</span>
-                  <span>+600 Cap</span>
-                </div>
+                <span className="text-slate-400 text-xs font-mono">MVAR</span>
               </div>
+              <span className="text-[10px] text-slate-400 font-mono block">+Capacitor / -Reactor</span>
+            </div>
 
-              {/* Thermal Derating */}
-              <div className="space-y-1.5 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                  <span className="flex items-center">
-                    Thermal Rating
-                    <TooltipBadge content="Corridor continuous current capacity multiplier to account for ambient temperature and line sag." />
-                  </span>
-                  <span className="font-mono text-[#500b50]">{(pfVariables.thermalDeratingFactor || 1.0).toFixed(2)}x</span>
-                </div>
+            {/* Thermal Derating */}
+            <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                <span className="flex items-center">
+                  Thermal Derating
+                  <TooltipBadge content="Corridor continuous current capacity derating factor to account for ambient temperature and line sag." />
+                </span>
+                <span className="font-mono text-[#500b50] font-bold">{(pfVariables.thermalDeratingFactor || 1.0).toFixed(2)}x</span>
+              </div>
+              <div className="flex items-center gap-1">
                 <input
-                  type="range"
-                  min="0.6"
-                  max="1.2"
+                  type="number"
                   step="0.05"
+                  min="0.5"
+                  max="1.2"
                   value={pfVariables.thermalDeratingFactor || 1.0}
                   onChange={(e) => handleLiveParamChange('thermalDeratingFactor', parseFloat(e.target.value))}
-                  className="w-full accent-[#500b50] cursor-pointer"
+                  className="w-full font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded px-2.5 py-1 text-xs focus:border-[#500b50] focus:outline-none"
                 />
-                <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                  <span>0.6x (Hot)</span>
-                  <span>1.0x (Std)</span>
-                  <span>1.2x</span>
-                </div>
+                <span className="text-slate-400 text-xs font-mono">ratio</span>
               </div>
+              <span className="text-[10px] text-slate-400 font-mono block">Ambient Temperature</span>
             </div>
           </div>
 
-          {/* Telemetry Switcher & Table */}
-          <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-xs">
-            <div className="p-3 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          {/* Telemetry Tables */}
+          <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-2xs">
+            <div className="p-2.5 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
               <div className="flex rounded-lg border border-slate-200 p-0.5 bg-white font-bold">
                 <button
                   onClick={() => setDeckView('buses')}
@@ -505,7 +741,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </button>
                 <button
                   onClick={() => setDeckView('lines')}
-                  className={`px-3 py-1 rounded transition flex items-center gap-1.5 ${
+                  className={`px-3 py-1 rounded transition flex items-center gap-1 ${
                     deckView === 'lines' ? 'bg-[#500b50] text-white' : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
@@ -522,10 +758,10 @@ export const GridStabilityTab: React.FC<Props> = ({
               <div className="flex items-center gap-2">
                 <input
                   type="text"
-                  placeholder="Filter by name or zone..."
+                  placeholder="Filter bus or zone..."
                   value={busSearchQuery}
                   onChange={(e) => setBusSearchQuery(e.target.value)}
-                  className="border border-slate-300 rounded px-2.5 py-1 text-xs w-48 bg-white focus:outline-none focus:border-[#500b50]"
+                  className="border border-slate-300 rounded px-2.5 py-1 text-xs w-44 bg-white"
                 />
                 <button
                   onClick={onReset}
@@ -573,7 +809,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                           <td className="py-2 px-3 text-right font-sans">
                             {isDisabled ? (
                               <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-700">
-                                Isolated (Sandbox)
+                                Decommissioned
                               </span>
                             ) : isUnder ? (
                               <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800">
@@ -652,245 +888,131 @@ export const GridStabilityTab: React.FC<Props> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 2. CHOOSE & MANAGE MODELS                                                 */}
+      {/* WORKSPACE SUBTAB 2: LOAD SHARING (Branches and Generators)                */}
       {/* ========================================================================= */}
-      {activeTab === 'models' && (
+      {workspaceTab === 'load_sharing' && (
         <div className="space-y-4">
-          <div className="p-3 bg-white border border-slate-200 rounded-xl flex items-center justify-between gap-3 text-xs">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search registered model..."
-                value={modelSearchQuery}
-                onChange={(e) => setModelSearchQuery(e.target.value)}
-                className="pl-8 pr-3 py-1.5 border border-slate-300 rounded-lg w-full text-xs"
-              />
-            </div>
-            {onRefreshModels && (
-              <button
-                onClick={() => onRefreshModels()}
-                disabled={modelsLoading}
-                className="flex items-center gap-1 text-slate-600 hover:text-slate-900 font-semibold"
-              >
-                <RefreshCw className={`h-3.5 w-3.5 ${modelsLoading ? 'animate-spin' : ''}`} />
-                <span>Refresh Registry</span>
-              </button>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {filteredModels.map((m) => {
-              const isActive = m.is_active || m.name === currentDisplayName;
-
-              return (
-                <div
-                  key={m.id}
-                  className={`p-4 rounded-xl border bg-white shadow-2xs flex flex-col justify-between transition ${
-                    isActive ? 'border-emerald-600 ring-2 ring-emerald-500/20' : 'border-slate-200 hover:border-slate-300'
-                  }`}
+          <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center">
+                Demand Surge Step ($\Delta P$)
+                <TooltipBadge content="System-wide sudden active power disturbance testing decentralized governor droop pickup." />
+              </span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  step="25"
+                  min="25"
+                  max="2000"
+                  value={loadStepMw}
+                  onChange={(e) => setLoadStepMw(parseFloat(e.target.value) || 300)}
+                  className="font-mono font-bold text-xs border border-slate-300 rounded px-2.5 py-1 w-28 bg-white"
+                />
+                <span className="text-xs font-mono font-bold text-slate-500">MW</span>
+                <button
+                  onClick={runLoadSharingCalculation}
+                  disabled={loadSharingLoading}
+                  className="ml-2 px-3 py-1 rounded bg-[#500b50] text-white text-xs font-bold flex items-center gap-1"
                 >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-50 text-[#500b50] border border-purple-200">
-                        {m.voltage_level}
-                      </span>
-                      {isActive && (
-                        <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                          <Check className="h-3 w-3" />
-                          <span>Active in Memory</span>
-                        </span>
-                      )}
-                    </div>
-                    <h3 className="font-bold text-sm text-slate-900">{m.name}</h3>
-                    <p className="text-xs text-slate-500 font-mono mt-1">
-                      {m.buses} Substations • {m.branches} Corridors • {m.total_installed_mw.toLocaleString()} MW
-                    </p>
-                  </div>
-
-                  <button
-                    onClick={() => handleActivate(m.id)}
-                    disabled={activatingId !== null}
-                    className={`mt-4 py-2 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
-                      isActive ? 'bg-emerald-700 text-white hover:bg-emerald-800' : 'bg-[#500b50] text-white hover:bg-[#680f68]'
-                    }`}
-                  >
-                    {activatingId === m.id ? (
-                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Zap className="h-3.5 w-3.5 text-amber-300" />
-                    )}
-                    <span>{isActive ? 'Active Case' : 'Activate & Solve Case'}</span>
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* 3. DYNAMIC LOAD SHARING                                                   */}
-      {/* ========================================================================= */}
-      {activeTab === 'load_sharing' && (
-        <div className="space-y-4">
-          {/* Sub-toggle: Parallel Corridors vs Generator Governor Droop */}
-          <div className="flex rounded-lg border border-slate-200 bg-white p-1 text-xs font-bold w-fit shadow-2xs">
-            <button
-              onClick={() => setLoadSharingMode('branches')}
-              className={`px-3 py-1.5 rounded transition ${
-                loadSharingMode === 'branches' ? 'bg-[#500b50] text-white' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Parallel Branch Impedance Division ($P_1/P_2 = X_2/X_1$)
-            </button>
-              <button
-                onClick={() => setLoadSharingMode('generators')}
-                className={`px-3 py-1.5 rounded transition ${
-                  loadSharingMode === 'generators' ? 'bg-[#500b50] text-white' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Generator Droop Dispatch Pickup (P–f)
-              </button>
-          </div>
-
-          {loadSharingMode === 'branches' ? (
-            <div className="space-y-4">
-              <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/60 text-xs text-blue-900 flex items-start gap-2.5">
-                <Info className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-bold">What is Parallel Branch Load Sharing?</p>
-                  <p className="mt-0.5 text-blue-800 leading-relaxed">
-                    When two or more transmission lines or transformers connect the same two substations, power naturally splits <strong>inversely proportional to line reactance</strong> ($P \propto 1/X$). If one line has lower impedance, it pulls more current and overloads before the parallel line reaches full rating.
-                  </p>
-                </div>
+                  {loadSharingLoading ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Activity className="h-3 w-3" />}
+                  <span>Solve Pickup</span>
+                </button>
               </div>
-
-              {loadSharingResult?.parallel_corridors && loadSharingResult.parallel_corridors.length > 0 ? (
-                <div className="grid grid-cols-1 gap-3">
-                  {loadSharingResult.parallel_corridors.map((corr: any, idx: number) => (
-                    <div key={idx} className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
-                      <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                        <span className="font-bold text-xs text-slate-900 flex items-center gap-2">
-                          <GitBranch className="h-4 w-4 text-[#500b50]" />
-                          <span>{corr.corridor}</span>
-                        </span>
-                        <span className="text-[10px] font-mono font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-                          {corr.circuits_count} Parallel Circuits
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {corr.circuits.map((circ: any) => (
-                          <div key={circ.line_id} className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-1.5 text-xs font-mono">
-                            <div className="flex justify-between font-sans font-bold">
-                              <span>{circ.name}</span>
-                              <span className="text-[#500b50] font-mono">{circ.theoretical_share_percent}% Share</span>
-                            </div>
-                            <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
-                              <div
-                                className="bg-[#500b50] h-full rounded-full"
-                                style={{ width: `${circ.theoretical_share_percent}%` }}
-                              />
-                            </div>
-                            <div className="flex justify-between text-[11px] text-slate-500">
-                              <span>Reactance: {circ.reactance_ohm} Ω</span>
-                              <span>Ratio: $1/X$</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="p-8 text-center text-xs text-slate-400 bg-white rounded-xl border border-slate-200">
-                  No multiple parallel circuit corridors detected in this active model.
-                </div>
-              )}
             </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center">
-                    Frequency Disturbance Demand Step
-                    <TooltipBadge content="Sudden load surge applied to synchronous generators to test decentralized droop pickup." />
-                  </span>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="range"
-                      min="50"
-                      max="1200"
-                      step="25"
-                      value={loadStepMw}
-                      onChange={(e) => setLoadStepMw(parseFloat(e.target.value))}
-                      className="accent-[#500b50] cursor-pointer w-48"
-                    />
-                    <span className="font-mono font-bold text-xs text-[#500b50]">+{loadStepMw} MW</span>
-                  </div>
-                </div>
 
-                <div className="flex items-center gap-4 text-xs font-mono">
-                  <div>
-                    <span className="text-slate-400 block text-[10px]">Settling Freq</span>
-                    <span className="font-bold text-slate-900">{loadSharingResult?.settling_frequency_hz || 50.0} Hz</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block text-[10px]">Stiffness</span>
-                    <span className="font-bold text-slate-900">{loadSharingResult?.system_stiffness_mw_per_hz || 0} MW/Hz</span>
-                  </div>
-                </div>
+            <div className="flex items-center gap-4 text-xs font-mono">
+              <div>
+                <span className="text-slate-400 block text-[10px]">Settling Freq</span>
+                <span className="font-bold text-slate-900">{loadSharingResult?.settling_frequency_hz || 50.0} Hz</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px]">System Stiffness</span>
+                <span className="font-bold text-slate-900">{loadSharingResult?.system_stiffness_mw_per_hz || 0} MW/Hz</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Parallel Circuits Impedance Division */}
+          {loadSharingResult?.parallel_corridors && loadSharingResult.parallel_corridors.length > 0 && (
+            <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                <span className="font-bold text-xs text-slate-900 flex items-center gap-2">
+                  <GitBranch className="h-4 w-4 text-[#500b50]" />
+                  <span>Parallel Branch Impedance Flow Division ($P_1/P_2 = X_2/X_1$)</span>
+                </span>
+                <span className="text-[10px] text-slate-500">
+                  Natural branch split inverse to line series reactance
+                </span>
               </div>
 
-              {/* Generator Allocation Table */}
-              <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-2xs">
-                <table className="w-full text-left text-xs min-w-[650px]">
-                  <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-bold uppercase text-[10px]">
-                    <tr>
-                      <th className="py-2.5 px-3">Station</th>
-                      <th className="py-2.5 px-3">Rated Capacity</th>
-                      <th className="py-2.5 px-3">Droop ($R$)</th>
-                      <th className="py-2.5 px-3">Participation</th>
-                      <th className="py-2.5 px-3">Assigned $\Delta P$</th>
-                      <th className="py-2.5 px-3 text-right">Headroom</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 font-mono">
-                    {(loadSharingResult?.allocations || []).map((gen: any) => (
-                      <tr key={gen.id} className="hover:bg-slate-50">
-                        <td className="py-2 px-3 font-sans font-bold text-slate-900">{gen.name}</td>
-                        <td className="py-2 px-3">{gen.rated_mw} MW</td>
-                        <td className="py-2 px-3">{gen.droop_percent}%</td>
-                        <td className="py-2 px-3 font-bold text-[#500b50]">{gen.participation_factor_percent}%</td>
-                        <td className="py-2 px-3 font-bold text-emerald-700">+{gen.allocated_delta_mw} MW</td>
-                        <td className="py-2 px-3 text-right">+{gen.remaining_headroom_mw} MW</td>
-                      </tr>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {loadSharingResult.parallel_corridors.map((corr: any, idx: number) => (
+                  <div key={idx} className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-2 text-xs font-mono">
+                    <div className="flex justify-between font-sans font-bold text-slate-900">
+                      <span>{corr.corridor}</span>
+                      <span className="text-[#500b50]">{corr.circuits_count} Circuits</span>
+                    </div>
+                    {corr.circuits.map((circ: any) => (
+                      <div key={circ.line_id} className="flex justify-between items-center text-[11px] text-slate-600">
+                        <span>{circ.name}</span>
+                        <span>{circ.reactance_ohm} Ω ({circ.theoretical_share_percent}%)</span>
+                      </div>
                     ))}
-                  </tbody>
-                </table>
+                  </div>
+                ))}
               </div>
             </div>
           )}
+
+          {/* Generator Allocation Table */}
+          <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-2xs">
+            <div className="p-2.5 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-700">
+              Synchronous Governor Droop Allocation Table
+            </div>
+            <table className="w-full text-left text-xs min-w-[650px]">
+              <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-bold uppercase text-[10px]">
+                <tr>
+                  <th className="py-2.5 px-3">Station</th>
+                  <th className="py-2.5 px-3">Capacity</th>
+                  <th className="py-2.5 px-3">Droop ($R$)</th>
+                  <th className="py-2.5 px-3">Participation</th>
+                  <th className="py-2.5 px-3">Assigned Pickup</th>
+                  <th className="py-2.5 px-3 text-right">Headroom</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 font-mono">
+                {(loadSharingResult?.allocations || []).map((gen: any) => (
+                  <tr key={gen.id} className="hover:bg-slate-50">
+                    <td className="py-2 px-3 font-sans font-bold text-slate-900">{gen.name}</td>
+                    <td className="py-2 px-3">{gen.rated_mw} MW</td>
+                    <td className="py-2 px-3">{gen.droop_percent}%</td>
+                    <td className="py-2 px-3 font-bold text-[#500b50]">{gen.participation_factor_percent}%</td>
+                    <td className="py-2 px-3 font-bold text-emerald-700">+{gen.allocated_delta_mw} MW</td>
+                    <td className="py-2 px-3 text-right">+{gen.remaining_headroom_mw} MW</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
       {/* ========================================================================= */}
-      {/* 4. CASCADING FAILURE                                                      */}
+      {/* WORKSPACE SUBTAB 3: CASCADING FAILURE (No Sliders, Rich Forensics)        */}
       {/* ========================================================================= */}
-      {activeTab === 'cascade' && (
+      {workspaceTab === 'cascade' && (
         <div className="space-y-4">
-          <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center">
                   Initiating Contingency Branch
-                  <TooltipBadge content="Select the primary transmission line that trips first to observe redistribution overloads." />
+                  <TooltipBadge content="Select the primary line circuit breaker to trip open first." />
                 </label>
                 <select
                   value={initialTripLine}
                   onChange={(e) => setInitialTripLine(Number(e.target.value))}
-                  className="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs bg-white font-semibold"
+                  className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs bg-white font-semibold"
                 >
                   {lines.map((l) => (
                     <option key={l.id} value={l.id}>
@@ -900,28 +1022,34 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </select>
               </div>
 
-              {/* Slider for Relay Threshold */}
-              <div className="space-y-1.5">
-                <div className="flex justify-between items-center text-xs font-bold text-slate-700">
-                  <span className="flex items-center">
-                    Overcurrent Trip Threshold
-                    <TooltipBadge content="Percentage of rated continuous line current before protective relays trigger and open the circuit breaker." />
-                  </span>
-                  <span className="font-mono text-rose-700">{cascadeThreshold}% of Rating</span>
+              {/* Number Input (NO SLIDER) */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center">
+                  Overcurrent Relay Threshold (%)
+                  <TooltipBadge content="Percentage of rated continuous line current before thermal protection trips the circuit breaker open." />
+                </label>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min="80"
+                    max="160"
+                    step="5"
+                    value={cascadeThreshold}
+                    onChange={(e) => setCascadeThreshold(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono font-bold bg-white"
+                  />
+                  <span className="font-mono text-xs font-bold text-slate-500">%</span>
                 </div>
-                <input
-                  type="range"
-                  min="85"
-                  max="140"
-                  step="5"
-                  value={cascadeThreshold}
-                  onChange={(e) => setCascadeThreshold(Number(e.target.value))}
-                  className="w-full accent-rose-600 cursor-pointer"
-                />
-                <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                  <span>85% Alert</span>
-                  <span>100% Continuous</span>
-                  <span>140% Instantaneous</span>
+                <div className="flex gap-1 pt-1">
+                  {[95, 100, 115, 130].map((val) => (
+                    <button
+                      key={val}
+                      onClick={() => setCascadeThreshold(val)}
+                      className="flex-1 py-0.5 text-[10px] font-mono font-bold rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
+                    >
+                      {val}%
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -937,7 +1065,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                     }
                   }}
                   disabled={cascadeLoading || lines.length === 0}
-                  className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white py-2 text-xs font-bold transition shadow-xs disabled:opacity-50"
+                  className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white py-2 text-xs font-bold transition disabled:opacity-50"
                 >
                   {cascadeLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Activity className="h-3.5 w-3.5" />}
                   <span>Run Sequence</span>
@@ -946,7 +1074,7 @@ export const GridStabilityTab: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Forensic Result Breakdown */}
+          {/* Forensics Diagnostic Breakdown */}
           {cascadeResult && (
             <div className="p-4 rounded-xl border border-rose-200 bg-rose-50/50 space-y-3 text-xs">
               <div className="flex items-center justify-between">
@@ -960,67 +1088,83 @@ export const GridStabilityTab: React.FC<Props> = ({
                   onClick={() => onApplyCascadeTrips(cascadeResult.all_tripped_lines || [])}
                   className="px-3 py-1 rounded bg-[#500b50] text-white font-bold text-xs"
                 >
-                  View Islanding on CAD
+                  View Outages on CAD
                 </button>
               </div>
 
-              <p className="text-slate-600 leading-relaxed">
-                The initiating trip on Circuit #{initialTripLine} redirected power across adjacent corridors. Within{' '}
-                <strong>{cascadeResult.total_steps} sequence stages</strong>, a total of{' '}
-                <strong className="text-rose-700 font-mono">{cascadeResult.all_tripped_lines?.length || 0} transmission lines</strong> breached the{' '}
-                {cascadeThreshold}% thermal threshold and were tripped by overcurrent protection.
+              <p className="text-slate-700 leading-relaxed">
+                <strong>Forensic Sequence Summary:</strong> Initiating outage on circuit #{initialTripLine} triggered immediate flow redistribution. In total,{' '}
+                <strong className="text-rose-700 font-mono font-bold">{cascadeResult.all_tripped_lines?.length || 0} transmission circuits</strong> exceeded the {cascadeThreshold}% threshold and were isolated across{' '}
+                <strong>{cascadeResult.total_steps} chronological stages</strong>.
               </p>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono pt-1">
-                <div className="bg-white p-2.5 rounded-lg border border-rose-200">
-                  <span className="text-[10px] text-slate-400 block font-sans">Cascade Stages</span>
-                  <span className="text-base font-bold text-slate-900">{cascadeResult.total_steps}</span>
+              {/* Step Timeline */}
+              {cascadeResult.timeline && cascadeResult.timeline.length > 0 && (
+                <div className="rounded-lg border border-rose-200 bg-white overflow-hidden">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-bold uppercase text-[10px]">
+                      <tr>
+                        <th className="py-2 px-3">Stage</th>
+                        <th className="py-2 px-3">Diagnostic Event</th>
+                        <th className="py-2 px-3">Isolated Branches</th>
+                        <th className="py-2 px-3 text-right">Max Thermal Loading</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-mono">
+                      {cascadeResult.timeline.map((stepItem: any, sIdx: number) => (
+                        <tr key={sIdx} className="hover:bg-slate-50">
+                          <td className="py-1.5 px-3 font-bold text-slate-400">Step {stepItem.step}</td>
+                          <td className="py-1.5 px-3 font-sans text-slate-800">{stepItem.description}</td>
+                          <td className="py-1.5 px-3 text-rose-700">
+                            {stepItem.tripped_in_this_step?.length > 0
+                              ? stepItem.tripped_in_this_step.map((id: number) => `#${id}`).join(', ')
+                              : 'None (System Settled)'}
+                          </td>
+                          <td className="py-1.5 px-3 text-right font-bold">
+                            {(stepItem.max_loading_percent || 0).toFixed(1)}%
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                <div className="bg-white p-2.5 rounded-lg border border-rose-200">
-                  <span className="text-[10px] text-slate-400 block font-sans">Total Tripped Branches</span>
-                  <span className="text-base font-bold text-rose-700">{cascadeResult.all_tripped_lines?.length || 0}</span>
-                </div>
-                <div className="bg-white p-2.5 rounded-lg border border-rose-200">
-                  <span className="text-[10px] text-slate-400 block font-sans">Recommended Mitigation</span>
-                  <span className="text-xs font-bold text-slate-800 font-sans">Shed load along parallel ties</span>
-                </div>
-              </div>
+              )}
             </div>
           )}
         </div>
       )}
 
       {/* ========================================================================= */}
-      {/* 5. REGIONAL PLANNING (Integrated Interconnection & Node Deletion Sandbox) */}
+      {/* WORKSPACE SUBTAB 4: REGIONAL PLANNING (All 4 Features + Sandbox Isolation)*/}
       {/* ========================================================================= */}
-      {activeTab === 'planning' && (
+      {workspaceTab === 'planning' && (
         <div className="space-y-4">
           <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Info className="h-4 w-4 text-blue-600 shrink-0" />
               <span>
-                <strong>Local In-Memory Sandbox:</strong> Modifications here only affect temporary simulation memory. The original grid model file in Supabase is never altered.
+                <strong>In-Memory Sandbox Guarantee:</strong> All additions and isolations here test network expansion in memory. The original `.m` base file in Supabase is never altered.
               </span>
             </div>
-            {totalModifications > 0 && (
+            {totalSandboxModifications > 0 && (
               <button
                 onClick={onReset}
                 className="px-2.5 py-1 rounded bg-white border border-blue-300 text-blue-800 font-bold hover:bg-blue-100 shrink-0 ml-2"
               >
-                Clear Sandbox Changes
+                Clear Sandbox
               </button>
             )}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Propose Substation WITH Integrated Interconnection */}
-            <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-3">
-              <h3 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-100">
+            {/* Tool 1: Propose Substation WITH Required Interconnection */}
+            <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
+              <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-100">
                 <Plus className="h-4 w-4 text-[#500b50]" />
-                <span>Propose Substation &amp; Interconnection Tie</span>
-              </h3>
+                <span>1. Propose Substation &amp; Interconnection</span>
+              </h4>
 
-              <div className="grid grid-cols-2 gap-3 text-xs">
+              <div className="grid grid-cols-2 gap-2 text-xs">
                 <div>
                   <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
                     Substation Name
@@ -1029,20 +1173,20 @@ export const GridStabilityTab: React.FC<Props> = ({
                   <input
                     type="text"
                     placeholder="e.g. KUBWA 330"
-                    value={newSubstationName}
-                    onChange={(e) => setNewSubstationName(e.target.value)}
+                    value={newSubName}
+                    onChange={(e) => setNewSubName(e.target.value)}
                     className="w-full border border-slate-300 rounded px-2.5 py-1.5"
                   />
                 </div>
 
                 <div>
                   <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
-                    Connect From Existing Node
-                    <TooltipBadge content="Select the existing substation this new facility connects into via an overhead transmission line." />
+                    Connect From Node
+                    <TooltipBadge content="Select which existing substation this proposed node connects to." />
                   </label>
                   <select
-                    value={connectToBusId}
-                    onChange={(e) => setConnectToBusId(Number(e.target.value))}
+                    value={connectToExistingBus}
+                    onChange={(e) => setConnectToExistingBus(Number(e.target.value))}
                     className="w-full border border-slate-300 rounded px-2.5 py-1.5 bg-white font-semibold"
                   >
                     {buses.map((b) => (
@@ -1054,15 +1198,15 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3 text-xs">
+              <div className="grid grid-cols-3 gap-2 text-xs">
                 <div>
                   <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
                     Voltage
-                    <TooltipBadge content="Operating nominal bus voltage class." />
+                    <TooltipBadge content="Operating bus voltage class." />
                   </label>
                   <select
-                    value={newSubstationKv}
-                    onChange={(e) => setNewSubstationKv(Number(e.target.value))}
+                    value={newSubKv}
+                    onChange={(e) => setNewSubKv(Number(e.target.value))}
                     className="w-full border border-slate-300 rounded px-2 py-1.5 bg-white"
                   >
                     <option value={330}>330 kV Bulk</option>
@@ -1072,14 +1216,14 @@ export const GridStabilityTab: React.FC<Props> = ({
 
                 <div>
                   <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
-                    Tie Length (km)
+                    Length (km)
                     <TooltipBadge content="Overhead transmission line distance to the connection node." />
                   </label>
                   <input
                     type="number"
                     min="1"
-                    value={tieLineLength}
-                    onChange={(e) => setTieLineLength(Number(e.target.value))}
+                    value={tieLengthKm}
+                    onChange={(e) => setTieLengthKm(Number(e.target.value))}
                     className="w-full border border-slate-300 rounded px-2 py-1.5 font-mono"
                   />
                 </div>
@@ -1092,8 +1236,8 @@ export const GridStabilityTab: React.FC<Props> = ({
                   <input
                     type="number"
                     min="0"
-                    value={newSubstationDemand}
-                    onChange={(e) => setNewSubstationDemand(Number(e.target.value))}
+                    value={newSubDemand}
+                    onChange={(e) => setNewSubDemand(Number(e.target.value))}
                     className="w-full border border-slate-300 rounded px-2 py-1.5 font-mono"
                   />
                 </div>
@@ -1103,25 +1247,199 @@ export const GridStabilityTab: React.FC<Props> = ({
                 onClick={handleAddProposedSubstation}
                 className="w-full py-2 rounded-lg bg-[#500b50] hover:bg-[#680f68] text-white font-bold text-xs transition"
               >
-                + Incorporate Substation &amp; Auto-Re-Solve
+                + Add Substation &amp; Interconnection
               </button>
             </div>
 
-            {/* Sandbox Decommissioning / Deletion Tool */}
-            <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-3">
-              <h3 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-100">
+            {/* Tool 2: Connect Standalone Transmission Line */}
+            <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
+              <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-100">
+                <Plus className="h-4 w-4 text-[#500b50]" />
+                <span>2. Connect Independent Line Corridor</span>
+              </h4>
+
+              <div className="text-xs">
+                <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                  Corridor Name
+                  <TooltipBadge content="Identifier for the overhead transmission line." />
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. MAKURDI - WUKARI"
+                  value={newLineName}
+                  onChange={(e) => setNewLineName(e.target.value)}
+                  className="w-full border border-slate-300 rounded px-2.5 py-1.5"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    From Bus
+                    <TooltipBadge content="Originating substation node." />
+                  </label>
+                  <select
+                    value={newLineFrom}
+                    onChange={(e) => setNewLineFrom(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2 py-1.5 bg-white font-semibold"
+                  >
+                    {buses.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        #{b.id}: {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    To Bus
+                    <TooltipBadge content="Terminating substation node." />
+                  </label>
+                  <select
+                    value={newLineTo}
+                    onChange={(e) => setNewLineTo(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2 py-1.5 bg-white font-semibold"
+                  >
+                    {buses.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        #{b.id}: {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    Length (km)
+                    <TooltipBadge content="Corridor distance in kilometers." />
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={newLineLength}
+                    onChange={(e) => setNewLineLength(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2 py-1.5 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    Conductor
+                    <TooltipBadge content="Electrical conductor type determining reactance and rating." />
+                  </label>
+                  <select
+                    value={newLineConductor}
+                    onChange={(e) => setNewLineConductor(e.target.value)}
+                    className="w-full border border-slate-300 rounded px-2 py-1.5 bg-white font-semibold"
+                  >
+                    <option value="Bison 330kV">Bison 330kV</option>
+                    <option value="Bear 330kV">Bear 330kV</option>
+                    <option value="Panther 132kV">Panther 132kV</option>
+                  </select>
+                </div>
+              </div>
+
+              <button
+                onClick={handleAddLine}
+                className="w-full py-2 rounded-lg bg-[#500b50] hover:bg-[#680f68] text-white font-bold text-xs transition"
+              >
+                + Connect Line Corridor
+              </button>
+            </div>
+
+            {/* Tool 3: Propose Power Plant */}
+            <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
+              <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-100">
+                <Plus className="h-4 w-4 text-[#500b50]" />
+                <span>3. Propose Power Generation Plant</span>
+              </h4>
+
+              <div className="text-xs">
+                <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                  Plant Identifier
+                  <TooltipBadge content="Power station generation facility name." />
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Kano Solar IPP"
+                  value={newGenName}
+                  onChange={(e) => setNewGenName(e.target.value)}
+                  className="w-full border border-slate-300 rounded px-2.5 py-1.5"
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    Interconnection Node
+                    <TooltipBadge content="Substation busbar where power injects." />
+                  </label>
+                  <select
+                    value={newGenBus}
+                    onChange={(e) => setNewGenBus(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2 py-1.5 bg-white font-semibold"
+                  >
+                    {buses.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        #{b.id}: {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    Output (MW)
+                    <TooltipBadge content="Active generating capability in MW." />
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={newGenP}
+                    onChange={(e) => setNewGenP(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2 py-1.5 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    Target (pu)
+                    <TooltipBadge content="Terminal generator excitation voltage target." />
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.95"
+                    max="1.10"
+                    value={newGenVm}
+                    onChange={(e) => setNewGenVm(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2 py-1.5 font-mono"
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={handleAddGen}
+                className="w-full py-2 rounded-lg bg-[#500b50] hover:bg-[#680f68] text-white font-bold text-xs transition"
+              >
+                + Incorporate Generation Plant
+              </button>
+            </div>
+
+            {/* Tool 4: Sandbox Node Deletion / Decommissioning */}
+            <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
+              <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-100">
                 <Trash2 className="h-4 w-4 text-rose-600" />
-                <span>Temporary Node Decommissioning Sandbox</span>
-              </h3>
+                <span>4. Decommission / Delete Node (Sandbox)</span>
+              </h4>
 
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Select any substation to isolate or decommission from active memory to evaluate contingency survival.
-              </p>
-
-              <div className="space-y-2 text-xs">
+              <div className="text-xs space-y-2">
                 <label className="block text-[11px] font-bold text-slate-600 flex items-center">
                   Select Substation to Isolate
-                  <TooltipBadge content="Isolating a substation opens all incident line circuit breakers to test network resilience." />
+                  <TooltipBadge content="Temporarily isolate a node and its incident branches to test contingency survival." />
                 </label>
                 <div className="flex gap-2">
                   <select
@@ -1131,7 +1449,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                   >
                     {buses.map((b) => (
                       <option key={b.id} value={b.id}>
-                        #{b.id}: {b.name} ({b.zone || 'Grid'})
+                        #{b.id}: {b.name}
                       </option>
                     ))}
                   </select>
@@ -1145,9 +1463,9 @@ export const GridStabilityTab: React.FC<Props> = ({
               </div>
 
               {pfVariables.disabledBuses && pfVariables.disabledBuses.length > 0 && (
-                <div className="pt-2">
+                <div className="pt-1">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
-                    Currently Isolated Nodes ({pfVariables.disabledBuses.length})
+                    Currently Decommissioned Nodes ({pfVariables.disabledBuses.length})
                   </span>
                   <div className="flex flex-wrap gap-1">
                     {pfVariables.disabledBuses.map((bId) => {

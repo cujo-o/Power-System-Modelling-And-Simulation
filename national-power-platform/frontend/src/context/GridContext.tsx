@@ -99,6 +99,7 @@ function normalizeRawModel(m: any): GridModelMeta {
     total_demand_mw: Number(m?.total_demand_mw ?? m?.demand_mw ?? 0),
     domain: String(domain),
     is_active: Boolean(m?.is_active),
+    // ensure required fields on GridModelMeta
     converged: Boolean(m?.converged ?? true),
     is_default: Boolean(m?.is_default ?? false),
   };
@@ -150,7 +151,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           retrieved = data.map(normalizeRawModel);
         }
       } catch (err) {
-        console.warn('Supabase fetch notice:', err);
+        console.warn('Supabase grid_models query error:', err);
       }
     }
 
@@ -180,7 +181,9 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         retrieved.find((m) => m.is_active) ||
         retrieved[0];
 
-      if (matched) setActiveModel(matched);
+      if (matched) {
+        setActiveModel(matched);
+      }
     } else {
       setActiveModel(null);
     }
@@ -203,7 +206,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const varsToRun = isRealPfVar ? customVars : pfVariables;
       let tripsToRun = Array.isArray(customTrips) ? customTrips : trippedLines;
 
-      // Automatically trip all lines incident to decommissioned sandbox buses
+      // Automatically isolate all branches connected to decommissioned sandbox buses
       if (varsToRun?.disabledBuses && varsToRun.disabledBuses.length > 0) {
         const busSet = new Set(varsToRun.disabledBuses);
         const incidentLines = lines
@@ -247,7 +250,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           });
 
           if (!data.converged || data.message) {
-            setDivergedNotice(data.message || 'Continuation power flow approximation in service.');
+            setDivergedNotice(data.message || 'Continuation flow solution active.');
           }
         }
       } catch (err: any) {
@@ -289,37 +292,56 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
 
       let inMemory = false;
+
       try {
-        const resName = await apiFetch(`/api/models/activate/${encodeURIComponent(modelName)}`, { method: 'POST' });
+        const resName = await apiFetch(`/api/models/activate/${encodeURIComponent(modelName)}`, {
+          method: 'POST',
+        });
         if (resName && resName.ok) inMemory = true;
       } catch {}
 
       if (!inMemory) {
         try {
-          const resId = await apiFetch(`/api/models/activate/${encodeURIComponent(modelIdentifier)}`, { method: 'POST' });
+          const resId = await apiFetch(`/api/models/activate/${encodeURIComponent(modelIdentifier)}`, {
+            method: 'POST',
+          });
           if (resId && resId.ok) inMemory = true;
         } catch {}
       }
 
-      // Re-hydrate from Supabase Storage bucket if backend restarted
+      // Re-hydrate from Supabase Storage if backend memory was cleared
       if (!inMemory && supabase) {
-        try {
-          let fileBlob: Blob | null = null;
-          const { data: d1 } = await supabase.storage.from('models').download(modelName);
-          if (d1) fileBlob = d1;
-          else {
-            const { data: d2 } = await supabase.storage.from('models').download(`${modelIdentifier}.m`);
-            if (d2) fileBlob = d2;
-          }
+        const candidateBuckets = ['models', 'grid_models', 'grid-models', 'model_files'];
+        let fileBlob: Blob | null = null;
+        for (const bucket of candidateBuckets) {
+          try {
+            const { data: d1 } = await supabase.storage.from(bucket).download(modelName);
+            if (d1) {
+              fileBlob = d1;
+              break;
+            }
+            const { data: d2 } = await supabase.storage.from(bucket).download(`${modelIdentifier}.m`);
+            if (d2) {
+              fileBlob = d2;
+              break;
+            }
+          } catch {}
+        }
 
-          if (fileBlob) {
+        if (fileBlob) {
+          try {
             const formData = new FormData();
             formData.append('file', fileBlob, modelName.endsWith('.m') ? modelName : `${modelName}.m`);
-            const uploadRes = await apiFetch('/api/models/upload', { method: 'POST', body: formData });
-            if (uploadRes && uploadRes.ok) inMemory = true;
+            const uploadRes = await apiFetch('/api/models/upload', {
+              method: 'POST',
+              body: formData,
+            });
+            if (uploadRes && uploadRes.ok) {
+              inMemory = true;
+            }
+          } catch (e) {
+            console.warn('Storage hydration error:', e);
           }
-        } catch (e) {
-          console.warn('Storage hydration notice:', e);
         }
       }
 
@@ -342,7 +364,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     [runSimulation]
   );
 
-  // In-memory bus decommissioning (Sandbox only: leaves base case in database unchanged)
+  // In-memory node isolation (sandbox only; base Supabase file remains intact)
   const toggleBusService = useCallback(
     (busId: number) => {
       setPfVariables((prev) => {
@@ -366,8 +388,8 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const resetPfVariables = useCallback(() => {
     setPfVariables(DEFAULT_VARIABLES);
-    runSimulation(DEFAULT_VARIABLES, []);
-  }, [runSimulation]);
+    runSimulation(DEFAULT_VARIABLES, trippedLines);
+  }, [runSimulation, trippedLines]);
 
   const triggerCascade = useCallback(
     async (initialTripped: number[], threshold: number): Promise<CascadeResult> => {
