@@ -26,12 +26,10 @@ import {
   Zap,
   Power,
   Activity,
-  Info,
   Trash2,
   Edit2,
   Lock,
   UploadCloud,
-  Layers,
 } from 'lucide-react';
 
 interface Props {
@@ -135,7 +133,6 @@ export const GridStabilityTab: React.FC<Props> = ({
 }) => {
   const activeModel = models.find((m) => m.is_active);
 
-  // Sub-tabs: 'models' | 'deck' | 'load_sharing' | 'cascade' | 'planning'
   const [activeTab, setActiveTab] = useState<'models' | 'deck' | 'load_sharing' | 'cascade' | 'planning'>(
     buses.length > 0 ? 'deck' : 'models'
   );
@@ -180,7 +177,6 @@ export const GridStabilityTab: React.FC<Props> = ({
   const [newGenP, setNewGenP] = useState(150);
   const [newGenVm, setNewGenVm] = useState(1.03);
 
-  // Sync initial dropdown values
   useEffect(() => {
     if (lines.length > 0 && (!initialTripLine || !lines.some((l) => l.id === initialTripLine))) {
       setInitialTripLine(lines[0].id);
@@ -195,7 +191,6 @@ export const GridStabilityTab: React.FC<Props> = ({
     }
   }, [buses, newLineFrom, newLineTo, newGenBus]);
 
-  // Load Sharing Calculation
   const runLoadSharingCalculation = async () => {
     setLoadSharingLoading(true);
     try {
@@ -213,7 +208,7 @@ export const GridStabilityTab: React.FC<Props> = ({
         setLoadSharingResult(data);
       }
     } catch (err) {
-      console.error('Failed to compute load sharing:', err);
+      console.error('Failed to compute dynamic load sharing:', err);
     } finally {
       setLoadSharingLoading(false);
     }
@@ -260,39 +255,6 @@ export const GridStabilityTab: React.FC<Props> = ({
         (b.zone || '').toLowerCase().includes(query)
     );
   }, [buses, busSearchQuery]);
-
-  const voltageStats = useMemo(() => {
-    if (buses.length === 0) return { min: 1.0, max: 1.0, avg: 1.0, compliantPercent: 100, minBus: '', maxBus: '' };
-    let min = Infinity;
-    let max = -Infinity;
-    let sum = 0;
-    let compliantCount = 0;
-    let minBus = '';
-    let maxBus = '';
-
-    buses.forEach((b) => {
-      const v = b.v_pu ?? 1.0;
-      sum += v;
-      if (v < min) {
-        min = v;
-        minBus = b.name;
-      }
-      if (v > max) {
-        max = v;
-        maxBus = b.name;
-      }
-      if (v >= 0.95 && v <= 1.05) compliantCount++;
-    });
-
-    return {
-      min: Number(min.toFixed(3)),
-      max: Number(max.toFixed(3)),
-      avg: Number((sum / buses.length).toFixed(3)),
-      compliantPercent: Number(((compliantCount / buses.length) * 100).toFixed(1)),
-      minBus,
-      maxBus,
-    };
-  }, [buses]);
 
   const handleActivate = async (id: string) => {
     setActivatingId(id);
@@ -348,15 +310,14 @@ export const GridStabilityTab: React.FC<Props> = ({
     setTimeout(() => runSimulation(), 60);
   };
 
+  const currentDisplayName = activeModel?.name || modelName || 'Active Grid Model';
   const totalExtensionsCount =
     pfVariables.newBuses.length + pfVariables.newLines.length + pfVariables.newGenerators.length;
-
-  const currentDisplayName = activeModel?.name || modelName || 'Active Grid Model';
-  const PALETTE = ['#0284c7', '#059669', '#d97706', '#7c3aed', '#dc2626', '#ea580c', '#0d9488', '#2563eb', '#9333ea', '#16a34a'];
+  const PALETTE = ['#0284c7', '#059669', '#d97706', '#7c3aed', '#dc2626', '#ea580c', '#0d9488', '#2563eb'];
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto py-1">
-      {/* Platform Sub-tabs Navigation */}
+      {/* Studio Header & Navigation Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 gap-3">
         <div>
           <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
@@ -367,72 +328,6 @@ export const GridStabilityTab: React.FC<Props> = ({
           </p>
         </div>
 
-        // Around lines 360-405 in GridStabilityTab.tsx:
-
-{/* Active Model Header Bar with Fast Switcher */}
-<div className="p-4 rounded-xl border border-slate-200 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
-  <div className="flex items-center gap-3">
-    <div className="h-10 w-10 rounded-lg bg-[#500b50] text-white flex items-center justify-center shrink-0">
-      <Zap className="h-5 w-5 text-amber-300" />
-    </div>
-    <div>
-      <span className="text-[10px] uppercase font-bold text-emerald-700 tracking-wider">
-        Active Simulation Network
-      </span>
-      <h3 className="text-base font-black text-slate-900 leading-tight">
-        {currentDisplayName}
-      </h3>
-      <span className="text-xs text-slate-500 font-mono">
-        {buses.length > 0 ? (
-          <>
-            {buses.length} Substations • {lines.length} Corridors
-            {trippedLines.length > 0 && (
-              <span className="text-rose-600 font-bold ml-2">
-                ({trippedLines.length} Line(s) Tripped on N-1)
-              </span>
-            )}
-          </>
-        ) : (
-          <span className="text-amber-600 font-semibold">
-            {models.find((m) => m.name === currentDisplayName)?.buses || 0} Registered Substations • Click &ldquo;Activate Model&rdquo; below
-          </span>
-        )}
-      </span>
-    </div>
-  </div>
-
-  <div className="flex items-center gap-2">
-    <button
-      onClick={() => setActiveTab('models')}
-      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition"
-    >
-      <span>Switch Model</span>
-      <ArrowRight className="h-3.5 w-3.5" />
-    </button>
-  </div>
-</div>
-
-{/* Fallback & Re-prime Notice with Inline Action */}
-{divergedNotice && (
-  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-rose-300 bg-rose-50 p-4 text-xs font-medium text-rose-700">
-    <div className="flex items-center gap-2.5">
-      <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
-      <span>{divergedNotice}</span>
-    </div>
-    {activeModel && (
-      <button
-        onClick={() => onActivateModel(activeModel.id)}
-        disabled={loading}
-        className="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition shadow-xs shrink-0 flex items-center gap-1.5 self-start sm:self-center"
-      >
-        <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-        <span>Activate &amp; Load {activeModel.name}</span>
-      </button>
-    )}
-  </div>
-)}
-
-        {/* Studio Sub-Navigation Bar */}
         <div className="flex flex-wrap rounded-xl border border-slate-200 bg-white p-1 text-xs font-bold shadow-xs gap-1">
           <button
             onClick={() => setActiveTab('models')}
@@ -445,7 +340,11 @@ export const GridStabilityTab: React.FC<Props> = ({
             <Search className="h-3.5 w-3.5" />
             <span>Choose / Manage Models</span>
             {models.length > 0 && (
-              <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'models' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'}`}>
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                  activeTab === 'models' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+                }`}
+              >
                 {models.length}
               </span>
             )}
@@ -506,9 +405,7 @@ export const GridStabilityTab: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* ========================================================================= */}
-      {/* 1. CHOOSE / MANAGE MODELS SUBTAB                                          */}
-      {/* ========================================================================= */}
+      {/* SUBTAB 1: CHOOSE / MANAGE MODELS */}
       {activeTab === 'models' && (
         <div className="space-y-6">
           <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-4">
@@ -517,16 +414,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                 Filter Registered Models
               </span>
               <div className="flex items-center gap-2">
-                {isAdmin ? (
-                  <span className="text-xs font-mono font-bold text-purple-900 bg-purple-50 border border-purple-200 px-2.5 py-1 rounded-md">
-                    Admin Mode Active
-                  </span>
-                ) : (
-                  <span className="text-xs font-mono text-slate-500 bg-slate-100 px-2.5 py-1 rounded-md flex items-center gap-1">
-                    <Lock className="h-3 w-3" />
-                    <span>Read Only</span>
-                  </span>
-                )}
                 <span className="text-xs font-mono font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-md">
                   {filteredModels.length} of {models.length} Models
                 </span>
@@ -601,9 +488,7 @@ export const GridStabilityTab: React.FC<Props> = ({
 
           {filteredModels.length === 0 ? (
             <div className="p-12 text-center rounded-2xl border-2 border-dashed border-slate-200 bg-white">
-              <div className="h-14 w-14 rounded-2xl bg-purple-50 text-[#500b50] flex items-center justify-center mx-auto mb-3">
-                <UploadCloud className="h-7 w-7" />
-              </div>
+              <UploadCloud className="h-10 w-10 text-[#500b50] mx-auto mb-3" />
               <h3 className="text-base font-bold text-slate-900">
                 {modelsLoading ? 'Connecting to Grid Storage...' : 'No Simulation Models in Storage'}
               </h3>
@@ -612,7 +497,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                   ? 'Retrieving model files from backend...'
                   : 'Upload network models (.m, .130, .raw, .xlsx) in the Ingestion module to begin.'}
               </p>
-
               <div className="mt-5 flex items-center justify-center gap-3">
                 <button
                   onClick={() => onNavigateTab('Upload & Ingestion')}
@@ -621,17 +505,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                   <Plus className="h-4 w-4" />
                   <span>Upload Model</span>
                 </button>
-
-                {onRefreshModels && (
-                  <button
-                    onClick={() => onRefreshModels()}
-                    disabled={modelsLoading}
-                    className="px-4 py-2 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold transition flex items-center gap-1.5"
-                  >
-                    <RefreshCw className={`h-3.5 w-3.5 ${modelsLoading ? 'animate-spin' : ''}`} />
-                    <span>Refresh</span>
-                  </button>
-                )}
               </div>
             </div>
           ) : (
@@ -659,49 +532,12 @@ export const GridStabilityTab: React.FC<Props> = ({
                           </span>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                          {isCurrentActive && (
-                            <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300 flex items-center gap-1.5">
-                              <Check className="h-3.5 w-3.5" />
-                              <span>Active Case</span>
-                            </span>
-                          )}
-
-                          {isAdmin && (
-                            <div className="flex items-center gap-1">
-                              {onEditModel && (
-                                <button
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    const newName = prompt('Update Model Name:', m.name);
-                                    if (newName && newName.trim()) {
-                                      await onEditModel(m.id, { name: newName.trim() });
-                                    }
-                                  }}
-                                  className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
-                                  title="Admin: Rename Model"
-                                >
-                                  <Edit2 className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-
-                              {onDeleteModel && (
-                                <button
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    if (confirm(`Admin Action: Permanently delete model "${m.name}"?`)) {
-                                      await onDeleteModel(m.id);
-                                    }
-                                  }}
-                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
-                                  title="Admin: Delete Model"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
+                        {isCurrentActive && (
+                          <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300 flex items-center gap-1.5">
+                            <Check className="h-3.5 w-3.5" />
+                            <span>Active Case</span>
+                          </span>
+                        )}
                       </div>
 
                       <h3 className="text-base font-bold text-slate-900 leading-snug">{m.name}</h3>
@@ -714,18 +550,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                         <div>
                           <span className="text-xs text-slate-400 block font-sans font-medium">Corridors</span>
                           <span className="font-bold text-slate-900">{m.branches ?? 0} Lines</span>
-                        </div>
-                        <div>
-                          <span className="text-xs text-slate-400 block font-sans font-medium">Generation</span>
-                          <span className="font-bold text-[#500b50]">
-                            {(m.total_installed_mw ?? 0).toLocaleString()} MW
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-xs text-slate-400 block font-sans font-medium">Demand</span>
-                          <span className="font-bold text-slate-900">
-                            {(m.total_demand_mw ?? 0).toLocaleString()} MW
-                          </span>
                         </div>
                       </div>
                     </div>
@@ -742,7 +566,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                       {activatingId === m.id ? (
                         <>
                           <RefreshCw className="h-4 w-4 animate-spin" />
-                          <span>Activating &amp; Solving Flow...</span>
+                          <span>Activating &amp; Hydrating Model...</span>
                         </>
                       ) : (
                         <>
@@ -760,12 +584,9 @@ export const GridStabilityTab: React.FC<Props> = ({
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* 2. OPERATIONAL DECK SUBTAB                                                */}
-      {/* ========================================================================= */}
+      {/* SUBTAB 2: OPERATIONAL DECK */}
       {activeTab === 'deck' && (
         <div className="space-y-6">
-          {/* Active Model Header Bar with Fast Switcher */}
           <div className="p-4 rounded-xl border border-slate-200 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 rounded-lg bg-[#500b50] text-white flex items-center justify-center shrink-0">
@@ -779,10 +600,18 @@ export const GridStabilityTab: React.FC<Props> = ({
                   {currentDisplayName}
                 </h3>
                 <span className="text-xs text-slate-500 font-mono">
-                  {buses.length} Substations • {lines.length} Corridors
-                  {trippedLines.length > 0 && (
-                    <span className="text-rose-600 font-bold ml-2">
-                      ({trippedLines.length} Line(s) Tripped on $N-1$)
+                  {buses.length > 0 ? (
+                    <>
+                      {buses.length} Substations • {lines.length} Corridors
+                      {trippedLines.length > 0 && (
+                        <span className="text-rose-600 font-bold ml-2">
+                          ({trippedLines.length} Line(s) Tripped on $N-1$)
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-amber-600 font-semibold">
+                      {models.find((m) => m.name === currentDisplayName)?.buses || 0} Registered Substations • Click &ldquo;Switch Model&rdquo; to activate in memory
                     </span>
                   )}
                 </span>
@@ -800,15 +629,26 @@ export const GridStabilityTab: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Fallback Notice */}
           {divergedNotice && (
-            <div className="flex items-center gap-2.5 rounded-xl border border-rose-300 bg-rose-50 p-4 text-xs font-medium text-rose-700">
-              <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
-              <span>{divergedNotice}</span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-rose-300 bg-rose-50 p-4 text-xs font-medium text-rose-700">
+              <div className="flex items-center gap-2.5">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
+                <span>{divergedNotice}</span>
+              </div>
+              {activeModel && (
+                <button
+                  onClick={() => onActivateModel(activeModel.id)}
+                  disabled={loading}
+                  className="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition shadow-xs shrink-0 flex items-center gap-1.5 self-start sm:self-center"
+                >
+                  <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+                  <span>Activate &amp; Load {activeModel.name}</span>
+                </button>
+              )}
             </div>
           )}
 
-          {/* 5-Param Operational Controls Deck */}
+          {/* Controls Deck */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-2.5">
               <div className="flex items-center justify-between">
@@ -920,7 +760,6 @@ export const GridStabilityTab: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Action Row */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl border border-slate-200 bg-white shadow-2xs gap-3">
             <div className="flex rounded-lg border border-slate-200 p-0.5 bg-slate-50 text-xs font-bold">
               <button
@@ -968,7 +807,6 @@ export const GridStabilityTab: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Voltages Table */}
           {deckView === 'buses' && (
             <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-2xs">
               <div className="bg-[#500b50] text-white px-5 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-bold">
@@ -1045,7 +883,6 @@ export const GridStabilityTab: React.FC<Props> = ({
             </div>
           )}
 
-          {/* Line Deck */}
           {deckView === 'lines' && (
             <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-2xs">
               <div className="bg-[#500b50] text-white px-5 py-3 flex justify-between items-center text-xs font-bold">
@@ -1125,9 +962,7 @@ export const GridStabilityTab: React.FC<Props> = ({
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* 3. DYNAMIC LOAD SHARING SUBTAB                                            */}
-      {/* ========================================================================= */}
+      {/* SUBTAB 3: LOAD SHARING */}
       {activeTab === 'load_sharing' && (
         <div className="space-y-6">
           <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-4">
@@ -1301,9 +1136,7 @@ export const GridStabilityTab: React.FC<Props> = ({
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* 4. CASCADING FAILURE SUBTAB                                               */}
-      {/* ========================================================================= */}
+      {/* SUBTAB 4: CASCADING FAILURE */}
       {activeTab === 'cascade' && (
         <div className="space-y-6">
           <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-4">
@@ -1383,12 +1216,9 @@ export const GridStabilityTab: React.FC<Props> = ({
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* 5. REGIONAL PLANNING SUBTAB                                               */}
-      {/* ========================================================================= */}
+      {/* SUBTAB 5: REGIONAL PLANNING */}
       {activeTab === 'planning' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Substation */}
           <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-3">
             <h4 className="font-bold text-slate-900 text-sm border-b pb-2 flex items-center gap-2">
               <Plus className="h-4 w-4 text-[#500b50]" />
@@ -1441,7 +1271,6 @@ export const GridStabilityTab: React.FC<Props> = ({
             </button>
           </div>
 
-          {/* Line Corridor */}
           <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-3">
             <h4 className="font-bold text-slate-900 text-sm border-b pb-2 flex items-center gap-2">
               <Plus className="h-4 w-4 text-[#500b50]" />
@@ -1502,7 +1331,6 @@ export const GridStabilityTab: React.FC<Props> = ({
             </button>
           </div>
 
-          {/* Plant */}
           <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-3">
             <h4 className="font-bold text-slate-900 text-sm border-b pb-2 flex items-center gap-2">
               <Plus className="h-4 w-4 text-[#500b50]" />

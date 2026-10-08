@@ -10,7 +10,6 @@ import {
   CascadeResult,
 } from '@/types/grid';
 
-// Initialize Supabase Client pointing to your project (hoggydryloidupqprwpl)
 const supabaseUrl =
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://hoggydryloidupqprwpl.supabase.co';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -64,7 +63,6 @@ const BACKEND_URLS = [
   'https://national-power-backend.onrender.com',
 ].filter(Boolean) as string[];
 
-// Dynamic normalizer mapping Supabase grid_models table columns
 function normalizeRawModel(m: any): GridModelMeta {
   const vLevel =
     m?.voltage_level ||
@@ -84,7 +82,7 @@ function normalizeRawModel(m: any): GridModelMeta {
     m?.capacity_mw ??
     0;
 
-  const rawObj: any = {
+  return {
     id: String(m?.id || m?.name || 'model-' + Math.random().toString(36).substring(7)),
     name: String(m?.name || m?.filename || 'Unnamed Model'),
     voltage_level: String(vLevel),
@@ -95,9 +93,9 @@ function normalizeRawModel(m: any): GridModelMeta {
     total_demand_mw: Number(m?.total_demand_mw ?? m?.demand_mw ?? 0),
     domain: String(domain),
     is_active: Boolean(m?.is_active),
+    converged: Boolean(m?.converged ?? m?.is_converged ?? true),
+    is_default: Boolean(m?.is_default ?? m?.default ?? false),
   };
-
-  return rawObj as GridModelMeta;
 }
 
 const GridContext = createContext<GridContextType | null>(null);
@@ -135,7 +133,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     throw lastError || new Error('Connection to backend failed.');
   }, []);
 
-  // Fetch models directly from Supabase table: grid_models
+  // Fetch models from Supabase table: grid_models
   const fetchModels = useCallback(async () => {
     setModelsLoading(true);
     let retrieved: GridModelMeta[] = [];
@@ -146,10 +144,10 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!error && Array.isArray(data) && data.length > 0) {
           retrieved = data.map(normalizeRawModel);
         } else if (error) {
-          console.warn('Supabase grid_models query notice:', error.message);
+          console.warn('Supabase grid_models query error:', error.message);
         }
       } catch (err) {
-        console.warn('Supabase grid_models query error:', err);
+        console.warn('Supabase grid_models error:', err);
       }
     }
 
@@ -189,9 +187,9 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setModelsLoading(false);
   }, []);
 
-  // Run AC Power Flow (passes active model identifiers to solve the active network)
+  // Run AC Power Flow
   const runSimulation = useCallback(
-    async (customVars?: any, customTrips?: any, overrideModelId?: string, overrideModelName?: string) => {
+    async (customVars?: any, customTrips?: any) => {
       setLoading(true);
       setDivergedNotice(null);
 
@@ -205,13 +203,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const varsToRun = isRealPfVar ? customVars : pfVariables;
       const tripsToRun = Array.isArray(customTrips) ? customTrips : trippedLines;
 
-      const activeId = overrideModelId || activeModel?.id;
-      const activeName = overrideModelName || activeModel?.name;
-
       const payload = {
-        model_id: activeId,
-        model_name: activeName,
-        filename: activeName,
         pf_variables: {
           loadMultiplier: Number(varsToRun?.loadMultiplier ?? 1.0),
           targetPowerFactor: Number(varsToRun?.targetPowerFactor ?? 0.9),
@@ -226,20 +218,11 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       };
 
       try {
-        let res: Response | null = null;
-        try {
-          res = await apiFetch('/api/simulations/power-flow', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-        } catch {
-          res = await apiFetch('/simulations/power-flow', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-        }
+        const res = await apiFetch('/api/simulations/power-flow', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
 
         if (res && res.ok) {
           const data = await res.json();
@@ -264,10 +247,10 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setLoading(false);
       }
     },
-    [pfVariables, trippedLines, activeModel, apiFetch]
+    [pfVariables, trippedLines, apiFetch]
   );
 
-  // Activate model: Prioritizes GET /api/models/{id}/activate to resolve HTTP 405
+  // Activate model: Hydrates into backend Pandapower memory if not present
   const activateModel = useCallback(
     async (id: string) => {
       setLoading(true);
@@ -297,58 +280,55 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } catch {}
       }
 
-      let activatedData: any = null;
-
-      // Ordered candidates: GET requests on hex ID placed first to prevent 405
-      const candidateRequests = [
-        { path: `/api/models/${encodeURIComponent(modelIdentifier)}/activate`, method: 'GET' },
-        { path: `/api/models/${encodeURIComponent(modelIdentifier)}`, method: 'GET' },
-        { path: `/api/models/activate?model_id=${encodeURIComponent(modelIdentifier)}`, method: 'GET' },
-        { path: `/api/models/activate?name=${encodeURIComponent(modelName)}`, method: 'GET' },
-        { path: `/api/models/${encodeURIComponent(modelIdentifier)}/activate`, method: 'POST' },
-        { path: `/api/models/${encodeURIComponent(modelName)}/activate`, method: 'GET' },
-        { path: `/api/models/${encodeURIComponent(modelName)}`, method: 'GET' },
-        { path: `/models/${encodeURIComponent(modelIdentifier)}/activate`, method: 'GET' },
-        {
-          path: `/api/models/activate`,
+      // Step 1: Attempt activation via backend route POST /api/models/activate/{model_id}
+      let inMemory = false;
+      try {
+        const resName = await apiFetch(`/api/models/activate/${encodeURIComponent(modelName)}`, {
           method: 'POST',
-          body: JSON.stringify({ model_id: modelIdentifier, model_name: modelName, filename: modelName }),
-        },
-      ];
+        });
+        if (resName && resName.ok) inMemory = true;
+      } catch {}
 
-      for (const req of candidateRequests) {
+      if (!inMemory) {
         try {
-          const res = await apiFetch(req.path, {
-            method: req.method,
-            headers: req.body ? { 'Content-Type': 'application/json' } : undefined,
-            body: req.body,
+          const resId = await apiFetch(`/api/models/activate/${encodeURIComponent(modelIdentifier)}`, {
+            method: 'POST',
           });
-
-          if (res.ok) {
-            const data = await res.json();
-            activatedData = data;
-            break;
-          }
-        } catch {
-          // Continue to next candidate
-        }
+          if (resId && resId.ok) inMemory = true;
+        } catch {}
       }
 
-      if (activatedData) {
-        if (activatedData.active_model) setActiveModel(activatedData.active_model);
-        if (Array.isArray(activatedData.buses) && activatedData.buses.length > 0) {
-          setBuses(activatedData.buses);
-        }
-        if (Array.isArray(activatedData.lines) && activatedData.lines.length > 0) {
-          setLines(activatedData.lines);
+      // Step 2: If 404 (Render wiped in-memory model_registry on wake-up), hydrate from Supabase Storage
+      if (!inMemory && supabase) {
+        try {
+          let fileBlob: Blob | null = null;
+          const { data: d1 } = await supabase.storage.from('models').download(modelName);
+          if (d1) {
+            fileBlob = d1;
+          } else {
+            const { data: d2 } = await supabase.storage.from('models').download(`${modelIdentifier}.m`);
+            if (d2) fileBlob = d2;
+          }
+
+          if (fileBlob) {
+            const formData = new FormData();
+            formData.append('file', fileBlob, modelName.endsWith('.m') ? modelName : `${modelName}.m`);
+            const uploadRes = await apiFetch('/api/models/upload', {
+              method: 'POST',
+              body: formData,
+            });
+            if (uploadRes && uploadRes.ok) {
+              inMemory = true;
+            }
+          }
+        } catch (e) {
+          console.warn('Hydration from Supabase Storage failed:', e);
         }
       }
 
       setTrippedLines([]);
       setPfVariables(DEFAULT_VARIABLES);
-
-      // Solve AC power flow with the newly activated model
-      await runSimulation(DEFAULT_VARIABLES, [], modelIdentifier, modelName);
+      await runSimulation(DEFAULT_VARIABLES, []);
       setLoading(false);
     },
     [models, apiFetch, runSimulation]
@@ -378,8 +358,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const triggerCascade = useCallback(
     async (initialTripped: number[], threshold: number): Promise<CascadeResult> => {
       const payload = {
-        model_id: activeModel?.id,
-        model_name: activeModel?.name,
         initial_tripped_lines: initialTripped,
         overload_threshold_percent: threshold,
         max_cascade_steps: 8,
@@ -387,23 +365,14 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         slack_voltage_pu: pfVariables.slackVoltagePu,
       };
 
-      let res: Response | null = null;
-      try {
-        res = await apiFetch('/api/simulations/cascade', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-      } catch {
-        res = await apiFetch('/simulations/cascade', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-      }
+      const res = await apiFetch('/api/simulations/cascade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
       return await res.json();
     },
-    [pfVariables, activeModel, apiFetch]
+    [pfVariables, apiFetch]
   );
 
   const applyCascadeTrips = useCallback(
@@ -414,21 +383,15 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     [runSimulation]
   );
 
-  // Fetch registered cases on mount
   useEffect(() => {
     fetchModels();
   }, [fetchModels]);
 
-  // When activeModel is resolved, activate it in solver memory
   useEffect(() => {
-    if (activeModel?.id) {
-      if (buses.length === 0) {
-        activateModel(activeModel.id);
-      } else {
-        runSimulation();
-      }
+    if (activeModel?.id && buses.length === 0) {
+      activateModel(activeModel.id);
     }
-  }, [activeModel?.id]);
+  }, [activeModel?.id, buses.length]);
 
   return (
     <GridContext.Provider
