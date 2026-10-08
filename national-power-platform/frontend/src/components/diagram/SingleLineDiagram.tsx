@@ -31,27 +31,51 @@ interface Point {
   y: number;
 }
 
-// Ray-box intersection for busbar border clipping (76px x 8px)
-function getBusBorderPoint(center: Point, target: Point, halfW = 38, halfH = 5): Point {
-  const dx = target.x - center.x;
-  const dy = target.y - center.y;
-  if (Math.abs(dx) < 1e-4 && Math.abs(dy) < 1e-4) return center;
-  const scaleX = Math.abs(dx) > 0 ? halfW / Math.abs(dx) : Infinity;
-  const scaleY = Math.abs(dy) > 0 ? halfH / Math.abs(dy) : Infinity;
-  const s = Math.min(scaleX, scaleY);
-  return {
-    x: center.x + dx * s,
-    y: center.y + dy * s,
-  };
+// Stable Busbar Terminal Docking: Clamps firmly to the 76px x 9px busbar border without detachment
+function getBusDockPoint(
+  busPos: Point,
+  targetPos: Point,
+  laneOffset = 0,
+  halfW = 38,
+  halfH = 4.5
+): Point {
+  const dx = targetPos.x - busPos.x;
+  const dy = targetPos.y - busPos.y;
+  const dist = Math.hypot(dx, dy) || 1;
+
+  // Normal vector for lane separation
+  const normX = -dy / dist;
+  const normY = dx / dist;
+
+  // Shift along busbar face
+  const shiftedX = busPos.x + normX * laneOffset;
+  const shiftedY = busPos.y + normY * laneOffset;
+
+  // Clamp within the busbar physical width/height
+  const clampedX = Math.max(busPos.x - halfW + 4, Math.min(busPos.x + halfW - 4, shiftedX));
+  const clampedY = Math.max(busPos.y - halfH + 1, Math.min(busPos.y + halfH - 1, shiftedY));
+
+  // Exit from top/bottom edge for vertical/diagonal paths, or left/right for horizontal paths
+  if (Math.abs(dy) > Math.abs(dx) * 0.35) {
+    return {
+      x: clampedX,
+      y: busPos.y + (dy > 0 ? halfH : -halfH),
+    };
+  } else {
+    return {
+      x: busPos.x + (dx > 0 ? halfW : -halfW),
+      y: clampedY,
+    };
+  }
 }
 
-// Tests whether two line segments (p1-p2) and (p3-p4) intersect
+// Tests whether two line segments (p1-p2) and (p3-p4) cross
 function checkSegmentsCross(p1: Point, p2: Point, p3: Point, p4: Point): boolean {
   const ccw = (a: Point, b: Point, c: Point) => (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x);
   return ccw(p1, p3, p4) !== ccw(p2, p3, p4) && ccw(p1, p2, p3) !== ccw(p1, p2, p4);
 }
 
-// Dynamic Free-Angle Calculation: Finds the widest open angular sector away from connected lines
+// Dynamic Free-Angle Calculation: Directs generators/loads to widest open angle away from lines
 function computeCleanDecoratorAngles(busPos: Point, neighborPositions: Point[]): { genAngle: number; loadAngle: number } {
   if (!neighborPositions || neighborPositions.length === 0) {
     return { genAngle: -Math.PI / 2, loadAngle: Math.PI / 2 };
@@ -104,23 +128,21 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   const busPositionsRef = useRef<Record<number, Point>>({});
   busPositionsRef.current = busPositions;
 
+  // Slip-Proof Pointer Dragging State
   const [draggingBusId, setDraggingBusId] = useState<number | null>(null);
-  const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
-  const [hasDragged, setHasDragged] = useState<boolean>(false);
+  const dragOffsetRef = useRef<Point>({ x: 0, y: 0 });
+  const hasDraggedRef = useRef<boolean>(false);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const currentModelRef = useRef<string>('');
 
-  // Keep state refs updated for native non-passive wheel events
+  // Keep state refs updated for non-passive wheel events
   const scaleRef = useRef<number>(scale);
   scaleRef.current = scale;
   const panRef = useRef<Point>(pan);
   panRef.current = pan;
 
-  // =========================================================================
-  // Condensed Topological Untangler (Compact Links + Anti-Crossing Colliders)
-  // =========================================================================
+  // Topological Layout Untangler (Runs ONLY when a new model loads or user clicks Reset Layout)
   const solveUntangledLayout = useCallback((): Record<number, Point> => {
     const N = buses.length;
     if (N === 0) return {};
@@ -128,7 +150,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     const idToIndex = new Map<number, number>();
     buses.forEach((b, i) => idToIndex.set(b.id, i));
 
-    // Adjacency graph
     const adj: number[][] = Array.from({ length: N }, () => []);
     const edgePairs: [number, number][] = [];
     lines.forEach((l) => {
@@ -141,7 +162,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       }
     });
 
-    // BFS Topological Ordering for circular seeding
     const visited = new Set<number>();
     const bfsOrder: number[] = [];
     for (let i = 0; i < N; i++) {
@@ -161,7 +181,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       }
     }
 
-    // Condensed Dimensions: Compact radius keeps lines short and connected
     const radius = N <= 8 ? 130 : Math.min(320, N * 8);
     const cx = 800;
     const cy = 550;
@@ -175,21 +194,16 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       };
     });
 
-    // Ideal edge length: Tight, compact link spacing
     const idealEdgeLen = N <= 8 ? 130 : Math.max(85, 125 - N * 0.45);
     const kSq = idealEdgeLen * idealEdgeLen;
-
     let temp = Math.min(120, radius * 0.7);
-    const iterations = N > 30 ? 140 : 90;
+    const iterations = N > 30 ? 120 : 80;
     const dt = temp / iterations;
-
-    const MIN_NODE_DIST = 105; // Tight busbar clearance
-    const MIN_EDGE_DIST = 55;  // Clearance from lines
+    const MIN_EDGE_DIST = 55;
 
     for (let it = 0; it < iterations; it++) {
       const disp: Point[] = Array.from({ length: N }, () => ({ x: 0, y: 0 }));
 
-      // A. Repulsion between nodes
       for (let i = 0; i < N; i++) {
         for (let j = 0; j < N; j++) {
           if (i === j) continue;
@@ -204,7 +218,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
         }
       }
 
-      // B. Spring Attraction along transmission lines
       for (const [u, v] of edgePairs) {
         const dx = posArr[v].x - posArr[u].x;
         const dy = posArr[v].y - posArr[u].y;
@@ -216,7 +229,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
         disp[v].y -= (dy / dist) * f;
       }
 
-      // C. Node-to-Edge Colliders (Prevents lines slicing through other nodes)
       for (const [u, v] of edgePairs) {
         const ax = posArr[u].x, ay = posArr[u].y;
         const bx = posArr[v].x, by = posArr[v].y;
@@ -249,53 +261,18 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
         }
       }
 
-      // D. Edge-to-Edge Anti-Crossing Forces
-      for (let i = 0; i < edgePairs.length; i++) {
-        const [u1, v1] = edgePairs[i];
-        for (let j = i + 1; j < edgePairs.length; j++) {
-          const [u2, v2] = edgePairs[j];
-          if (u1 === u2 || u1 === v2 || v1 === u2 || v1 === v2) continue;
-
-          if (checkSegmentsCross(posArr[u1], posArr[v1], posArr[u2], posArr[v2])) {
-            const d1x = posArr[v1].x - posArr[u1].x;
-            const d1y = posArr[v1].y - posArr[u1].y;
-            const len1 = Math.hypot(d1x, d1y) || 1;
-            const norm1x = -d1y / len1, norm1y = d1x / len1;
-
-            const d2x = posArr[v2].x - posArr[u2].x;
-            const d2y = posArr[v2].y - posArr[u2].y;
-            const len2 = Math.hypot(d2x, d2y) || 1;
-            const norm2x = -d2y / len2, norm2y = d2x / len2;
-
-            const pushMag = 12.0;
-            disp[u1].x += norm2x * pushMag;
-            disp[u1].y += norm2y * pushMag;
-            disp[v1].x += norm2x * pushMag;
-            disp[v1].y += norm2y * pushMag;
-            disp[u2].x += norm1x * pushMag;
-            disp[u2].y += norm1y * pushMag;
-            disp[v2].x += norm1x * pushMag;
-            disp[v2].y += norm1y * pushMag;
-          }
-        }
-      }
-
-      // Apply displacements with cooling
       for (let i = 0; i < N; i++) {
         const dLen = Math.hypot(disp[i].x, disp[i].y) || 1.0;
         const step = Math.min(dLen, temp);
         posArr[i].x += (disp[i].x / dLen) * step;
         posArr[i].y += (disp[i].y / dLen) * step;
       }
-
       temp -= dt;
     }
 
-    // 3. Compact Bounding Box Separation Pass
     const MIN_DX = 92;
     const MIN_DY = 55;
-
-    for (let pass = 0; pass < 25; pass++) {
+    for (let pass = 0; pass < 20; pass++) {
       for (let i = 0; i < N; i++) {
         for (let j = i + 1; j < N; j++) {
           const dx = posArr[j].x - posArr[i].x;
@@ -306,7 +283,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           if (absDx < MIN_DX && absDy < MIN_DY) {
             const overlapX = MIN_DX - absDx;
             const overlapY = MIN_DY - absDy;
-
             if (overlapX < overlapY) {
               const pushX = overlapX / 2 + 2;
               const sign = dx >= 0 ? 1 : -1;
@@ -351,7 +327,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     const containerW = containerRef.current?.clientWidth || 1200;
     const containerH = containerRef.current?.clientHeight || 850;
 
-    // Normal, comfortable scale range for condensed diagrams
     const fitScale = Math.min(containerW / w, containerH / h, 1.25);
     const newScale = Math.max(0.40, fitScale);
     const newPan = {
@@ -365,19 +340,22 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     panRef.current = newPan;
   }, []);
 
-  // Compute Layout on Model Load & Persist during Breaker Toggles
+  // FIXED: Layout runs ONLY once per model. Opening/closing lines NEVER recalculates or shifts layout!
   useEffect(() => {
     if (!buses || buses.length === 0) return;
 
-    const isNewModel = currentModelRef.current !== modelName;
-    currentModelRef.current = modelName;
     const storageKey = `nesi_sld_pos_${modelName || 'default'}`;
 
-    if (!isNewModel && Object.keys(busPositionsRef.current).length >= buses.length) {
+    // If coordinates exist for all buses, KEEP THEM FROZEN
+    if (
+      Object.keys(busPositionsRef.current).length >= buses.length &&
+      buses.every((b) => busPositionsRef.current[b.id] !== undefined)
+    ) {
       return;
     }
 
-    if (typeof window !== 'undefined' && !isNewModel) {
+    // Check localStorage cache
+    if (typeof window !== 'undefined') {
       const saved = localStorage.getItem(storageKey);
       if (saved) {
         try {
@@ -401,20 +379,17 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       } catch (_) {}
     }
 
-    const timer = setTimeout(handleAutoFit, 80);
-    return () => clearTimeout(timer);
-  }, [modelName, buses.length, solveUntangledLayout, handleAutoFit]);
+    setTimeout(handleAutoFit, 60);
+    // Explicitly omit 'lines' and 'solveUntangledLayout' so line state changes NEVER trigger repositioning!
+  }, [modelName, buses.length]);
 
-  // =========================================================================
-  // Non-Passive Native Wheel Listener: Smooth, Dynamic Touchpad/Mouse Zoom
-  // Traps pinch gestures to the container to prevent webpage zoom
-  // =========================================================================
+  // Non-passive wheel zoom
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const handleNativeWheel = (e: WheelEvent) => {
-      e.preventDefault(); // Prevents whole-page browser zoom
+      e.preventDefault();
       e.stopPropagation();
 
       const rect = container.getBoundingClientRect();
@@ -423,23 +398,18 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
 
       let zoomFactor: number;
       if (e.ctrlKey) {
-        // Trackpad pinch gesture: smooth, granular continuous scaling
         const clampedDelta = Math.max(-30, Math.min(30, e.deltaY));
         zoomFactor = Math.exp(-clampedDelta * 0.005);
       } else {
-        // Standard mouse wheel notch: gentle 5% step per notch
         const clampedDelta = Math.max(-80, Math.min(80, e.deltaY));
         zoomFactor = Math.exp(-clampedDelta * 0.0018);
       }
 
-      // Smooth step clamp: changes smoothly by 2%-5% per event (no sudden 74% -> 14% plunge)
       zoomFactor = Math.min(1.05, Math.max(0.95, zoomFactor));
-
       const currScale = scaleRef.current;
       const currPan = panRef.current;
       const nextScale = Math.min(3.5, Math.max(0.25, currScale * zoomFactor));
 
-      // Zoom accurately centered around the cursor position
       const mouseWorldX = (mouseX - currPan.x) / currScale;
       const mouseWorldY = (mouseY - currPan.y) / currScale;
 
@@ -460,7 +430,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     };
   }, []);
 
-  // Convert Client Coordinates to SVG Coordinates
   const getSvgCoordinates = useCallback(
     (clientX: number, clientY: number): Point => {
       if (!svgRef.current) return { x: 0, y: 0 };
@@ -473,35 +442,35 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     [pan, scale]
   );
 
-  // Mouse pan and bus drag events
-  const handleCanvasMouseDown = (e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    setIsPanning(true);
-    setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
-  };
-
-  const handleBusMouseDown = (e: React.MouseEvent, busId: number) => {
+  // =========================================================================
+  // FIXED: Slip-Proof HTML5 Pointer Capture (Never loses grip when dragging fast)
+  // =========================================================================
+  const handleBusPointerDown = (e: React.PointerEvent, busId: number) => {
     e.stopPropagation();
     if (e.button !== 0) return;
+
+    // Locks all cursor events to this bus until button is released
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
 
     const mouseWorld = getSvgCoordinates(e.clientX, e.clientY);
     const busPos = busPositions[busId] || { x: 200, y: 200 };
 
     setDraggingBusId(busId);
-    setHasDragged(false);
-    setDragOffset({
+    hasDraggedRef.current = false;
+    dragOffsetRef.current = {
       x: mouseWorld.x - busPos.x,
       y: mouseWorld.y - busPos.y,
-    });
+    };
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handleBusPointerMove = (e: React.PointerEvent) => {
     if (draggingBusId !== null) {
-      setHasDragged(true);
+      e.stopPropagation();
+      hasDraggedRef.current = true;
       const mouseWorld = getSvgCoordinates(e.clientX, e.clientY);
       const newPos = {
-        x: Math.round(mouseWorld.x - dragOffset.x),
-        y: Math.round(mouseWorld.y - dragOffset.y),
+        x: Math.round(mouseWorld.x - dragOffsetRef.current.x),
+        y: Math.round(mouseWorld.y - dragOffsetRef.current.y),
       };
 
       setBusPositions((prev) => {
@@ -509,7 +478,34 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
         busPositionsRef.current = next;
         return next;
       });
-    } else if (isPanning) {
+    }
+  };
+
+  const handleBusPointerUp = (e: React.PointerEvent) => {
+    if (draggingBusId !== null) {
+      e.stopPropagation();
+      try {
+        (e.currentTarget as Element).releasePointerCapture(e.pointerId);
+      } catch (_) {}
+      setDraggingBusId(null);
+      if (typeof window !== 'undefined' && modelName) {
+        try {
+          localStorage.setItem(`nesi_sld_pos_${modelName}`, JSON.stringify(busPositionsRef.current));
+        } catch (_) {}
+      }
+    }
+  };
+
+  // Canvas Panning via Pointer Events
+  const handleCanvasPointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    setIsPanning(true);
+    setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+  };
+
+  const handleCanvasPointerMove = (e: React.PointerEvent) => {
+    if (isPanning) {
       const nextPan = {
         x: e.clientX - panStart.x,
         y: e.clientY - panStart.y,
@@ -519,15 +515,12 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     }
   };
 
-  const handleMouseUp = () => {
-    setIsPanning(false);
-    if (draggingBusId !== null) {
-      setDraggingBusId(null);
-      if (typeof window !== 'undefined' && modelName) {
-        try {
-          localStorage.setItem(`nesi_sld_pos_${modelName}`, JSON.stringify(busPositionsRef.current));
-        } catch (_) {}
-      }
+  const handleCanvasPointerUp = (e: React.PointerEvent) => {
+    if (isPanning) {
+      setIsPanning(false);
+      try {
+        (e.currentTarget as Element).releasePointerCapture(e.pointerId);
+      } catch (_) {}
     }
   };
 
@@ -562,7 +555,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     }
   };
 
-  // High-Resolution Clear White Vector Exports
   const exportAsPNG = () => {
     if (!svgRef.current) return;
     const serializer = new XMLSerializer();
@@ -629,7 +621,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  // Pre-calculate clean decorator angles for each bus
   const busDecoratorAngles = useMemo(() => {
     const result: Record<number, { genAngle: number; loadAngle: number }> = {};
     buses.forEach((b) => {
@@ -647,7 +638,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     return result;
   }, [buses, lines, busPositions]);
 
-  // STAC MultiLineEdge normal vector grouping: Prevents parallel lines from overlapping
+  // Stable corridor grouping with fixed 16px terminal spacing
   const multiLineOffsets = useMemo(() => {
     const corridorMap = new Map<string, number[]>();
     lines.forEach((l) => {
@@ -660,7 +651,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     corridorMap.forEach((lineIds) => {
       const count = lineIds.length;
       lineIds.forEach((id, idx) => {
-        const offset = (idx - (count - 1) / 2) * 18; // 18px compact parallel lane separation
+        const offset = (idx - (count - 1) / 2) * 16;
         offsetMap.set(id, offset);
       });
     });
@@ -678,7 +669,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-0.5 font-medium">
-            {buses.length} Substations • {lines.length} Corridors • Condensed planar topology. Pinch touchpad or mouse wheel to zoom.
+            {buses.length} Substations • {lines.length} Corridors. Drag nodes anywhere or click breakers to trip.
           </p>
         </div>
 
@@ -793,15 +784,14 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
         </div>
       </div>
 
-      {/* Main Spacious Canvas Area */}
+      {/* Main Canvas Area with Pointer Capture */}
       <div className="relative w-full">
         <div
           ref={containerRef}
-          onMouseDown={handleCanvasMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-          className={`h-[850px] w-full rounded-2xl border border-slate-300 bg-white relative overflow-hidden shadow-sm select-none ${
+          onPointerDown={handleCanvasPointerDown}
+          onPointerMove={handleCanvasPointerMove}
+          onPointerUp={handleCanvasPointerUp}
+          className={`h-[850px] w-full rounded-2xl border border-slate-300 bg-white relative overflow-hidden shadow-sm select-none touch-none ${
             isPanning ? 'cursor-grabbing' : draggingBusId !== null ? 'cursor-move' : 'cursor-grab'
           }`}
         >
@@ -814,17 +804,15 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           </div>
 
           <div className="absolute bottom-4 left-4 z-10 pointer-events-none flex items-center gap-3 text-[10px] font-mono text-slate-400 font-bold">
-            <span>Pinch Touchpad or Scroll to Zoom Gently Around Cursor • Drag any Bus to Adjust</span>
+            <span>Drag nodes smoothly at any speed • Pinch or scroll to zoom</span>
           </div>
 
           {/* Vector SVG Canvas */}
           <svg ref={svgRef} className="w-full h-full" style={{ width: '100%', height: '100%' }}>
             <defs>
-              {/* STAC Engineering Dot Grid */}
               <pattern id="stacCadGrid" width="40" height="40" patternUnits="userSpaceOnUse">
                 <circle cx="20" cy="20" r="0.85" fill="#cbd5e1" opacity="0.8" />
               </pattern>
-              {/* Bold Load Arrow Marker */}
               <marker
                 id="loadArrow"
                 viewBox="0 0 10 10"
@@ -838,32 +826,22 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
               </marker>
             </defs>
 
-            {/* Clear CAD Background Grid */}
             <rect x="-10000" y="-10000" width="30000" height="30000" fill="url(#stacCadGrid)" pointerEvents="none" />
 
             <g transform={`translate(${pan.x}, ${pan.y}) scale(${scale})`}>
               {/* ========================================================================= */}
-              {/* 1. TRANSMISSION LINES WITH COMPACT INLINE BREAKERS & PARALLEL LANES        */}
+              {/* 1. TRANSMISSION LINES (Fixed Docking & No CSS Length Morphing)            */}
               {/* ========================================================================= */}
               {lines.map((line) => {
                 const rawPosA = busPositions[line.from_bus];
                 const rawPosB = busPositions[line.to_bus];
                 if (!rawPosA || !rawPosB) return null;
 
-                // Normal vector lane offset for parallel circuits
                 const laneOffset = multiLineOffsets.get(line.id) || 0;
-                const cdx = rawPosB.x - rawPosA.x;
-                const cdy = rawPosB.y - rawPosA.y;
-                const cLen = Math.hypot(cdx, cdy) || 1;
-                const normX = -cdy / cLen;
-                const normY = cdx / cLen;
 
-                const shiftedPosA = { x: rawPosA.x + normX * laneOffset, y: rawPosA.y + normY * laneOffset };
-                const shiftedPosB = { x: rawPosB.x + normX * laneOffset, y: rawPosB.y + normY * laneOffset };
-
-                // Compact border clipping (38px half-width, 5px half-height)
-                const posA = getBusBorderPoint(shiftedPosA, shiftedPosB, 38, 5);
-                const posB = getBusBorderPoint(shiftedPosB, shiftedPosA, 38, 5);
+                // FIXED: Direct terminal docking to busbar surface (prevents line floating and shortening)
+                const posA = getBusDockPoint(rawPosA, rawPosB, laneOffset, 38, 4.5);
+                const posB = getBusDockPoint(rawPosB, rawPosA, laneOffset, 38, 4.5);
 
                 const isTripped = trippedLines.includes(line.id);
                 const loadingPercent = line.loading_percent ?? 0;
@@ -890,29 +868,31 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                   pathData = `M ${posA.x} ${posA.y} L ${posB.x} ${posB.y}`;
                 }
 
-                const showBreakerBox = lineDist >= 60;
+                const showBreakerBox = lineDist >= 55;
 
                 return (
                   <g
                     key={`line-${line.id}`}
                     className="cursor-pointer group"
-                    onClick={() => toggleLine(line.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleLine(line.id);
+                    }}
                   >
                     {/* Hover Buffer */}
-                    <path d={pathData} fill="none" stroke="transparent" strokeWidth="18" />
+                    <path d={pathData} fill="none" stroke="transparent" strokeWidth="16" />
 
-                    {/* Bold Transmission Line Path */}
+                    {/* FIXED: Removed transition-all on path to eliminate SVG dash morphing bugs */}
                     <path
                       d={pathData}
                       fill="none"
                       stroke={lineColor}
                       strokeWidth={isTripped ? 2 : 2.75}
                       strokeDasharray={isTripped ? '6 4' : undefined}
-                      strokeOpacity={isTripped ? 0.35 : 0.95}
-                      className="transition-all duration-150 group-hover:stroke-[#500b50] group-hover:stroke-width-3"
+                      strokeOpacity={isTripped ? 0.45 : 0.95}
                     />
 
-                    {/* Compact STAC In-line Breaker Indicator */}
+                    {/* In-line Breaker Indicator */}
                     {showBreakerBox && (
                       <g transform={`translate(${midX}, ${midY}) rotate(${angleDeg})`}>
                         <rect
@@ -924,7 +904,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                           fill="#ffffff"
                           stroke={lineColor}
                           strokeWidth="1.5"
-                          className="transition group-hover:fill-purple-50"
                         />
                         <text
                           x="0"
@@ -945,7 +924,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
               })}
 
               {/* ========================================================================= */}
-              {/* 2. RECTANGULAR BUSBARS (COMPACT CAD BUSBARS WITH STAC ATTACHMENTS)        */}
+              {/* 2. RECTANGULAR BUSBARS (Slip-Proof Pointer Events)                        */}
               {/* ========================================================================= */}
               {buses.map((bus) => {
                 const pos = busPositions[bus.id];
@@ -974,9 +953,8 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 const genStubLen = 28;
                 const genX = Math.cos(genAngle) * genStubLen;
                 const genY = Math.sin(genAngle) * genStubLen;
-                const genBorder = getBusBorderPoint(pos, { x: pos.x + genX, y: pos.y + genY }, 38, 5);
-                const relGenBorderX = genBorder.x - pos.x;
-                const relGenBorderY = genBorder.y - pos.y;
+                const genBorderX = Math.cos(genAngle) * (Math.abs(Math.sin(genAngle)) > 0.5 ? 4.5 : 38);
+                const genBorderY = Math.sin(genAngle) * (Math.abs(Math.sin(genAngle)) > 0.5 ? 4.5 : 38);
 
                 // Free-angle coordinates for Load
                 const loadStubStart = 9;
@@ -990,14 +968,16 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                   <g
                     key={`bus-${bus.id}`}
                     transform={`translate(${pos.x}, ${pos.y})`}
-                    onMouseDown={(e) => handleBusMouseDown(e, bus.id)}
+                    onPointerDown={(e) => handleBusPointerDown(e, bus.id)}
+                    onPointerMove={handleBusPointerMove}
+                    onPointerUp={handleBusPointerUp}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (!hasDragged) {
+                      if (!hasDraggedRef.current) {
                         setSelectedBus(bus);
                       }
                     }}
-                    className="cursor-move group"
+                    className="cursor-move group touch-none"
                   >
                     {/* Selection Beacon */}
                     {isSelected && (
@@ -1015,12 +995,12 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       />
                     )}
 
-                    {/* Generator Infeed Symbol (~ in circle) */}
+                    {/* Generator Symbol */}
                     {isGen && (
                       <g>
                         <line
-                          x1={relGenBorderX}
-                          y1={relGenBorderY}
+                          x1={genBorderX}
+                          y1={genBorderY}
                           x2={genX}
                           y2={genY}
                           stroke="#000000"
@@ -1047,7 +1027,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       </g>
                     )}
 
-                    {/* Load Drop Symbol */}
+                    {/* Load Symbol */}
                     {hasLoad && !isGen && (
                       <g>
                         <line
@@ -1073,7 +1053,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       </g>
                     )}
 
-                    {/* Condensed Rectangular Copper Busbar (76px x 8px) */}
+                    {/* Copper Busbar (76px x 9px) */}
                     <rect
                       x="-38"
                       y="-4.5"
@@ -1083,12 +1063,10 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       fill={busBarColor}
                       stroke="#000000"
                       strokeWidth="1.4"
-                      className={`transition-shadow ${
-                        isDragging ? 'filter drop-shadow-lg' : 'group-hover:filter drop-shadow-md'
-                      }`}
+                      className={isDragging ? 'filter drop-shadow-lg' : undefined}
                     />
 
-                    {/* Substation Name Label */}
+                    {/* Busbar Name Label */}
                     <text
                       x="0"
                       y="-10"
@@ -1102,7 +1080,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       {bus.name}
                     </text>
 
-                    {/* Voltage Magnitude Reading */}
+                    {/* Voltage Reading */}
                     <text
                       x="0"
                       y="18"
@@ -1120,9 +1098,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             </g>
           </svg>
 
-          {/* ========================================================================= */}
-          {/* 3. STAC-STYLE TECHNICAL PROPERTY INSPECTOR                                */}
-          {/* ========================================================================= */}
+          {/* Technical Property Inspector */}
           {selectedBus && (
             <div className="absolute top-4 right-4 z-20 w-80 rounded-2xl border border-slate-300 bg-white/95 backdrop-blur-md shadow-2xl p-4 text-xs font-sans animate-in fade-in zoom-in-95 duration-150">
               <div className="flex items-center justify-between pb-2 border-b border-slate-200">
@@ -1140,7 +1116,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 </button>
               </div>
 
-              {/* Exact STAC Technical Data Table */}
               <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
                 <table className="w-full text-left text-[11px]">
                   <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
