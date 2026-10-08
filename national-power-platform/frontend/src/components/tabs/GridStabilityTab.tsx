@@ -462,7 +462,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                       {isCurrent && (
                         <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
                           <Check className="h-3 w-3" />
-                          <span>Active in Memory</span>
+                          <span>Active</span>
                         </span>
                       )}
                     </div>
@@ -484,10 +484,8 @@ export const GridStabilityTab: React.FC<Props> = ({
                   >
                     {activatingId === m.id ? (
                       <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Zap className="h-3.5 w-3.5 text-amber-300" />
-                    )}
-                    <span>{isCurrent ? 'Open Operational Workspace' : 'Activate & Launch Workspace'}</span>
+                    ) : null}
+                    <span>{isCurrent ? 'Open' : 'Run'}</span>
                     <ArrowRight className="h-3.5 w-3.5 ml-1" />
                   </button>
                 </div>
