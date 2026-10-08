@@ -27,6 +27,7 @@ interface GridContextType {
   pfVariables: PowerFlowVariables;
   summary: PowerFlowSummary;
   loading: boolean;
+  modelsLoading: boolean;
   divergedNotice: string | null;
   setPfVariables: React.Dispatch<React.SetStateAction<PowerFlowVariables>>;
   toggleLine: (id: number) => void;
@@ -50,11 +51,16 @@ const DEFAULT_VARIABLES: PowerFlowVariables = {
   newGenerators: [],
 };
 
+const BACKEND_URLS = [
+  process.env.NEXT_PUBLIC_API_URL,
+  'https://national-power-backend.onrender.com',
+  'https://national-power-platform.onrender.com',
+].filter(Boolean) as string[];
+
 const GridContext = createContext<GridContextType | null>(null);
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://national-power-platform.onrender.com';
-
 export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  // Purely dynamic state: models starts empty until fetched or uploaded
   const [models, setModels] = useState<GridModelMeta[]>([]);
   const [activeModel, setActiveModel] = useState<GridModelMeta | null>(null);
   const [buses, setBuses] = useState<BusData[]>([]);
@@ -62,6 +68,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [trippedLines, setTrippedLines] = useState<number[]>([]);
   const [pfVariables, setPfVariables] = useState<PowerFlowVariables>(DEFAULT_VARIABLES);
   const [loading, setLoading] = useState<boolean>(false);
+  const [modelsLoading, setModelsLoading] = useState<boolean>(false);
   const [divergedNotice, setDivergedNotice] = useState<string | null>(null);
   const [summary, setSummary] = useState<PowerFlowSummary>({
     converged: true,
@@ -71,28 +78,24 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     total_losses_mw: 0.0,
   });
 
-  // 1. Fetch available grid models from backend
-  const fetchModels = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/models`);
-      if (res.ok) {
-        const data: GridModelMeta[] = await res.json();
-        setModels(data);
-
-        // Resolve active model from localStorage or default to first model
-        const savedId = typeof window !== 'undefined' ? localStorage.getItem('ml4ps_active_model_id') : null;
-        const matching = data.find((m) => m.id === savedId) || data.find((m) => m.is_active) || data[0];
-
-        if (matching && (!activeModel || activeModel.id !== matching.id)) {
-          setActiveModel(matching);
+  // Resilient API requester across backend candidate hosts
+  const apiFetch = useCallback(async (path: string, options?: RequestInit) => {
+    for (const base of BACKEND_URLS) {
+      try {
+        const cleanBase = base.replace(/\/+$/, '');
+        const cleanPath = path.startsWith('/') ? path : `/${path}`;
+        const res = await fetch(`${cleanBase}${cleanPath}`, options);
+        if (res.ok || res.status === 400 || res.status === 422) {
+          return res;
         }
+      } catch {
+        // Try fallback host
       }
-    } catch (err) {
-      console.error('Failed to fetch grid models:', err);
     }
-  }, [activeModel]);
+    throw new Error('Connection to power simulation backend failed.');
+  }, []);
 
-  // 2. Run AC Power Flow solver
+  // Run AC Power Flow
   const runSimulation = useCallback(
     async (customVars?: PowerFlowVariables, customTrips?: number[]) => {
       setLoading(true);
@@ -102,16 +105,28 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const tripsToRun = customTrips !== undefined ? customTrips : trippedLines;
 
       try {
-        const res = await fetch(`${API_BASE}/api/simulations/power-flow`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            pf_variables: varsToRun,
-            tripped_lines: tripsToRun,
-          }),
-        });
+        let res: Response | null = null;
+        try {
+          res = await apiFetch('/api/simulations/power-flow', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pf_variables: varsToRun,
+              tripped_lines: tripsToRun,
+            }),
+          });
+        } catch {
+          res = await apiFetch('/simulations/power-flow', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pf_variables: varsToRun,
+              tripped_lines: tripsToRun,
+            }),
+          });
+        }
 
-        if (res.ok) {
+        if (res && res.ok) {
           const data = await res.json();
           setBuses(data.buses || []);
           setLines(data.lines || []);
@@ -125,47 +140,122 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           });
 
           if (!data.converged || data.message) {
-            setDivergedNotice(data.message || 'Power flow diverged. Using continuation fallback approximation.');
+            setDivergedNotice(data.message || 'Power flow diverged. Using continuation fallback.');
           }
         }
       } catch (err: any) {
-        setDivergedNotice(err.message || 'Connection to AC power flow solver failed.');
+        setDivergedNotice(err.message || 'Connecting to AC solver...');
       } finally {
         setLoading(false);
       }
     },
-    [pfVariables, trippedLines]
+    [pfVariables, trippedLines, apiFetch]
   );
 
-  // 3. Activate model in memory
+  // Fetch only what exists in backend storage
+  const fetchModels = useCallback(async () => {
+    setModelsLoading(true);
+    try {
+      let res: Response | null = null;
+      try {
+        res = await apiFetch('/api/models');
+      } catch {
+        res = await apiFetch('/models');
+      }
+
+      if (res && res.ok) {
+        const data = await res.json();
+        const rawList: any[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data.models)
+          ? data.models
+          : Array.isArray(data.data)
+          ? data.data
+          : [];
+
+        const normalized: GridModelMeta[] = rawList.map((m: any) => ({
+          id: String(m.id || m.name),
+          name: m.name || m.filename || 'Unnamed Model',
+          voltage_level: m.voltage_level || m.voltage_class || '330kV',
+          platform: m.platform || m.format || 'MATPOWER',
+          buses: m.buses ?? m.bus_count ?? 0,
+          branches: m.branches ?? m.branch_count ?? m.line_count ?? 0,
+          total_installed_mw: m.total_installed_mw ?? m.total_capacity_mw ?? 0,
+          total_demand_mw: m.total_demand_mw ?? m.demand_mw ?? 0,
+          domain: m.domain || 'Static Power Flow',
+          is_active: Boolean(m.is_active),
+          converged: Boolean(m.converged ?? true),
+          is_default: Boolean(m.is_default),
+        }));
+
+        setModels(normalized);
+
+        const savedId = typeof window !== 'undefined' ? localStorage.getItem('ml4ps_active_model_id') : null;
+        const matching =
+          normalized.find((m) => m.id === savedId) ||
+          normalized.find((m) => m.is_active) ||
+          normalized[0] ||
+          null;
+
+        if (matching) {
+          setActiveModel(matching);
+        } else {
+          setActiveModel(null);
+        }
+      }
+    } catch {
+      // Backend asleep or network error
+    } finally {
+      setModelsLoading(false);
+    }
+  }, [apiFetch]);
+
+  // Activate model in memory
   const activateModel = useCallback(
     async (id: string) => {
       setLoading(true);
+
+      setModels((prev) =>
+        prev.map((m) => ({
+          ...m,
+          is_active: m.id === id,
+        }))
+      );
+
+      const match = models.find((m) => m.id === id);
+      if (match) {
+        setActiveModel({ ...match, is_active: true });
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('ml4ps_active_model_id', id);
+        }
+      }
+
       try {
-        const res = await fetch(`${API_BASE}/api/models/${id}/activate`, { method: 'POST' });
-        if (res.ok) {
+        let res: Response | null = null;
+        try {
+          res = await apiFetch(`/api/models/${id}/activate`, { method: 'POST' });
+        } catch {
+          res = await apiFetch(`/models/${id}/activate`, { method: 'POST' });
+        }
+
+        if (res && res.ok) {
           const data = await res.json();
           if (data.active_model) {
             setActiveModel(data.active_model);
-            if (typeof window !== 'undefined') {
-              localStorage.setItem('ml4ps_active_model_id', id);
-            }
           }
           setTrippedLines([]);
           setPfVariables(DEFAULT_VARIABLES);
           await runSimulation(DEFAULT_VARIABLES, []);
-          await fetchModels();
         }
-      } catch (err) {
-        console.error('Model activation failed:', err);
+      } catch {
+        await runSimulation(DEFAULT_VARIABLES, []);
       } finally {
         setLoading(false);
       }
     },
-    [runSimulation, fetchModels]
+    [models, apiFetch, runSimulation]
   );
 
-  // 4. Toggle N-1 Breaker
   const toggleLine = useCallback(
     (id: number) => {
       setTrippedLines((prev) => {
@@ -187,23 +277,37 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     runSimulation(DEFAULT_VARIABLES, trippedLines);
   }, [runSimulation, trippedLines]);
 
-  // 5. Trigger Cascading Failure Sequence
   const triggerCascade = useCallback(
     async (initialTripped: number[], threshold: number): Promise<CascadeResult> => {
-      const res = await fetch(`${API_BASE}/api/simulations/cascade`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          initial_tripped_lines: initialTripped,
-          overload_threshold_percent: threshold,
-          max_cascade_steps: 8,
-          load_multiplier: pfVariables.loadMultiplier,
-          slack_voltage_pu: pfVariables.slackVoltagePu,
-        }),
-      });
+      let res: Response | null = null;
+      try {
+        res = await apiFetch('/api/simulations/cascade', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            initial_tripped_lines: initialTripped,
+            overload_threshold_percent: threshold,
+            max_cascade_steps: 8,
+            load_multiplier: pfVariables.loadMultiplier,
+            slack_voltage_pu: pfVariables.slackVoltagePu,
+          }),
+        });
+      } catch {
+        res = await apiFetch('/simulations/cascade', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            initial_tripped_lines: initialTripped,
+            overload_threshold_percent: threshold,
+            max_cascade_steps: 8,
+            load_multiplier: pfVariables.loadMultiplier,
+            slack_voltage_pu: pfVariables.slackVoltagePu,
+          }),
+        });
+      }
       return await res.json();
     },
-    [pfVariables]
+    [pfVariables, apiFetch]
   );
 
   const applyCascadeTrips = useCallback(
@@ -214,7 +318,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     [runSimulation]
   );
 
-  // Initial load
   useEffect(() => {
     fetchModels();
   }, [fetchModels]);
@@ -236,6 +339,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         pfVariables,
         summary,
         loading,
+        modelsLoading,
         divergedNotice,
         setPfVariables,
         toggleLine,

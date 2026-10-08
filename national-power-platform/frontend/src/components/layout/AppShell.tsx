@@ -16,7 +16,6 @@ import {
   ChevronLeft,
   ChevronRight,
   LogOut,
-  Zap,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -52,7 +51,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
             {!collapsed && (
               <div className="truncate">
                 <span className="text-xs font-bold block truncate">Opeyemi Ibrahim Abubakar</span>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-700/80 font-mono font-semibold inline-block">
+                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-700 font-mono font-semibold inline-block">
                   Admin
                 </span>
               </div>
@@ -97,36 +96,47 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
         {/* Footer Tag */}
         {!collapsed && (
           <div className="p-3 border-t border-white/10 text-[10px] font-mono text-white/50 text-center">
-            ML4PS • FUT Minna 2026
+            Copyright 2026 National Power System Modelling & Simulation Platform | Machine Learning 4 Power Systems (ML4PS) | FUT Minna
           </div>
         )}
       </aside>
 
       {/* Main Content Viewport */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Top Operational Header */}
+        {/* Top Header with ML4PS Logo Badge */}
         <header className="h-14 border-b border-slate-200 bg-white flex items-center justify-between px-6 shrink-0 z-20">
-          <div className="flex items-center gap-2.5">
-            <div className="h-7 w-7 rounded-lg bg-[#500b50] text-white flex items-center justify-center">
-              <Zap className="h-4 w-4" />
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-lg border border-slate-200 bg-white p-1 flex items-center justify-center shadow-2xs shrink-0 overflow-hidden">
+              <img
+                src="/logo.png"
+                alt="ML4PS"
+                className="h-full w-full object-contain"
+                onError={(e) => {
+                  const target = e.currentTarget;
+                  if (!target.dataset.triedIcon) {
+                    target.dataset.triedIcon = 'true';
+                    target.src = '/icon.png';
+                  } else if (!target.dataset.triedFavicon) {
+                    target.dataset.triedFavicon = 'true';
+                    target.src = '/favicon.ico';
+                  }
+                }}
+              />
             </div>
             <div>
               <span className="font-black text-sm text-slate-900 tracking-tight block leading-none">
                 National Power System Simulation
               </span>
-              <span className="text-[10px] text-slate-400 font-mono mt-0.5 block leading-none">
-                Machine Learning 4 Power Systems (ML4PS) • NESI 330kV CAD
+              <span className="text-[10px] text-slate-500 font-medium mt-1 block leading-none">
+                Machine Learning 4 Power Systems (ML4PS) • FUT Minna
               </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 text-xs">
-            <span className="text-slate-500 font-medium hidden sm:inline">
-              Opeyemi Ibrahim Abubakar <span className="text-emerald-700 font-bold">(Admin)</span>
-            </span>
+          <div className="flex items-center gap-3">
             <button
               onClick={() => alert('Session active.')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold transition text-xs"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-orange-200 bg-orange-50/50 hover:bg-orange-100/70 text-orange-700 text-xs font-bold transition shadow-2xs"
             >
               <LogOut className="h-3.5 w-3.5" />
               <span>Log out</span>

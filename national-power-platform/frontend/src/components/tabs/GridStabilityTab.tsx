@@ -30,6 +30,7 @@ import {
   Trash2,
   Edit2,
   Lock,
+  UploadCloud,
 } from 'lucide-react';
 
 interface Props {
@@ -53,6 +54,8 @@ interface Props {
   isAdmin?: boolean;
   onDeleteModel?: (id: string) => Promise<void> | void;
   onEditModel?: (id: string, updated: Partial<GridModelMeta>) => Promise<void> | void;
+  onRefreshModels?: () => Promise<void> | void;
+  modelsLoading?: boolean;
 }
 
 interface GenAllocation {
@@ -122,10 +125,12 @@ export const GridStabilityTab: React.FC<Props> = ({
   onNavigateTab,
   onCascadeTrigger,
   onApplyCascadeTrips,
-  apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://national-power-platform.onrender.com',
+  apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://national-power-backend.onrender.com',
   isAdmin = true,
   onDeleteModel,
   onEditModel,
+  onRefreshModels,
+  modelsLoading = false,
 }) => {
   const activeModel = models.find((m) => m.is_active);
   const [workflowStep, setWorkflowStep] = useState<'select_model' | 'simulation_properties'>(
@@ -217,28 +222,30 @@ export const GridStabilityTab: React.FC<Props> = ({
     }
   }, [simSubTab, modelName]);
 
-  const filteredModels = models.filter((m) => {
-    const matchesDomain =
-      domainFilter === 'ALL' ||
-      (domainFilter === 'Static' && ((m.domain || '').includes('Static') || (m.domain || '').includes('Steady'))) ||
-      (domainFilter === 'Dynamic' && (m.domain || '').includes('Dynamic'));
+  const filteredModels = useMemo(() => {
+    return models.filter((m) => {
+      const matchesDomain =
+        domainFilter === 'ALL' ||
+        (domainFilter === 'Static' && ((m.domain || '').includes('Static') || (m.domain || '').includes('Steady'))) ||
+        (domainFilter === 'Dynamic' && (m.domain || '').includes('Dynamic'));
 
-    const level = (m.voltage_level || '').toLowerCase();
-    const matchesVoltage =
-      voltageFilter === 'ALL' ||
-      (voltageFilter === '330kV' && level.includes('330')) ||
-      (voltageFilter === '132kV' && (level.includes('132') || level.includes('130'))) ||
-      (voltageFilter === '130kV' && (level.includes('130') || level.includes('132')));
+      const level = (m.voltage_level || '').toLowerCase();
+      const matchesVoltage =
+        voltageFilter === 'ALL' ||
+        (voltageFilter === '330kV' && level.includes('330')) ||
+        (voltageFilter === '132kV' && (level.includes('132') || level.includes('130'))) ||
+        (voltageFilter === '130kV' && (level.includes('130') || level.includes('132')));
 
-    const matchesPlatform =
-      platformFilter === 'ALL' || (m.platform || '').toLowerCase().includes(platformFilter.toLowerCase());
+      const matchesPlatform =
+        platformFilter === 'ALL' || (m.platform || '').toLowerCase().includes(platformFilter.toLowerCase());
 
-    const matchesSearch =
-      (m.name || '').toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
-      (m.voltage_level || '').toLowerCase().includes(modelSearchQuery.toLowerCase());
+      const matchesSearch =
+        (m.name || '').toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
+        (m.voltage_level || '').toLowerCase().includes(modelSearchQuery.toLowerCase());
 
-    return matchesDomain && matchesVoltage && matchesPlatform && matchesSearch;
-  });
+      return matchesDomain && matchesVoltage && matchesPlatform && matchesSearch;
+    });
+  }, [models, domainFilter, voltageFilter, platformFilter, modelSearchQuery]);
 
   const filteredBuses = useMemo(() => {
     if (!busSearchQuery.trim()) return buses;
@@ -387,7 +394,7 @@ export const GridStabilityTab: React.FC<Props> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* STEP 1: CHOOSE AND MANAGE MODELS (Admin Operations)                      */}
+      {/* STEP 1: CHOOSE AND MANAGE MODELS                                          */}
       {/* ========================================================================= */}
       {workflowStep === 'select_model' && (
         <div className="space-y-6">
@@ -410,6 +417,16 @@ export const GridStabilityTab: React.FC<Props> = ({
                 <span className="text-xs font-mono font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-md">
                   {filteredModels.length} of {models.length} Models
                 </span>
+                {onRefreshModels && (
+                  <button
+                    onClick={() => onRefreshModels()}
+                    disabled={modelsLoading}
+                    className="p-1 text-slate-500 hover:text-slate-800 rounded transition"
+                    title="Refresh Models"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${modelsLoading ? 'animate-spin' : ''}`} />
+                  </button>
+                )}
               </div>
             </div>
 
@@ -477,127 +494,165 @@ export const GridStabilityTab: React.FC<Props> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {filteredModels.map((m) => {
-              const isCurrentActive = m.is_active || m.name === currentDisplayName;
+          {/* Dynamic Render: Clean Empty State vs Real Uploaded Models */}
+          {filteredModels.length === 0 ? (
+            <div className="p-12 text-center rounded-2xl border-2 border-dashed border-slate-200 bg-white">
+              <div className="h-14 w-14 rounded-2xl bg-purple-50 text-[#500b50] flex items-center justify-center mx-auto mb-3">
+                <UploadCloud className="h-7 w-7" />
+              </div>
+              <h3 className="text-base font-bold text-slate-900">
+                {modelsLoading ? 'Connecting to Grid Storage...' : 'No Simulation Models In Storage'}
+              </h3>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 font-mono">
+                {modelsLoading
+                  ? 'Retrieving model files from backend repository...'
+                  : 'Upload network models (.m, .130, .raw, .xlsx) in the Ingestion module to begin.'}
+              </p>
 
-              return (
-                <div
-                  key={m.id}
-                  className={`p-6 rounded-2xl border bg-white shadow-xs transition flex flex-col justify-between ${
-                    isCurrentActive
-                      ? 'border-emerald-500 ring-2 ring-emerald-500/20'
-                      : 'border-slate-200 hover:border-slate-300'
-                  }`}
+              <div className="mt-5 flex items-center justify-center gap-3">
+                <button
+                  onClick={() => onNavigateTab('Upload & Ingestion')}
+                  className="px-4 py-2 rounded-xl bg-[#500b50] hover:bg-[#680f68] text-white text-xs font-bold transition shadow-xs flex items-center gap-1.5"
                 >
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-purple-100 text-[#500b50]">
-                          {m.voltage_level}
-                        </span>
-                        <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-slate-100 text-slate-700">
-                          {m.platform}
-                        </span>
-                      </div>
+                  <Plus className="h-4 w-4" />
+                  <span>Upload Model</span>
+                </button>
 
-                      <div className="flex items-center gap-2">
-                        {isCurrentActive && (
-                          <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300 flex items-center gap-1.5">
-                            <Check className="h-3.5 w-3.5" />
-                            <span>Active Case</span>
-                          </span>
-                        )}
-
-                        {isAdmin && (
-                          <div className="flex items-center gap-1">
-                            {onEditModel && (
-                              <button
-                                onClick={async (e) => {
-                                  e.stopPropagation();
-                                  const newName = prompt('Update Model Name:', m.name);
-                                  if (newName && newName.trim()) {
-                                    await onEditModel(m.id, { name: newName.trim() });
-                                  }
-                                }}
-                                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
-                                title="Admin: Rename Model"
-                              >
-                                <Edit2 className="h-3.5 w-3.5" />
-                              </button>
-                            )}
-
-                            {onDeleteModel && (
-                              <button
-                                onClick={async (e) => {
-                                  e.stopPropagation();
-                                  if (confirm(`Admin Action: Permanently delete model "${m.name}"?`)) {
-                                    await onDeleteModel(m.id);
-                                  }
-                                }}
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
-                                title="Admin: Delete Model"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    <h3 className="text-base font-bold text-slate-900 leading-snug">{m.name}</h3>
-
-                    <div className="mt-4 grid grid-cols-2 gap-3 text-sm font-mono bg-slate-50 p-3 rounded-xl border border-slate-100">
-                      <div>
-                        <span className="text-xs text-slate-400 block font-sans font-medium">Substations</span>
-                        <span className="font-bold text-slate-900">{m.buses ?? 0} Buses</span>
-                      </div>
-                      <div>
-                        <span className="text-xs text-slate-400 block font-sans font-medium">Corridors</span>
-                        <span className="font-bold text-slate-900">{m.branches ?? 0} Lines</span>
-                      </div>
-                      <div>
-                        <span className="text-xs text-slate-400 block font-sans font-medium">Generation</span>
-                        <span className="font-bold text-[#500b50]">
-                          {(m.total_installed_mw ?? 0).toLocaleString()} MW
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-xs text-slate-400 block font-sans font-medium">Demand</span>
-                        <span className="font-bold text-slate-900">
-                          {(m.total_demand_mw ?? 0).toLocaleString()} MW
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
+                {onRefreshModels && (
                   <button
-                    onClick={() => handleActivateAndOpen(m.id)}
-                    disabled={activatingId !== null}
-                    className={`mt-5 w-full rounded-xl py-3 text-sm font-bold transition shadow-xs flex items-center justify-center gap-2 ${
+                    onClick={() => onRefreshModels()}
+                    disabled={modelsLoading}
+                    className="px-4 py-2 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold transition flex items-center gap-1.5"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${modelsLoading ? 'animate-spin' : ''}`} />
+                    <span>Refresh</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              {filteredModels.map((m) => {
+                const isCurrentActive = m.is_active || m.name === currentDisplayName;
+
+                return (
+                  <div
+                    key={m.id}
+                    className={`p-6 rounded-2xl border bg-white shadow-xs transition flex flex-col justify-between ${
                       isCurrentActive
-                        ? 'bg-emerald-700 text-white hover:bg-emerald-800'
-                        : 'bg-[#500b50] text-white hover:bg-[#680f68]'
+                        ? 'border-emerald-500 ring-2 ring-emerald-500/20'
+                        : 'border-slate-200 hover:border-slate-300'
                     }`}
                   >
-                    {activatingId === m.id ? (
-                      <>
-                        <RefreshCw className="h-4 w-4 animate-spin" />
-                        <span>Activating &amp; Solving Flow...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Zap className="h-4 w-4 text-amber-300" />
-                        <span>{isCurrentActive ? 'Load & Open Properties' : 'Activate & Open Model'}</span>
-                        <ArrowRight className="h-4 w-4" />
-                      </>
-                    )}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-purple-100 text-[#500b50]">
+                            {m.voltage_level}
+                          </span>
+                          <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-slate-100 text-slate-700">
+                            {m.platform}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {isCurrentActive && (
+                            <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300 flex items-center gap-1.5">
+                              <Check className="h-3.5 w-3.5" />
+                              <span>Active Case</span>
+                            </span>
+                          )}
+
+                          {isAdmin && (
+                            <div className="flex items-center gap-1">
+                              {onEditModel && (
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    const newName = prompt('Update Model Name:', m.name);
+                                    if (newName && newName.trim()) {
+                                      await onEditModel(m.id, { name: newName.trim() });
+                                    }
+                                  }}
+                                  className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
+                                  title="Admin: Rename Model"
+                                >
+                                  <Edit2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+
+                              {onDeleteModel && (
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (confirm(`Admin Action: Permanently delete model "${m.name}"?`)) {
+                                      await onDeleteModel(m.id);
+                                    }
+                                  }}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                                  title="Admin: Delete Model"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <h3 className="text-base font-bold text-slate-900 leading-snug">{m.name}</h3>
+
+                      <div className="mt-4 grid grid-cols-2 gap-3 text-sm font-mono bg-slate-50 p-3 rounded-xl border border-slate-100">
+                        <div>
+                          <span className="text-xs text-slate-400 block font-sans font-medium">Substations</span>
+                          <span className="font-bold text-slate-900">{m.buses ?? 0} Buses</span>
+                        </div>
+                        <div>
+                          <span className="text-xs text-slate-400 block font-sans font-medium">Corridors</span>
+                          <span className="font-bold text-slate-900">{m.branches ?? 0} Lines</span>
+                        </div>
+                        <div>
+                          <span className="text-xs text-slate-400 block font-sans font-medium">Generation</span>
+                          <span className="font-bold text-[#500b50]">
+                            {(m.total_installed_mw ?? 0).toLocaleString()} MW
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-xs text-slate-400 block font-sans font-medium">Demand</span>
+                          <span className="font-bold text-slate-900">
+                            {(m.total_demand_mw ?? 0).toLocaleString()} MW
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => handleActivateAndOpen(m.id)}
+                      disabled={activatingId !== null}
+                      className={`mt-5 w-full rounded-xl py-3 text-sm font-bold transition shadow-xs flex items-center justify-center gap-2 ${
+                        isCurrentActive
+                          ? 'bg-emerald-700 text-white hover:bg-emerald-800'
+                          : 'bg-[#500b50] text-white hover:bg-[#680f68]'
+                      }`}
+                    >
+                      {activatingId === m.id ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                          <span>Activating &amp; Solving Flow...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="h-4 w-4 text-amber-300" />
+                          <span>{isCurrentActive ? 'Load & Open Properties' : 'Activate & Open Model'}</span>
+                          <ArrowRight className="h-4 w-4" />
+                        </>
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

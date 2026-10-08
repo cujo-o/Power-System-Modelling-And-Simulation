@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useGrid } from '@/context/GridContext';
 import { GridStabilityTab } from '@/components/tabs/GridStabilityTab';
@@ -15,6 +15,7 @@ export default function StabilityPage() {
     runSimulation,
     resetPfVariables,
     loading,
+    modelsLoading,
     buses,
     lines,
     trippedLines,
@@ -26,9 +27,15 @@ export default function StabilityPage() {
     fetchModels,
   } = useGrid();
 
+  useEffect(() => {
+    fetchModels();
+  }, [fetchModels]);
+
   const handleDeleteModel = async (id: string) => {
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://national-power-platform.onrender.com'}/api/models/${id}`, {
+      const apiBase =
+        process.env.NEXT_PUBLIC_API_URL || 'https://national-power-backend.onrender.com';
+      const res = await fetch(`${apiBase}/api/models/${id}`, {
         method: 'DELETE',
       });
       if (res.ok) {
@@ -48,6 +55,7 @@ export default function StabilityPage() {
       runSimulation={runSimulation}
       onReset={resetPfVariables}
       loading={loading}
+      modelsLoading={modelsLoading}
       buses={buses}
       lines={lines}
       trippedLines={trippedLines}
@@ -55,7 +63,10 @@ export default function StabilityPage() {
       models={models}
       onActivateModel={activateModel}
       onNavigateTab={(tab) => {
-        if (tab.toLowerCase().includes('sld') || tab.toLowerCase().includes('single')) {
+        const norm = (tab || '').toLowerCase();
+        if (norm.includes('upload') || norm.includes('ingest')) {
+          router.push('/upload');
+        } else if (norm.includes('sld') || norm.includes('single')) {
           router.push('/sld');
         }
       }}
@@ -63,6 +74,7 @@ export default function StabilityPage() {
       onApplyCascadeTrips={applyCascadeTrips}
       isAdmin={true}
       onDeleteModel={handleDeleteModel}
+      onRefreshModels={fetchModels}
     />
   );
 }
