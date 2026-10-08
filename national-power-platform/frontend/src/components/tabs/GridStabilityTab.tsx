@@ -92,11 +92,38 @@ export const GridStabilityTab: React.FC<Props> = ({
 }) => {
   const activeModel = models.find((m) => m.is_active);
 
-  // Initial screen is always model selection
-  const [viewMode, setViewMode] = useState<'select_model' | 'workspace'>('select_model');
+  // Persist viewMode across route navigation
+  const [viewMode, setViewModeState] = useState<'select_model' | 'workspace'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('ml4ps_view_mode');
+      if (saved === 'workspace' || saved === 'select_model') return saved;
+    }
+    return 'select_model';
+  });
 
-  // Sub-tabs inside workspace
-  const [workspaceTab, setWorkspaceTab] = useState<'deck' | 'load_sharing' | 'cascade' | 'planning'>('deck');
+  const setViewMode = (mode: 'select_model' | 'workspace') => {
+    setViewModeState(mode);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('ml4ps_view_mode', mode);
+    }
+  };
+
+  // Persist workspace subtab across route navigation
+  const [workspaceTab, setWorkspaceTabState] = useState<'deck' | 'load_sharing' | 'cascade' | 'planning'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('ml4ps_workspace_subtab');
+      if (saved) return saved as any;
+    }
+    return 'deck';
+  });
+
+  const setWorkspaceTab = (tab: 'deck' | 'load_sharing' | 'cascade' | 'planning') => {
+    setWorkspaceTabState(tab);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('ml4ps_workspace_subtab', tab);
+    }
+  };
+
   const [deckView, setDeckView] = useState<'buses' | 'lines'>('buses');
   const [activatingId, setActivatingId] = useState<string | null>(null);
 
@@ -107,7 +134,7 @@ export const GridStabilityTab: React.FC<Props> = ({
   const [platformFilter, setPlatformFilter] = useState<string>('ALL');
   const [busSearchQuery, setBusSearchQuery] = useState('');
 
-  // Cascade State (Numeric input with preset buttons)
+  // Cascade State
   const [cascadeThreshold, setCascadeThreshold] = useState<number>(100);
   const [initialTripLine, setInitialTripLine] = useState<number>(0);
   const [cascadeLoading, setCascadeLoading] = useState(false);
@@ -144,7 +171,6 @@ export const GridStabilityTab: React.FC<Props> = ({
   // Regional Planning State: 4. Decommission Sandbox
   const [selectedDecommissionBus, setSelectedDecommissionBus] = useState<number>(1);
 
-  // Debounced input handler for live recalculation
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleLiveParamChange = (field: keyof ExtendedPowerFlowVariables, value: any) => {
@@ -494,7 +520,7 @@ export const GridStabilityTab: React.FC<Props> = ({
   // =========================================================================
   return (
     <div className="space-y-4 max-w-7xl mx-auto py-1 text-slate-800">
-      {/* Top Workspace Header Bar */}
+      {/* Workspace Top Bar with "Switch Model" button and Subtabs */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 gap-3">
         <div className="flex items-center gap-2">
           <button
@@ -506,11 +532,13 @@ export const GridStabilityTab: React.FC<Props> = ({
             <span>Switch Model</span>
           </button>
 
-          <div className="flex items-center gap-2">
-            <span className="font-black text-sm text-slate-900 tracking-tight">{currentDisplayName}</span>
-            <span className="text-[10px] font-mono px-2 py-0.2 rounded bg-emerald-100 text-emerald-800 font-bold">
-              {buses.length} Substations • {lines.length} Branches
-            </span>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-black text-sm text-slate-900 tracking-tight">{currentDisplayName}</span>
+              <span className="text-[10px] font-mono px-2 py-0.2 rounded bg-emerald-100 text-emerald-800 font-bold">
+                {buses.length} Substations • {lines.length} Branches
+              </span>
+            </div>
           </div>
         </div>
 
@@ -750,7 +778,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                   className="border border-slate-300 rounded px-2.5 py-1 text-xs w-44 bg-white"
                 />
                 <button
-                  onClick={onReset}
+                  onClick={() => onReset()}
                   className="flex items-center gap-1 px-2.5 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold"
                 >
                   <RotateCcw className="h-3 w-3" />
@@ -916,6 +944,7 @@ export const GridStabilityTab: React.FC<Props> = ({
             </div>
           </div>
 
+          {/* Parallel Circuits Impedance Division */}
           {loadSharingResult?.parallel_corridors && loadSharingResult.parallel_corridors.length > 0 && (
             <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
               <div className="flex items-center justify-between pb-2 border-b border-slate-100">
