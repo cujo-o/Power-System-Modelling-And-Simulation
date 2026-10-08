@@ -552,21 +552,15 @@ export default function PowerPlatformDashboard() {
               />
             )}
 
-            <div
-              style={{
-                display: activeTab === "Data Upload" ? "block" : "none",
-              }}
-            >
-              {activeTab === "Upload & Ingestion" && (
-                <UploadTab
-                  onNavigateToStability={() =>
-                    setActiveTab("Grid Stability Models")
-                  }
-                  userName={currentUser?.name || "Operator"}
-                  userInstitution="FUT Minna"
-                />
-              )}
-            </div>
+            {activeTab === "Upload & Ingestion" && (
+              <UploadTab
+                onNavigateToStability={() =>
+                  setActiveTab("Grid Stability Models")
+                }
+                userName={currentUser?.name || "Operator"}
+                userInstitution="FUT Minna"
+              />
+            )}
 
             {activeTab === "Visualization" && (
               <>
