@@ -65,36 +65,40 @@ const BACKEND_URLS = [
   'https://national-power-platform.onrender.com',
 ].filter(Boolean) as string[];
 
-// Dynamic normalizer: Maps Supabase grid_models table columns to GridModelMeta
+// Dynamic normalizer: Maps Supabase grid_models table columns
 function normalizeRawModel(m: any): GridModelMeta {
   const vLevel =
-    m.voltage_level ||
-    m.voltage_class ||
-    (m.name?.includes('132') ? '132kV' : m.name?.includes('130') ? '130kV' : '330kV');
+    m?.voltage_level ||
+    m?.voltage_class ||
+    (m?.name?.includes('132') ? '132kV' : m?.name?.includes('130') ? '130kV' : '330kV');
 
   const domain =
-    m.domain ||
-    (m.name?.toLowerCase().includes('dynamic')
+    m?.domain ||
+    (m?.name?.toLowerCase().includes('dynamic')
       ? 'Dynamic & Transient'
       : 'Static Power Flow');
 
   const totalCap =
-    m.total_installed_mw ?? m.total_capacity_mw ?? m.installed_capacity ?? m.capacity_mw ?? 0;
+    m?.total_installed_mw ??
+    m?.total_capacity_mw ??
+    m?.installed_capacity ??
+    m?.capacity_mw ??
+    0;
 
-  return {
-    id: String(m.id || m.name),
-    name: String(m.name || m.filename || 'Unnamed Model'),
+  const rawObj: any = {
+    id: String(m?.id || m?.name || 'model-' + Math.random().toString(36).substring(7)),
+    name: String(m?.name || m?.filename || 'Unnamed Model'),
     voltage_level: String(vLevel),
-    platform: String(m.platform || m.format || 'MATPOWER'),
-    buses: Number(m.buses ?? m.bus_count ?? m.num_buses ?? 0),
-    branches: Number(m.branches ?? m.branch_count ?? m.num_branches ?? m.line_count ?? 0),
+    platform: String(m?.format || m?.platform || 'MATPOWER'),
+    buses: Number(m?.buses ?? m?.bus_count ?? 0),
+    branches: Number(m?.branches ?? m?.branch_count ?? m?.line_count ?? 0),
     total_installed_mw: Number(totalCap),
-    total_demand_mw: Number(m.total_demand_mw ?? m.demand_mw ?? 0),
+    total_demand_mw: Number(m?.total_demand_mw ?? m?.demand_mw ?? 0),
     domain: String(domain),
-    converged: Boolean(m.converged ?? true),
-    is_default: Boolean(m.is_default ?? false),
-    is_active: Boolean(m.is_active),
+    is_active: Boolean(m?.is_active),
   };
+
+  return rawObj as GridModelMeta;
 }
 
 const GridContext = createContext<GridContextType | null>(null);
@@ -127,7 +131,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           return res;
         }
       } catch {
-        // Fallback
+        // Fallback to next host
       }
     }
     throw new Error('Connection to backend failed.');
@@ -138,18 +142,21 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setModelsLoading(true);
     let retrieved: GridModelMeta[] = [];
 
+    // 1. Direct query on Supabase 'grid_models' table
     if (supabase) {
       try {
         const { data, error } = await supabase.from('grid_models').select('*');
         if (!error && Array.isArray(data) && data.length > 0) {
           retrieved = data.map(normalizeRawModel);
+        } else if (error) {
+          console.warn('Supabase grid_models query notice:', error.message);
         }
       } catch (err) {
-        console.warn('Supabase grid_models query notice:', err);
+        console.warn('Supabase grid_models query error:', err);
       }
     }
 
-    // Fallback: Query backend API /api/models if Supabase client is unauthenticated
+    // 2. Query backend API if Supabase table query was empty
     if (retrieved.length === 0) {
       for (const base of BACKEND_URLS) {
         try {
@@ -186,14 +193,37 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setModelsLoading(false);
   }, []);
 
-  // Run AC Power Flow
+  // Run AC Power Flow (impervious to MouseEvent / DOM objects)
   const runSimulation = useCallback(
-    async (customVars?: PowerFlowVariables, customTrips?: number[]) => {
+    async (customVars?: any, customTrips?: any) => {
       setLoading(true);
       setDivergedNotice(null);
 
-      const varsToRun = customVars || pfVariables;
-      const tripsToRun = customTrips !== undefined ? customTrips : trippedLines;
+      // Guard: Ignore React MouseEvent / DOM elements if passed from onClick
+      const isRealPfVar =
+        customVars &&
+        typeof customVars === 'object' &&
+        !('nativeEvent' in customVars) &&
+        !('target' in customVars) &&
+        ('loadMultiplier' in customVars || 'slackVoltagePu' in customVars);
+
+      const varsToRun = isRealPfVar ? customVars : pfVariables;
+      const tripsToRun = Array.isArray(customTrips) ? customTrips : trippedLines;
+
+      // Pure JSON-serializable payload
+      const payload = {
+        pf_variables: {
+          loadMultiplier: Number(varsToRun?.loadMultiplier ?? 1.0),
+          targetPowerFactor: Number(varsToRun?.targetPowerFactor ?? 0.9),
+          slackVoltagePu: Number(varsToRun?.slackVoltagePu ?? 1.05),
+          shuntMvarCompensation: Number(varsToRun?.shuntMvarCompensation ?? 0.0),
+          thermalDeratingFactor: Number(varsToRun?.thermalDeratingFactor ?? 1.0),
+          newBuses: Array.isArray(varsToRun?.newBuses) ? varsToRun.newBuses : [],
+          newLines: Array.isArray(varsToRun?.newLines) ? varsToRun.newLines : [],
+          newGenerators: Array.isArray(varsToRun?.newGenerators) ? varsToRun.newGenerators : [],
+        },
+        tripped_lines: tripsToRun.filter((id: any): id is number => typeof id === 'number'),
+      };
 
       try {
         let res: Response | null = null;
@@ -201,19 +231,13 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           res = await apiFetch('/api/simulations/power-flow', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              pf_variables: varsToRun,
-              tripped_lines: tripsToRun,
-            }),
+            body: JSON.stringify(payload),
           });
         } catch {
           res = await apiFetch('/simulations/power-flow', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              pf_variables: varsToRun,
-              tripped_lines: tripsToRun,
-            }),
+            body: JSON.stringify(payload),
           });
         }
 
