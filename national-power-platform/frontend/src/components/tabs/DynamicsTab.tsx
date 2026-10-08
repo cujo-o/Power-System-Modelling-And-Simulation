@@ -695,7 +695,7 @@ export const DynamicsTab: React.FC<Props> = ({
                       }}
                     >
                       <span className="font-bold text-slate-800 block border-b pb-1">
-                        t = {freqHoverData.time.toFixed(2)}s Telemetry
+                        t = {freqHoverData.time.toFixed(2)}s
                       </span>
                       <div className="flex items-center justify-between gap-4 text-emerald-700 font-bold">
                         <span>Protected:</span>

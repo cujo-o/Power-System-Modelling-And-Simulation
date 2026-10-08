@@ -66,7 +66,7 @@ const WORKFORCE_ROSTER: TeamMember[] = [
     department: 'NESI Transmission & System Operations (NCC)',
     institution: 'Federal University of Technology, Minna',
     image: '/team/adamu.jpg',
-    bio: 'Overseeing grid telemetry synchronization, national utility operations liaison, and real-time contingency validation.',
+    bio: ' national utility operations liaison, and real-time contingency validation.',
   },
   {
     id: 'buhari-copi',
