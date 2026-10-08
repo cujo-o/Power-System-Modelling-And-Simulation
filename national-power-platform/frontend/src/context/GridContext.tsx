@@ -10,7 +10,7 @@ import {
   CascadeResult,
 } from '@/types/grid';
 
-// Initialize Supabase Client
+// Initialize Supabase Client pointing to your project (hoggydryloidupqprwpl)
 const supabaseUrl =
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://hoggydryloidupqprwpl.supabase.co';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -64,7 +64,7 @@ const BACKEND_URLS = [
   'https://national-power-backend.onrender.com',
 ].filter(Boolean) as string[];
 
-// Normalizer mapping Supabase grid_models table columns
+// Dynamic normalizer mapping Supabase grid_models table columns
 function normalizeRawModel(m: any): GridModelMeta {
   const vLevel =
     m?.voltage_level ||
@@ -120,7 +120,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     total_losses_mw: 0.0,
   });
 
-  // Resilient API requester that handles server responses without dropping on 405
   const apiFetch = useCallback(async (path: string, options?: RequestInit) => {
     let lastError: any = null;
     for (const base of BACKEND_URLS) {
@@ -146,6 +145,8 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { data, error } = await supabase.from('grid_models').select('*');
         if (!error && Array.isArray(data) && data.length > 0) {
           retrieved = data.map(normalizeRawModel);
+        } else if (error) {
+          console.warn('Supabase grid_models query notice:', error.message);
         }
       } catch (err) {
         console.warn('Supabase grid_models query error:', err);
@@ -188,7 +189,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setModelsLoading(false);
   }, []);
 
-  // Run AC Power Flow (passes active model identifiers to prevent solver memory starvation)
+  // Run AC Power Flow (passes active model parameters so the solver loads the network)
   const runSimulation = useCallback(
     async (customVars?: any, customTrips?: any, overrideModelId?: string, overrideModelName?: string) => {
       setLoading(true);
@@ -266,7 +267,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     [pfVariables, trippedLines, activeModel, apiFetch]
   );
 
-  // Activate model: Handles both POST and GET routes across backend conventions
+  // Activate model: Uses OpenAPI route discovery + REST selection routes
   const activateModel = useCallback(
     async (id: string) => {
       setLoading(true);
@@ -296,43 +297,122 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } catch {}
       }
 
-      // Candidate methods and routes to resolve 405 Method Not Allowed
-      const candidateRequests = [
-        { path: `/api/models/${encodeURIComponent(modelName)}/activate`, method: 'POST' },
-        { path: `/api/models/${encodeURIComponent(modelName)}/activate`, method: 'GET' },
-        { path: `/api/models/${encodeURIComponent(modelIdentifier)}/activate`, method: 'POST' },
-        { path: `/api/models/${encodeURIComponent(modelIdentifier)}/activate`, method: 'GET' },
-        {
-          path: `/api/models/activate`,
-          method: 'POST',
-          body: JSON.stringify({ model_id: modelIdentifier, model_name: modelName, filename: modelName }),
-        },
-        { path: `/models/${encodeURIComponent(modelName)}/activate`, method: 'POST' },
-        { path: `/models/${encodeURIComponent(modelName)}/activate`, method: 'GET' },
-      ];
+      let activatedData: any = null;
 
-      for (const req of candidateRequests) {
-        try {
-          const res = await apiFetch(req.path, {
-            method: req.method,
-            headers: req.body ? { 'Content-Type': 'application/json' } : undefined,
-            body: req.body,
-          });
+      // 1. Discover exact routes from backend OpenAPI specification
+      try {
+        const specRes = await apiFetch('/openapi.json');
+        if (specRes.ok) {
+          const spec = await specRes.json();
+          const paths: Record<string, any> = spec.paths || {};
 
-          if (res.ok) {
-            const data = await res.json();
-            if (data.active_model) setActiveModel(data.active_model);
-            if (data.buses && data.buses.length > 0) setBuses(data.buses);
-            if (data.lines && data.lines.length > 0) setLines(data.lines);
-            break;
+          for (const [pathKey, pathMethods] of Object.entries(paths)) {
+            const isModelPath =
+              (pathKey.includes('/models') || pathKey.includes('/model')) &&
+              !pathKey.includes('/power-flow') &&
+              !pathKey.includes('/cascade') &&
+              !pathKey.includes('/dynamics') &&
+              !pathKey.includes('/market') &&
+              !pathKey.includes('/upload');
+
+            if (isModelPath) {
+              const methods = Object.keys(pathMethods as object).map((m) => m.toLowerCase());
+              const resolvedPath = pathKey
+                .replace('{model_id}', encodeURIComponent(modelIdentifier))
+                .replace('{id}', encodeURIComponent(modelIdentifier))
+                .replace('{model_name}', encodeURIComponent(modelName))
+                .replace('{name}', encodeURIComponent(modelName))
+                .replace('{filename}', encodeURIComponent(modelName));
+
+              for (const method of methods) {
+                if (method === 'delete') continue;
+                const isGet = method === 'get';
+                const body = isGet
+                  ? undefined
+                  : JSON.stringify({
+                      model_id: modelIdentifier,
+                      id: modelIdentifier,
+                      model_name: modelName,
+                      name: modelName,
+                      filename: modelName,
+                    });
+
+                try {
+                  const res = await apiFetch(resolvedPath, {
+                    method: method.toUpperCase(),
+                    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+                    body,
+                  });
+
+                  if (res.ok) {
+                    const data = await res.json();
+                    if (data && (data.buses || data.active_model || data.status === 'ok' || data.name)) {
+                      activatedData = data;
+                      break;
+                    }
+                  }
+                } catch {}
+              }
+              if (activatedData) break;
+            }
           }
-        } catch {
-          // Continue to next candidate
+        }
+      } catch (err) {
+        console.warn('OpenAPI discovery fallback:', err);
+      }
+
+      // 2. Fallback candidate list without /activate
+      if (!activatedData) {
+        const candidateRequests = [
+          { path: `/api/models/${encodeURIComponent(modelIdentifier)}`, method: 'GET' },
+          { path: `/api/models/${encodeURIComponent(modelName)}`, method: 'GET' },
+          { path: `/api/models/${encodeURIComponent(modelIdentifier)}/select`, method: 'POST' },
+          { path: `/api/models/${encodeURIComponent(modelName)}/select`, method: 'POST' },
+          {
+            path: `/api/models/select`,
+            method: 'POST',
+            body: JSON.stringify({ model_id: modelIdentifier, model_name: modelName, filename: modelName }),
+          },
+          { path: `/api/models/${encodeURIComponent(modelIdentifier)}/load`, method: 'POST' },
+          { path: `/api/models/${encodeURIComponent(modelName)}/load`, method: 'POST' },
+          { path: `/api/models/${encodeURIComponent(modelIdentifier)}/select`, method: 'GET' },
+          { path: `/models/${encodeURIComponent(modelIdentifier)}`, method: 'GET' },
+          { path: `/models/${encodeURIComponent(modelName)}`, method: 'GET' },
+          { path: `/models/select`, method: 'POST', body: JSON.stringify({ model_id: modelIdentifier, model_name: modelName }) },
+        ];
+
+        for (const req of candidateRequests) {
+          try {
+            const res = await apiFetch(req.path, {
+              method: req.method,
+              headers: req.body ? { 'Content-Type': 'application/json' } : undefined,
+              body: req.body,
+            });
+
+            if (res.ok) {
+              const data = await res.json();
+              activatedData = data;
+              break;
+            }
+          } catch {}
+        }
+      }
+
+      // Apply returned telemetry directly if provided
+      if (activatedData) {
+        if (activatedData.active_model) setActiveModel(activatedData.active_model);
+        if (Array.isArray(activatedData.buses) && activatedData.buses.length > 0) {
+          setBuses(activatedData.buses);
+        }
+        if (Array.isArray(activatedData.lines) && activatedData.lines.length > 0) {
+          setLines(activatedData.lines);
         }
       }
 
       setTrippedLines([]);
       setPfVariables(DEFAULT_VARIABLES);
+
+      // Solve AC power flow for the chosen network
       await runSimulation(DEFAULT_VARIABLES, [], modelIdentifier, modelName);
       setLoading(false);
     },
