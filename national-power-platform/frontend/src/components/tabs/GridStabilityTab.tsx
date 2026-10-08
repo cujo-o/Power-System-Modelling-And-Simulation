@@ -27,6 +27,9 @@ import {
   Power,
   Activity,
   Info,
+  Trash2,
+  Edit2,
+  Lock,
 } from 'lucide-react';
 
 interface Props {
@@ -47,6 +50,9 @@ interface Props {
   onCascadeTrigger: (initialTripped: number[], threshold: number) => Promise<CascadeResult>;
   onApplyCascadeTrips: (trippedList: number[]) => void;
   apiBaseUrl?: string;
+  isAdmin?: boolean;
+  onDeleteModel?: (id: string) => Promise<void> | void;
+  onEditModel?: (id: string, updated: Partial<GridModelMeta>) => Promise<void> | void;
 }
 
 interface GenAllocation {
@@ -117,20 +123,22 @@ export const GridStabilityTab: React.FC<Props> = ({
   onCascadeTrigger,
   onApplyCascadeTrips,
   apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://national-power-platform.onrender.com',
+  isAdmin = true,
+  onDeleteModel,
+  onEditModel,
 }) => {
   const activeModel = models.find((m) => m.is_active);
   const [workflowStep, setWorkflowStep] = useState<'select_model' | 'simulation_properties'>(
     buses.length > 0 ? 'simulation_properties' : 'select_model'
   );
 
-  // Sub-tab Navigation inside Grid Stability Studio
   const [simSubTab, setSimSubTab] = useState<'deck' | 'load_sharing' | 'cascade' | 'planning'>('deck');
   const [deckView, setDeckView] = useState<'buses' | 'lines'>('buses');
   const [activatingId, setActivatingId] = useState<string | null>(null);
 
   // Filters & Search
   const [domainFilter, setDomainFilter] = useState<'ALL' | 'Static' | 'Dynamic'>('ALL');
-  const [voltageFilter, setVoltageFilter] = useState<'ALL' | '330kV' | '132kV'>('ALL');
+  const [voltageFilter, setVoltageFilter] = useState<'ALL' | '330kV' | '132kV' | '130kV'>('ALL');
   const [platformFilter, setPlatformFilter] = useState<string>('ALL');
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [busSearchQuery, setBusSearchQuery] = useState('');
@@ -180,7 +188,6 @@ export const GridStabilityTab: React.FC<Props> = ({
     }
   }, [buses, newLineFrom, newLineTo, newGenBus]);
 
-  // Load Sharing Solver Execution (100% Dynamic, zero hardcoded parameters)
   const runLoadSharingCalculation = async () => {
     setLoadSharingLoading(true);
     try {
@@ -215,12 +222,21 @@ export const GridStabilityTab: React.FC<Props> = ({
       domainFilter === 'ALL' ||
       (domainFilter === 'Static' && ((m.domain || '').includes('Static') || (m.domain || '').includes('Steady'))) ||
       (domainFilter === 'Dynamic' && (m.domain || '').includes('Dynamic'));
-    const matchesVoltage = voltageFilter === 'ALL' || (m.voltage_level || '').includes(voltageFilter);
+
+    const level = (m.voltage_level || '').toLowerCase();
+    const matchesVoltage =
+      voltageFilter === 'ALL' ||
+      (voltageFilter === '330kV' && level.includes('330')) ||
+      (voltageFilter === '132kV' && (level.includes('132') || level.includes('130'))) ||
+      (voltageFilter === '130kV' && (level.includes('130') || level.includes('132')));
+
     const matchesPlatform =
       platformFilter === 'ALL' || (m.platform || '').toLowerCase().includes(platformFilter.toLowerCase());
+
     const matchesSearch =
       (m.name || '').toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
       (m.voltage_level || '').toLowerCase().includes(modelSearchQuery.toLowerCase());
+
     return matchesDomain && matchesVoltage && matchesPlatform && matchesSearch;
   });
 
@@ -331,7 +347,6 @@ export const GridStabilityTab: React.FC<Props> = ({
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Workflow Header Navigator */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 gap-3">
         <div>
           <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
@@ -352,7 +367,7 @@ export const GridStabilityTab: React.FC<Props> = ({
             }`}
           >
             <Search className="h-4 w-4" />
-            <span>1. Choose / Activate Model</span>
+            <span>1. Choose / Manage Models</span>
           </button>
 
           <span className="text-slate-300 px-2">/</span>
@@ -372,18 +387,30 @@ export const GridStabilityTab: React.FC<Props> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* STEP 1: CHOOSE AND ACTIVATE MODEL                                         */}
+      {/* STEP 1: CHOOSE AND MANAGE MODELS (Admin Operations)                      */}
       {/* ========================================================================= */}
       {workflowStep === 'select_model' && (
         <div className="space-y-6">
           <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-sm font-bold uppercase tracking-wider text-slate-800">
-                Filter Grid Models
+                Filter Registered Models
               </span>
-              <span className="text-xs font-mono font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-md">
-                {filteredModels.length} of {models.length} Models
-              </span>
+              <div className="flex items-center gap-2">
+                {isAdmin ? (
+                  <span className="text-xs font-mono font-bold text-purple-900 bg-purple-50 border border-purple-200 px-2.5 py-1 rounded-md flex items-center gap-1">
+                    <span>Admin Mode Active</span>
+                  </span>
+                ) : (
+                  <span className="text-xs font-mono text-slate-500 bg-slate-100 px-2.5 py-1 rounded-md flex items-center gap-1">
+                    <Lock className="h-3 w-3" />
+                    <span>Read Only</span>
+                  </span>
+                )}
+                <span className="text-xs font-mono font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-md">
+                  {filteredModels.length} of {models.length} Models
+                </span>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -393,7 +420,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. 330kV, 132kV, IEEE..."
+                  placeholder="e.g. 330kV, 132kV, 130kV, IEEE..."
                   value={modelSearchQuery}
                   onChange={(e) => setModelSearchQuery(e.target.value)}
                   className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:border-[#500b50] bg-white font-medium"
@@ -409,7 +436,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                   onChange={(e: any) => setDomainFilter(e.target.value)}
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-800 text-sm"
                 >
-                  <option value="ALL">All Domains (Static &amp; Dynamic)</option>
+                  <option value="ALL">All Domains</option>
                   <option value="Static">Static Power Flow</option>
                   <option value="Dynamic">Dynamic &amp; Transient</option>
                 </select>
@@ -427,6 +454,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                   <option value="ALL">All Voltage Classes</option>
                   <option value="330kV">330 kV Bulk Backbone</option>
                   <option value="132kV">132 kV Sub-Transmission</option>
+                  <option value="130kV">130 kV Regional Feeder</option>
                 </select>
               </div>
 
@@ -439,11 +467,11 @@ export const GridStabilityTab: React.FC<Props> = ({
                   onChange={(e) => setPlatformFilter(e.target.value)}
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-800 text-sm"
                 >
-                  <option value="ALL">All Tool Formats</option>
+                  <option value="ALL">All Formats</option>
                   <option value="MATPOWER">MATPOWER (.m)</option>
-                  <option value="PSAT">PSAT</option>
+                  <option value="PSAT">PSAT / .130</option>
                   <option value="DIgSILENT">DIgSILENT PowerFactory</option>
-                  <option value="ETAP">ETAP (.xlsx)</option>
+                  <option value="ETAP">ETAP</option>
                 </select>
               </div>
             </div>
@@ -473,12 +501,49 @@ export const GridStabilityTab: React.FC<Props> = ({
                         </span>
                       </div>
 
-                      {isCurrentActive && (
-                        <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300 flex items-center gap-1.5">
-                          <Check className="h-3.5 w-3.5" />
-                          <span>Active Case</span>
-                        </span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {isCurrentActive && (
+                          <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300 flex items-center gap-1.5">
+                            <Check className="h-3.5 w-3.5" />
+                            <span>Active Case</span>
+                          </span>
+                        )}
+
+                        {isAdmin && (
+                          <div className="flex items-center gap-1">
+                            {onEditModel && (
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  const newName = prompt('Update Model Name:', m.name);
+                                  if (newName && newName.trim()) {
+                                    await onEditModel(m.id, { name: newName.trim() });
+                                  }
+                                }}
+                                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
+                                title="Admin: Rename Model"
+                              >
+                                <Edit2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+
+                            {onDeleteModel && (
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  if (confirm(`Admin Action: Permanently delete model "${m.name}"?`)) {
+                                    await onDeleteModel(m.id);
+                                  }
+                                }}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                                title="Admin: Delete Model"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <h3 className="text-base font-bold text-slate-900 leading-snug">{m.name}</h3>
@@ -489,7 +554,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                         <span className="font-bold text-slate-900">{m.buses ?? 0} Buses</span>
                       </div>
                       <div>
-                        <span className="text-xs text-slate-400 block font-sans font-medium">Transmission Lines</span>
+                        <span className="text-xs text-slate-400 block font-sans font-medium">Corridors</span>
                         <span className="font-bold text-slate-900">{m.branches ?? 0} Lines</span>
                       </div>
                       <div>
@@ -519,7 +584,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                     {activatingId === m.id ? (
                       <>
                         <RefreshCw className="h-4 w-4 animate-spin" />
-                        <span>Activating &amp; Solving Grid Flow...</span>
+                        <span>Activating &amp; Solving Flow...</span>
                       </>
                     ) : (
                       <>
@@ -541,7 +606,6 @@ export const GridStabilityTab: React.FC<Props> = ({
       {/* ========================================================================= */}
       {workflowStep === 'simulation_properties' && (
         <div className="space-y-6">
-          {/* Active Model Indicator Header */}
           <div className="p-5 rounded-2xl border border-slate-200 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
             <div className="flex items-center gap-4">
               <div className="h-12 w-12 rounded-xl bg-[#500b50] text-white flex items-center justify-center shrink-0">
@@ -557,7 +621,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                 <span className="text-xs text-slate-500 font-mono">
                   {buses.length > 0 ? (
                     <>
-                      {buses.length} Substations • {lines.length} Corridors • Statutory Band: 0.95–1.05 pu
+                      {buses.length} Substations • {lines.length} Corridors • Band: 0.95–1.05 pu
                       {trippedLines.length > 0 && (
                         <span className="text-rose-600 font-bold ml-2">
                           ({trippedLines.length} Line(s) Tripped on $N-1$)
@@ -593,12 +657,11 @@ export const GridStabilityTab: React.FC<Props> = ({
                 onClick={() => setWorkflowStep('select_model')}
                 className="flex items-center gap-2 rounded-xl border border-slate-300 bg-slate-50 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100 transition shadow-xs"
               >
-                <span>Switch / Select Model</span>
+                <span>Switch / Manage Models</span>
               </button>
             </div>
           </div>
 
-          {/* Sub-Tabs Selector inside Grid Stability */}
           <div className="flex flex-wrap rounded-xl border border-slate-200 bg-white p-1 text-sm shadow-xs w-fit gap-1">
             <button
               onClick={() => setSimSubTab('deck')}
@@ -646,9 +709,7 @@ export const GridStabilityTab: React.FC<Props> = ({
             </button>
           </div>
 
-          {/* ========================================================================= */}
-          {/* SUB-VIEW 1: OPERATIONAL VARIABLES DECK                                    */}
-          {/* ========================================================================= */}
+          {/* SUB-VIEW 1: OPERATIONAL VARIABLES DECK */}
           {simSubTab === 'deck' && (
             <div className="space-y-6">
               {divergedNotice && (
@@ -658,14 +719,12 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </div>
               )}
 
-              {/* Input Deck with Numeric Precision and Tooltips */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-                {/* 1. Demand Scale */}
                 <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-2.5">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold uppercase text-slate-600 flex items-center">
                       <span>Demand Scale</span>
-                      <TooltipBadge content="System-wide active load scaling factor (λ). Proportioned dynamically across all bulk consumption and regional nodes." />
+                      <TooltipBadge content="System-wide active load scaling factor. Proportioned dynamically across all bulk consumption and regional nodes." />
                     </label>
                     <span className="text-xs font-mono font-bold text-purple-900">
                       {(pfVariables.loadMultiplier || 1.0).toFixed(2)}x
@@ -706,12 +765,11 @@ export const GridStabilityTab: React.FC<Props> = ({
                   </div>
                 </div>
 
-                {/* 2. Power Factor */}
                 <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-2.5">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold uppercase text-slate-600 flex items-center">
                       <span>Power Factor (cos φ)</span>
-                      <TooltipBadge content="Operating active-to-apparent power ratio (P/S). Determines inductive reactive MVAR demand across all substation load centers." />
+                      <TooltipBadge content="Operating active-to-apparent power ratio. Determines inductive reactive MVAR demand across all substation load centers." />
                     </label>
                   </div>
 
@@ -735,12 +793,11 @@ export const GridStabilityTab: React.FC<Props> = ({
                   </span>
                 </div>
 
-                {/* 3. Slack Voltage */}
                 <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-2.5">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold uppercase text-slate-600 flex items-center">
                       <span>Slack Voltage (V₀)</span>
-                      <TooltipBadge content="Terminal voltage setpoint magnitude at the reference (slack) busbar in per-unit." />
+                      <TooltipBadge content="Terminal voltage setpoint magnitude at the reference busbar in per-unit." />
                     </label>
                   </div>
 
@@ -764,12 +821,11 @@ export const GridStabilityTab: React.FC<Props> = ({
                   </span>
                 </div>
 
-                {/* 4. Shunt MVAR */}
                 <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-2.5">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold uppercase text-slate-600 flex items-center">
                       <span>Shunt MVAR (ΔQ)</span>
-                      <TooltipBadge content="Grid reactive compensation. Positive values inject capacitive MVAR to boost sagging voltages; negative values absorb MVAR to curb high voltage." />
+                      <TooltipBadge content="Grid reactive compensation. Positive values inject capacitive MVAR to boost voltages; negative absorbs MVAR." />
                     </label>
                   </div>
 
@@ -791,12 +847,11 @@ export const GridStabilityTab: React.FC<Props> = ({
                   </span>
                 </div>
 
-                {/* 5. Thermal Derating */}
                 <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-2.5">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold uppercase text-slate-600 flex items-center">
                       <span>Thermal Derating</span>
-                      <TooltipBadge content="Transmission corridor current capacity derating factor to account for ambient temperature and line conductor sag." />
+                      <TooltipBadge content="Transmission corridor capacity derating factor to account for ambient temperature and line sag." />
                     </label>
                   </div>
 
@@ -821,7 +876,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </div>
               </div>
 
-              {/* View Switcher and Action Bar */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl border border-slate-200 bg-white shadow-xs gap-3">
                 <div className="flex items-center gap-2">
                   <div className="flex rounded-lg border border-slate-200 p-0.5 bg-slate-50 text-xs font-bold">
@@ -871,7 +925,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </div>
               </div>
 
-              {/* Substation Voltages Table & KPIs */}
               {deckView === 'buses' && (
                 <div className="space-y-4">
                   {buses.length > 0 && (
@@ -1027,7 +1080,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </div>
               )}
 
-              {/* N-1 Contingency Line Trip Breakers Deck */}
               {deckView === 'lines' && (
                 <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-xs">
                   <div className="bg-[#500b50] text-white px-5 py-3 flex justify-between items-center text-sm font-bold">
@@ -1107,12 +1159,9 @@ export const GridStabilityTab: React.FC<Props> = ({
             </div>
           )}
 
-          {/* ========================================================================= */}
-          {/* SUB-VIEW 2: DYNAMIC LOAD SHARING (Purely Driven by Active Model Memory)   */}
-          {/* ========================================================================= */}
+          {/* SUB-VIEW 2: DYNAMIC LOAD SHARING */}
           {simSubTab === 'load_sharing' && (
             <div className="space-y-6">
-              {/* Governor Droop & Frequency Response Controls */}
               <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-3">
                   <div>
@@ -1121,7 +1170,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                       <span>Decentralized Generator Governor Droop (P–f)</span>
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Evaluates statutory autonomous frequency pickup without telecommunications using speed governor slopes.
+                      Autonomous frequency pickup without telecommunications using speed governor slopes.
                     </p>
                   </div>
 
@@ -1149,7 +1198,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60">
                     <label className="block text-[11px] font-bold uppercase text-slate-500 mb-1">
-                      Step Demand / Deficit ($\Delta P$)
+                      Step Demand ($\Delta P$)
                     </label>
                     <div className="flex items-center gap-2">
                       <input
@@ -1211,7 +1260,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </div>
               </div>
 
-              {/* Participatory Stacked Allocation Visualizer */}
               {loadSharingResult && loadSharingResult.allocations.length > 0 && (
                 <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-3">
                   <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
@@ -1246,7 +1294,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </div>
               )}
 
-              {/* Dynamic Generator Droop Calibration Table */}
               <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-xs">
                 <div className="bg-[#500b50] text-white px-5 py-3 flex justify-between items-center text-sm font-bold">
                   <span>Discovered Synchronous Generation ({loadSharingResult?.allocations.length || 0} Units in Active Model)</span>
@@ -1337,7 +1384,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </div>
               </div>
 
-              {/* Parallel Corridors Reactance Sharing (Discovered Dynamically) */}
               {loadSharingResult && loadSharingResult.parallel_corridors.length > 0 && (
                 <div className="space-y-4 pt-2">
                   <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/60 text-xs text-blue-900 flex items-start gap-3">
@@ -1345,7 +1391,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                     <div>
                       <p className="font-bold">Natural Parallel Circuit Impedance Division ($P_1 / P_2 = X_2 / X_1$)</p>
                       <p className="mt-0.5 text-blue-800">
-                        In alternating current networks, parallel line corridors divide power inversely proportional to series reactance.
+                        In AC networks, parallel lines divide power inversely proportional to series reactance.
                       </p>
                     </div>
                   </div>
@@ -1378,7 +1424,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                               <tr key={circ.line_id} className="hover:bg-slate-50/80">
                                 <td className="py-3 px-4 font-bold text-slate-500">#{circ.line_id}</td>
                                 <td className="py-3 px-4 font-sans font-bold text-slate-900">{circ.name}</td>
-                                <td className="py-3 px-4">{circ.reactance_ohm} $\Omega$</td>
+                                <td className="py-3 px-4">{circ.reactance_ohm} Ω</td>
                                 <td className="py-3 px-4 font-bold text-[#500b50]">
                                   {circ.theoretical_share_percent}%
                                 </td>
@@ -1402,9 +1448,7 @@ export const GridStabilityTab: React.FC<Props> = ({
             </div>
           )}
 
-          {/* ========================================================================= */}
-          {/* SUB-VIEW 3: CASCADING FAILURE                                             */}
-          {/* ========================================================================= */}
+          {/* SUB-VIEW 3: CASCADING FAILURE */}
           {simSubTab === 'cascade' && (
             <div className="space-y-6">
               <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-4">
@@ -1490,13 +1534,10 @@ export const GridStabilityTab: React.FC<Props> = ({
             </div>
           )}
 
-          {/* ========================================================================= */}
-          {/* SUB-VIEW 4: REGIONAL PLANNING SANDTABLE                                   */}
-          {/* ========================================================================= */}
+          {/* SUB-VIEW 4: REGIONAL PLANNING SANDTABLE */}
           {simSubTab === 'planning' && (
             <div className="space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* 1. Propose Substation */}
                 <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-3">
                   <h4 className="font-bold text-slate-900 text-sm border-b pb-2 flex items-center gap-2">
                     <Plus className="h-4 w-4 text-[#500b50]" />
@@ -1524,6 +1565,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                       >
                         <option value={330}>330 kV Bulk</option>
                         <option value={132}>132 kV Sub-T</option>
+                        <option value={130}>130 kV Regional</option>
                       </select>
                     </div>
 
@@ -1564,7 +1606,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                   </button>
                 </div>
 
-                {/* 2. Connect Corridor */}
                 <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-3">
                   <h4 className="font-bold text-slate-900 text-sm border-b pb-2 flex items-center gap-2">
                     <Plus className="h-4 w-4 text-[#500b50]" />
@@ -1635,8 +1676,8 @@ export const GridStabilityTab: React.FC<Props> = ({
                       >
                         <option value="Bison 330kV">Bison 330kV</option>
                         <option value="Bear 330kV">Bear 330kV</option>
-                        <option value="Panther 132kV">Panther 132kV</option>
-                        <option value="Wolf 132kV">Wolf 132kV</option>
+                        <option value="Panther 132kV">Panther 132kV / 130kV</option>
+                        <option value="Wolf 132kV">Wolf 132kV / 130kV</option>
                       </select>
                     </div>
                   </div>
@@ -1649,7 +1690,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                   </button>
                 </div>
 
-                {/* 3. Propose Power Plant */}
                 <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs space-y-3">
                   <h4 className="font-bold text-slate-900 text-sm border-b pb-2 flex items-center gap-2">
                     <Plus className="h-4 w-4 text-[#500b50]" />
