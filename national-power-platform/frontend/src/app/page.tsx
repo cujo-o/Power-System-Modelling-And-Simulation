@@ -34,7 +34,7 @@ export default function DashboardPage() {
         </div>
 
         <button
-          onClick={runSimulation}
+          onClick={() => runSimulation()}
           disabled={loading || !activeModel}
           className="flex items-center gap-2 rounded-xl bg-[#500b50] px-4 py-2 text-xs font-bold text-white hover:bg-[#680f68] transition shadow-xs disabled:opacity-50"
         >
