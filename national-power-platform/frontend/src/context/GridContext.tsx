@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
   BusData,
@@ -98,9 +98,9 @@ function normalizeRawModel(m: any): GridModelMeta {
     total_installed_mw: Number(totalCap),
     total_demand_mw: Number(m?.total_demand_mw ?? m?.demand_mw ?? 0),
     domain: String(domain),
-    is_active: Boolean(m?.is_active),
     converged: Boolean(m?.converged ?? m?.is_converged ?? true),
-    is_default: Boolean(m?.is_default ?? m?.default ?? false),
+    is_default: Boolean(m?.is_default ?? false),
+    is_active: Boolean(m?.is_active),
   };
 }
 
@@ -123,6 +123,10 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     total_load_mw: 0.0,
     total_losses_mw: 0.0,
   });
+
+  // Guard refs to prevent concurrent or recursive activations
+  const isActivatingRef = useRef<boolean>(false);
+  const lastActivatedIdRef = useRef<string | null>(null);
 
   const apiFetch = useCallback(async (path: string, options?: RequestInit) => {
     let lastError: any = null;
@@ -188,8 +192,88 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setModelsLoading(false);
   }, []);
 
+  const runSimulation = useCallback(
+    async (customVars?: any, customTrips?: any) => {
+      setLoading(true);
+
+      const isRealPfVar =
+        customVars &&
+        typeof customVars === 'object' &&
+        !('nativeEvent' in customVars) &&
+        !('target' in customVars) &&
+        ('loadMultiplier' in customVars || 'slackVoltagePu' in customVars);
+
+      const varsToRun = isRealPfVar ? customVars : pfVariables;
+      let tripsToRun = Array.isArray(customTrips) ? customTrips : trippedLines;
+
+      if (varsToRun?.disabledBuses && varsToRun.disabledBuses.length > 0) {
+        const busSet = new Set(varsToRun.disabledBuses);
+        const incidentLines = lines
+          .filter((l) => busSet.has(l.from_bus) || busSet.has(l.to_bus))
+          .map((l) => l.id);
+        tripsToRun = Array.from(new Set([...tripsToRun, ...incidentLines]));
+      }
+
+      const payload = {
+        pf_variables: {
+          loadMultiplier: Number(varsToRun?.loadMultiplier ?? 1.0),
+          targetPowerFactor: Number(varsToRun?.targetPowerFactor ?? 0.9),
+          slackVoltagePu: Number(varsToRun?.slackVoltagePu ?? 1.05),
+          shuntMvarCompensation: Number(varsToRun?.shuntMvarCompensation ?? 0.0),
+          thermalDeratingFactor: Number(varsToRun?.thermalDeratingFactor ?? 1.0),
+          newBuses: Array.isArray(varsToRun?.newBuses) ? varsToRun.newBuses : [],
+          newLines: Array.isArray(varsToRun?.newLines) ? varsToRun.newLines : [],
+          newGenerators: Array.isArray(varsToRun?.newGenerators) ? varsToRun.newGenerators : [],
+        },
+        tripped_lines: tripsToRun.filter((id: any): id is number => typeof id === 'number'),
+      };
+
+      try {
+        const res = await apiFetch('/api/simulations/power-flow', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (res && res.ok) {
+          const data = await res.json();
+
+          // Only update buses/lines if the backend returned actual data (never wipe existing network on 0 response)
+          if (Array.isArray(data.buses) && data.buses.length > 0) {
+            setBuses(data.buses);
+          }
+          if (Array.isArray(data.lines) && data.lines.length > 0) {
+            setLines(data.lines);
+          }
+
+          setSummary({
+            converged: data.converged ?? true,
+            frequency: data.frequency ?? 50.0,
+            total_gen_mw: data.total_gen_mw ?? 0.0,
+            total_load_mw: data.total_load_mw ?? 0.0,
+            total_losses_mw: data.total_losses_mw ?? 0.0,
+            message: data.message,
+          });
+
+          if (!data.converged || data.message) {
+            setDivergedNotice(data.message || 'Continuation flow solution active.');
+          } else {
+            setDivergedNotice(null);
+          }
+        }
+      } catch (err: any) {
+        setDivergedNotice(err.message || 'Connecting to AC solver...');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [pfVariables, trippedLines, lines, apiFetch]
+  );
+
   const activateModel = useCallback(
     async (id: string) => {
+      if (isActivatingRef.current) return;
+      isActivatingRef.current = true;
       setLoading(true);
 
       const targetModel = models.find((m) => m.id === id || m.name === id);
@@ -219,7 +303,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       let inMemory = false;
 
-      // 1. Try activating existing model in backend memory
+      // 1. Try activating existing model in memory
       try {
         const resName = await apiFetch(`/api/models/activate/${encodeURIComponent(modelName)}`, { method: 'POST' });
         if (resName && resName.ok) inMemory = true;
@@ -232,7 +316,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } catch {}
       }
 
-      // 2. If backend restarted/wiped memory, hydrate from Supabase Storage
+      // 2. If memory was cleared on Render wake-up, fetch from Supabase Storage and upload
       if (!inMemory && supabase) {
         const candidateBuckets = ['models', 'grid_models', 'grid-models', 'model_files'];
         let fileBlob: Blob | null = null;
@@ -278,91 +362,12 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setTrippedLines([]);
       setPfVariables(DEFAULT_VARIABLES);
       await runSimulation(DEFAULT_VARIABLES, []);
+
+      lastActivatedIdRef.current = modelIdentifier;
       setLoading(false);
+      isActivatingRef.current = false;
     },
-    [models, apiFetch]
-  );
-
-  const runSimulation = useCallback(
-    async (customVars?: any, customTrips?: any) => {
-      setLoading(true);
-      setDivergedNotice(null);
-
-      const isRealPfVar =
-        customVars &&
-        typeof customVars === 'object' &&
-        !('nativeEvent' in customVars) &&
-        !('target' in customVars) &&
-        ('loadMultiplier' in customVars || 'slackVoltagePu' in customVars);
-
-      const varsToRun = isRealPfVar ? customVars : pfVariables;
-      let tripsToRun = Array.isArray(customTrips) ? customTrips : trippedLines;
-
-      if (varsToRun?.disabledBuses && varsToRun.disabledBuses.length > 0) {
-        const busSet = new Set(varsToRun.disabledBuses);
-        const incidentLines = lines
-          .filter((l) => busSet.has(l.from_bus) || busSet.has(l.to_bus))
-          .map((l) => l.id);
-        tripsToRun = Array.from(new Set([...tripsToRun, ...incidentLines]));
-      }
-
-      const payload = {
-        pf_variables: {
-          loadMultiplier: Number(varsToRun?.loadMultiplier ?? 1.0),
-          targetPowerFactor: Number(varsToRun?.targetPowerFactor ?? 0.9),
-          slackVoltagePu: Number(varsToRun?.slackVoltagePu ?? 1.05),
-          shuntMvarCompensation: Number(varsToRun?.shuntMvarCompensation ?? 0.0),
-          thermalDeratingFactor: Number(varsToRun?.thermalDeratingFactor ?? 1.0),
-          newBuses: Array.isArray(varsToRun?.newBuses) ? varsToRun.newBuses : [],
-          newLines: Array.isArray(varsToRun?.newLines) ? varsToRun.newLines : [],
-          newGenerators: Array.isArray(varsToRun?.newGenerators) ? varsToRun.newGenerators : [],
-        },
-        tripped_lines: tripsToRun.filter((id: any): id is number => typeof id === 'number'),
-      };
-
-      try {
-        const res = await apiFetch('/api/simulations/power-flow', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-
-        if (res && res.ok) {
-          const data = await res.json();
-
-          // Retain current topology if backend returns empty due to memory drop
-          if (Array.isArray(data.buses) && data.buses.length > 0) {
-            setBuses(data.buses);
-          }
-          if (Array.isArray(data.lines) && data.lines.length > 0) {
-            setLines(data.lines);
-          }
-
-          setSummary({
-            converged: data.converged ?? true,
-            frequency: data.frequency ?? 50.0,
-            total_gen_mw: data.total_gen_mw ?? 0.0,
-            total_load_mw: data.total_load_mw ?? 0.0,
-            total_losses_mw: data.total_losses_mw ?? 0.0,
-            message: data.message,
-          });
-
-          if (!data.converged || data.message) {
-            setDivergedNotice(data.message || 'Continuation flow solution active.');
-
-            // Auto-heal if backend dropped memory
-            if (data.message && data.message.includes('No model active in memory') && activeModel?.id) {
-              await activateModel(activeModel.id);
-            }
-          }
-        }
-      } catch (err: any) {
-        setDivergedNotice(err.message || 'Connecting to AC solver...');
-      } finally {
-        setLoading(false);
-      }
-    },
-    [pfVariables, trippedLines, lines, activeModel, activateModel, apiFetch]
+    [models, apiFetch, runSimulation]
   );
 
   const toggleLine = useCallback(
@@ -435,11 +440,12 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     fetchModels();
   }, [fetchModels]);
 
+  // Activate model ONCE when activeModel changes — no infinite render loop
   useEffect(() => {
-    if (activeModel?.id && buses.length === 0) {
+    if (activeModel?.id && lastActivatedIdRef.current !== activeModel.id) {
       activateModel(activeModel.id);
     }
-  }, [activeModel?.id, buses.length, activateModel]);
+  }, [activeModel?.id, activateModel]);
 
   return (
     <GridContext.Provider

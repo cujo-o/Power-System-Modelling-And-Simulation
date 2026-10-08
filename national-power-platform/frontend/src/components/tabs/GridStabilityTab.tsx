@@ -26,11 +26,9 @@ import {
   Power,
   Activity,
   Trash2,
-  Lock,
   UploadCloud,
   ChevronLeft,
   Info,
-  CheckCircle2,
 } from 'lucide-react';
 
 interface Props {
@@ -89,14 +87,12 @@ export const GridStabilityTab: React.FC<Props> = ({
   onCascadeTrigger,
   onApplyCascadeTrips,
   apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://national-power-backend.onrender.com',
-  isAdmin = true,
-  onDeleteModel,
   onRefreshModels,
   modelsLoading = false,
 }) => {
   const activeModel = models.find((m) => m.is_active);
 
-  // Workflow view: First view is always model selection until a model is selected
+  // Workflow view: Starts at model selection screen
   const [viewMode, setViewMode] = useState<'select_model' | 'workspace'>('select_model');
 
   // Sub-tabs inside workspace
@@ -148,7 +144,7 @@ export const GridStabilityTab: React.FC<Props> = ({
   // Regional Planning State: 4. Decommission Sandbox
   const [selectedDecommissionBus, setSelectedDecommissionBus] = useState<number>(1);
 
-  // Debounced real-time execution for inputs
+  // Debounced parameter updates
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleLiveParamChange = (field: keyof ExtendedPowerFlowVariables, value: any) => {
@@ -195,7 +191,7 @@ export const GridStabilityTab: React.FC<Props> = ({
         setLoadSharingResult(data);
       }
     } catch (err) {
-      console.warn('Load sharing calculation error:', err);
+      console.warn('Load sharing calculation notice:', err);
     } finally {
       setLoadSharingLoading(false);
     }
@@ -243,7 +239,6 @@ export const GridStabilityTab: React.FC<Props> = ({
     );
   }, [buses, busSearchQuery]);
 
-  // Model selection handler
   const handleSelectModel = async (id: string) => {
     setActivatingId(id);
     try {
@@ -255,7 +250,6 @@ export const GridStabilityTab: React.FC<Props> = ({
     }
   };
 
-  // 1. Propose Substation with required Interconnection
   const handleAddProposedSubstation = () => {
     if (!newSubName.trim()) return;
 
@@ -289,7 +283,6 @@ export const GridStabilityTab: React.FC<Props> = ({
     setTimeout(runSimulation, 60);
   };
 
-  // 2. Connect Independent Line
   const handleAddLine = () => {
     if (!newLineName.trim()) return;
     const item: NewLineElement = {
@@ -305,7 +298,6 @@ export const GridStabilityTab: React.FC<Props> = ({
     setTimeout(runSimulation, 60);
   };
 
-  // 3. Propose Generator
   const handleAddGen = () => {
     if (!newGenName.trim()) return;
     const item: NewGenElement = {
@@ -328,7 +320,7 @@ export const GridStabilityTab: React.FC<Props> = ({
     (pfVariables.disabledBuses?.length || 0);
 
   // =========================================================================
-  // VIEW 1: INITIAL MODEL SELECTION SCREEN (The FIRST screen user sees)
+  // VIEW 1: INITIAL MODEL SELECTION SCREEN
   // =========================================================================
   if (viewMode === 'select_model') {
     return (
@@ -498,7 +490,7 @@ export const GridStabilityTab: React.FC<Props> = ({
   }
 
   // =========================================================================
-  // VIEW 2: FULL OPERATIONAL WORKSPACE (Only visible once a model is clicked)
+  // VIEW 2: FULL OPERATIONAL WORKSPACE
   // =========================================================================
   return (
     <div className="space-y-4 max-w-7xl mx-auto py-1 text-slate-800">
@@ -594,7 +586,7 @@ export const GridStabilityTab: React.FC<Props> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* WORKSPACE SUBTAB 1: OPERATIONAL DECK (No Sliders, Live-Updating Inputs)   */}
+      {/* WORKSPACE SUBTAB 1: OPERATIONAL DECK                                      */}
       {/* ========================================================================= */}
       {workspaceTab === 'deck' && (
         <div className="space-y-4">
@@ -762,12 +754,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                   className="border border-slate-300 rounded px-2.5 py-1 text-xs w-44 bg-white"
                 />
                 <button
-                  onClick={() => {
-                    onReset();
-                    if (activeModel?.id) {
-                      onActivateModel(activeModel.id);
-                    }
-                  }}
+                  onClick={onReset}
                   className="flex items-center gap-1 px-2.5 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold"
                 >
                   <RotateCcw className="h-3 w-3" />
@@ -891,7 +878,7 @@ export const GridStabilityTab: React.FC<Props> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* WORKSPACE SUBTAB 2: LOAD SHARING (Branches and Generators)                */}
+      {/* WORKSPACE SUBTAB 2: LOAD SHARING                                          */}
       {/* ========================================================================= */}
       {workspaceTab === 'load_sharing' && (
         <div className="space-y-4">
@@ -1001,7 +988,7 @@ export const GridStabilityTab: React.FC<Props> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* WORKSPACE SUBTAB 3: CASCADING FAILURE (No Sliders, Rich Forensics)        */}
+      {/* WORKSPACE SUBTAB 3: CASCADING FAILURE                                     */}
       {/* ========================================================================= */}
       {workspaceTab === 'cascade' && (
         <div className="space-y-4">
@@ -1025,7 +1012,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </select>
               </div>
 
-              {/* Number Input (NO SLIDER) */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center">
                   Overcurrent Relay Threshold (%)
@@ -1077,7 +1063,6 @@ export const GridStabilityTab: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Forensics Diagnostic Breakdown */}
           {cascadeResult && (
             <div className="p-4 rounded-xl border border-rose-200 bg-rose-50/50 space-y-3 text-xs">
               <div className="flex items-center justify-between">
@@ -1101,7 +1086,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                 <strong>{cascadeResult.total_steps} chronological stages</strong>.
               </p>
 
-              {/* Step Timeline */}
               {cascadeResult.timeline && cascadeResult.timeline.length > 0 && (
                 <div className="rounded-lg border border-rose-200 bg-white overflow-hidden">
                   <table className="w-full text-left text-xs">
@@ -1138,7 +1122,7 @@ export const GridStabilityTab: React.FC<Props> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* WORKSPACE SUBTAB 4: REGIONAL PLANNING (All 4 Features + Sandbox Isolation)*/}
+      {/* WORKSPACE SUBTAB 4: REGIONAL PLANNING                                     */}
       {/* ========================================================================= */}
       {workspaceTab === 'planning' && (
         <div className="space-y-4">
