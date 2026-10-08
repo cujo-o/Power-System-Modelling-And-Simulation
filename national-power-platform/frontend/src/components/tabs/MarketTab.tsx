@@ -127,19 +127,7 @@ export const MarketTab: React.FC<Props> = ({ buses = [], lines = [], modelName }
     <div className="max-w-7xl mx-auto space-y-6 py-2">
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-              Market Simulations &amp; Nodal LMP Clearing
-            </h2>
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-purple-50 text-[#500b50] border border-purple-200">
-              Security-Constrained OPF
-            </span>
-          </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Locational Marginal Prices (LMP), congestion rent shadow costs, and generator merit-order dispatch.
-          </p>
-        </div>
+        
 
         <div className="flex items-center gap-2">
           <div className="flex rounded-xl border border-slate-200 bg-white p-0.5 text-xs font-bold shadow-xs">

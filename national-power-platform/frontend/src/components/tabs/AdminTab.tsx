@@ -197,7 +197,7 @@ export default function AdminTab({
       <div className="flex items-center justify-between pb-3 border-b border-slate-200">
         <div>
           <h2 className="text-xl font-bold text-slate-900">Project Workforce</h2>
-          <p className="text-xs text-slate-500">Research team directory and access control.</p>
+          <p className="text-xs text-slate-500">Research team .</p>
         </div>
 
         <div className="flex rounded-lg border border-slate-200 bg-white p-1 text-xs font-semibold shadow-xs">

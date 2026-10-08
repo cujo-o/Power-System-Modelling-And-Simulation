@@ -672,13 +672,8 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       {/* Top Controls Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 border-b border-slate-200 gap-3">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-purple-50 text-[#500b50] border border-purple-200">
-              Interactive Movable Canvas
-            </span>
-          </div>
           <p className="text-xs text-slate-500 mt-0.5 font-medium">
-            {buses.length} Substations • {lines.length} Corridors • Condensed planar topology. Pinch touchpad or mouse wheel to zoom.
+            {buses.length} Substations • {lines.length} Corridors
           </p>
         </div>
 
@@ -726,7 +721,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             title="Recalculate untangled topological layout"
           >
             <RotateCcw className="h-3.5 w-3.5" />
-            <span>Reset Layout</span>
+            <span>Reset</span>
           </button>
 
           {/* Line Style Toggle */}
@@ -738,7 +733,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
               }`}
             >
               <Compass className="h-3.5 w-3.5" />
-              <span>STAC Direct</span>
+              <span>Nig bus</span>
             </button>
             <button
               onClick={() => setViewStyle('orthogonal')}
@@ -807,15 +802,10 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
         >
           {/* Engineering CAD Header Tag */}
           <div className="absolute top-4 left-4 z-10 flex items-center gap-2 pointer-events-none opacity-60">
-            <Zap className="h-4 w-4 text-[#500b50]" />
-            <span className="text-[11px] font-mono tracking-widest text-slate-900 uppercase font-black">
-              330kV Bulk Synchronous Grid • STAC Vector CAD
-            </span>
+            
           </div>
 
-          <div className="absolute bottom-4 left-4 z-10 pointer-events-none flex items-center gap-3 text-[10px] font-mono text-slate-400 font-bold">
-            <span>Pinch Touchpad or Scroll to Zoom Gently Around Cursor • Drag any Bus to Adjust</span>
-          </div>
+
 
           {/* Vector SVG Canvas */}
           <svg ref={svgRef} className="w-full h-full" style={{ width: '100%', height: '100%' }}>

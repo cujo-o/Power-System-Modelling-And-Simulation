@@ -1,22 +1,39 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Cpu, Layers, Zap, ShieldCheck } from 'lucide-react';
 
 export const AboutTab: React.FC = () => {
+  const [imgError, setImgError] = useState(false);
+
   return (
     <div className="max-w-4xl mx-auto space-y-6 py-2 text-slate-800">
-      {/* Header */}
-      <div className="pb-3 border-b border-slate-200">
-        <h2 className="text-xl font-bold text-slate-900 tracking-tight">
-          About the Platform
-        </h2>
-        <p className="text-xs text-slate-500 mt-0.5">
-          Machine Learning 4 Power Systems (ML4PS)
-        </p>
+      {/* Header with Integrated ML4PS Logo */}
+      <div className="flex items-center gap-3.5 pb-4 border-b border-slate-200">
+        {!imgError ? (
+          <img
+            src="/ml4ps-logo.png"
+            alt="ML4PS Crest"
+            className="h-12 w-12 object-contain rounded-xl bg-white p-1 border border-purple-200 shadow-xs shrink-0"
+            onError={() => setImgError(true)}
+          />
+        ) : (
+          <div className="h-12 w-12 rounded-xl border border-purple-200 bg-purple-50 flex items-center justify-center shrink-0 shadow-xs">
+            <Zap className="h-6 w-6 text-[#500b50] fill-[#500b50]" />
+          </div>
+        )}
+
+        <div>
+          <h2 className="text-xl font-black text-slate-900 tracking-tight">
+            About the Platform
+          </h2>
+          <p className="text-xs text-slate-500 font-medium mt-0.5">
+            Machine Learning 4 Power Systems (ML4PS) • FUT Minna
+          </p>
+        </div>
       </div>
 
-      {/* Overview */}
+      {/* Platform Overview */}
       <div className="p-5 rounded-xl border border-slate-200 bg-white shadow-xs space-y-2">
         <h3 className="font-bold text-sm text-slate-900">
           National Power System Simulation &amp; Research Platform

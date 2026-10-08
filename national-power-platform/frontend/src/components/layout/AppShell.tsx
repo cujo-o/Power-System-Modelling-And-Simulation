@@ -105,7 +105,14 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
           <div className="flex items-center gap-3">
             {/* ML4PS Official Icon Badge */}
             <div className="h-8 w-8 rounded-lg border border-purple-200 bg-purple-50 flex items-center justify-center shrink-0 shadow-2xs">
-              <Zap className="h-4.5 w-4.5 text-[#500b50] fill-[#500b50]" />
+              <img
+                src="/ml4ps-logo.png"
+                alt="ML4PS Crest"
+                className="h-9 w-9 object-contain rounded-md bg-white p-0.5 border border-slate-200 shrink-0"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                }}
+              />
             </div>
             <div>
               <span className="font-black text-sm text-slate-900 tracking-tight block leading-none">

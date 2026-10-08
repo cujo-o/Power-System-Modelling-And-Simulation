@@ -336,7 +336,7 @@ export const GridStabilityTab: React.FC<Props> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 gap-3">
           <div>
             <h2 className="text-xl font-black text-slate-900 tracking-tight">
-              Grid Stability &amp; Simulation Studio
+              Grid Stability
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
               Select an uploaded transmission network to launch the operational studio.
@@ -1140,18 +1140,13 @@ export const GridStabilityTab: React.FC<Props> = ({
       {workspaceTab === 'planning' && (
         <div className="space-y-4">
           <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Info className="h-4 w-4 text-blue-600 shrink-0" />
-              <span>
-                <strong>In-Memory Sandbox Guarantee:</strong> All additions and isolations here test network expansion in memory. The original `.m` base file in Supabase is never altered.
-              </span>
-            </div>
+            
             {totalSandboxModifications > 0 && (
               <button
                 onClick={onReset}
                 className="px-2.5 py-1 rounded bg-white border border-blue-300 text-blue-800 font-bold hover:bg-blue-100 shrink-0 ml-2"
               >
-                Clear Sandbox
+                Clear
               </button>
             )}
           </div>
@@ -1433,7 +1428,7 @@ export const GridStabilityTab: React.FC<Props> = ({
             <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
               <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-100">
                 <Trash2 className="h-4 w-4 text-rose-600" />
-                <span>4. Decommission / Delete Node (Sandbox)</span>
+                <span>4. Decommission / Delete Node</span>
               </h4>
 
               <div className="text-xs space-y-2">

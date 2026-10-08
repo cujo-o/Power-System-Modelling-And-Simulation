@@ -278,15 +278,11 @@ export const DynamicsTab: React.FC<Props> = ({
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-              Dynamic Stability &amp; Transient Security Studio
+              Dynamic Stability
             </h2>
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-purple-50 text-[#500b50] border border-purple-200">
-              Time-Domain Vector CAD
-            </span>
+            
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Lumped center-of-inertia frequency response, UFLS defense, and multi-machine rotor angle transient trajectories.
-          </p>
+         
         </div>
 
         <div className="flex rounded-xl border border-slate-200 bg-white p-1 text-xs font-bold shadow-xs">

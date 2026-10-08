@@ -188,12 +188,6 @@ export const UploadTab: React.FC<Props> = ({
               Choose Case File
             </button>
           </div>
-
-          <div className="pt-4 border-t border-slate-100 w-full flex items-center justify-center gap-6 text-[11px] font-mono text-slate-400">
-            <span>Accepted formats: .m • .raw • .130 • .xlsx • .json</span>
-            <span>•</span>
-            <span>Operator: {userName} ({userInstitution})</span>
-          </div>
         </div>
       </div>
     </div>
