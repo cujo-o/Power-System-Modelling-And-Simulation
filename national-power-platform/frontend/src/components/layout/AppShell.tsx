@@ -16,6 +16,7 @@ import {
   ChevronLeft,
   ChevronRight,
   LogOut,
+  Zap,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -36,13 +37,12 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-50 text-slate-800">
-      {/* Persistent Dark Magenta Sidebar Shell */}
+      {/* Sidebar Shell */}
       <aside
         className={`${
           collapsed ? 'w-18' : 'w-64'
         } bg-[#500b50] text-white flex flex-col shrink-0 transition-all duration-200 select-none z-30 shadow-xl`}
       >
-        {/* User Card */}
         <div className="p-4 border-b border-white/10 flex items-center justify-between">
           <div className="flex items-center gap-3 overflow-hidden">
             <div className="h-9 w-9 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center font-bold text-sm shrink-0">
@@ -66,7 +66,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
           </button>
         </div>
 
-        {/* Navigation Links */}
         <nav className="p-2.5 space-y-1 flex-1 overflow-y-auto">
           {NAV_ITEMS.map((item) => {
             const isActive =
@@ -93,7 +92,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
           })}
         </nav>
 
-        {/* Footer Tag */}
         {!collapsed && (
           <div className="p-3 border-t border-white/10 text-[10px] font-mono text-white/50 text-center">
             Copyright 2026 National Power System Modelling & Simulation Platform | Machine Learning 4 Power Systems (ML4PS) | FUT Minna
@@ -101,27 +99,13 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
         )}
       </aside>
 
-      {/* Main Content Viewport */}
+      {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Top Header with ML4PS Logo Badge */}
         <header className="h-14 border-b border-slate-200 bg-white flex items-center justify-between px-6 shrink-0 z-20">
           <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg border border-slate-200 bg-white p-1 flex items-center justify-center shadow-2xs shrink-0 overflow-hidden">
-              <img
-                src="/logo.png"
-                alt="ML4PS"
-                className="h-full w-full object-contain"
-                onError={(e) => {
-                  const target = e.currentTarget;
-                  if (!target.dataset.triedIcon) {
-                    target.dataset.triedIcon = 'true';
-                    target.src = '/icon.png';
-                  } else if (!target.dataset.triedFavicon) {
-                    target.dataset.triedFavicon = 'true';
-                    target.src = '/favicon.ico';
-                  }
-                }}
-              />
+            {/* ML4PS Official Icon Badge */}
+            <div className="h-8 w-8 rounded-lg border border-purple-200 bg-purple-50 flex items-center justify-center shrink-0 shadow-2xs">
+              <Zap className="h-4.5 w-4.5 text-[#500b50] fill-[#500b50]" />
             </div>
             <div>
               <span className="font-black text-sm text-slate-900 tracking-tight block leading-none">
@@ -144,7 +128,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
           </div>
         </header>
 
-        {/* Page Canvas */}
         <main className="flex-1 overflow-y-auto p-6 bg-slate-50/50">{children}</main>
       </div>
     </div>

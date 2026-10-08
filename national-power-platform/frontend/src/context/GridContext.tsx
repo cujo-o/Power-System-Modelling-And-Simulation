@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
   BusData,
   LineData,
@@ -8,6 +9,12 @@ import {
   PowerFlowVariables,
   CascadeResult,
 } from '@/types/grid';
+
+// Initialize Supabase Client
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabase: SupabaseClient | null =
+  supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
 
 interface PowerFlowSummary {
   converged: boolean;
@@ -57,10 +64,32 @@ const BACKEND_URLS = [
   'https://national-power-platform.onrender.com',
 ].filter(Boolean) as string[];
 
+// Type-safe normalizer mapping Supabase rows to GridModelMeta (No hardcoded models)
+function normalizeRawModel(m: any): GridModelMeta {
+  const vLevel =
+    m.voltage_level ||
+    m.voltage_class ||
+    (m.name?.includes('132') ? '132kV' : m.name?.includes('130') ? '130kV' : '330kV');
+
+  return {
+    id: String(m.id || m.name || Math.random().toString(36).substring(7)),
+    name: String(m.name || m.filename || 'Unnamed Model'),
+    voltage_level: String(vLevel),
+    platform: String(m.platform || m.format || 'MATPOWER'),
+    buses: Number(m.buses ?? m.bus_count ?? m.num_buses ?? 0),
+    branches: Number(m.branches ?? m.branch_count ?? m.num_branches ?? m.line_count ?? 0),
+    total_installed_mw: Number(m.total_installed_mw ?? m.total_capacity_mw ?? m.installed_capacity ?? 0),
+    total_demand_mw: Number(m.total_demand_mw ?? m.demand_mw ?? 0),
+    domain: String(m.domain || (m.name?.toLowerCase().includes('dynamic') ? 'Dynamic & Transient' : 'Static Power Flow')),
+    converged: Boolean(m.converged ?? m.power_flow_converged ?? m.is_converged ?? true),
+    is_default: Boolean(m.is_default ?? m.default ?? false),
+    is_active: Boolean(m.is_active),
+  };
+}
+
 const GridContext = createContext<GridContextType | null>(null);
 
 export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // Purely dynamic state: models starts empty until fetched or uploaded
   const [models, setModels] = useState<GridModelMeta[]>([]);
   const [activeModel, setActiveModel] = useState<GridModelMeta | null>(null);
   const [buses, setBuses] = useState<BusData[]>([]);
@@ -78,7 +107,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     total_losses_mw: 0.0,
   });
 
-  // Resilient API requester across backend candidate hosts
   const apiFetch = useCallback(async (path: string, options?: RequestInit) => {
     for (const base of BACKEND_URLS) {
       try {
@@ -89,10 +117,93 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           return res;
         }
       } catch {
-        // Try fallback host
+        // Fallback
       }
     }
     throw new Error('Connection to power simulation backend failed.');
+  }, []);
+
+  // Fetch only what exists in Supabase (Database tables or Storage) and backend
+  const fetchModels = useCallback(async () => {
+    setModelsLoading(true);
+    let fetchedList: GridModelMeta[] = [];
+
+    // 1. Query Supabase Database Table: 'models'
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.from('models').select('*');
+        if (!error && Array.isArray(data) && data.length > 0) {
+          fetchedList = data.map(normalizeRawModel);
+        }
+      } catch (err) {
+        console.warn('Supabase models table query:', err);
+      }
+
+      // 2. Query Supabase Database Table: 'grid_models'
+      if (fetchedList.length === 0) {
+        try {
+          const { data, error } = await supabase.from('grid_models').select('*');
+          if (!error && Array.isArray(data) && data.length > 0) {
+            fetchedList = data.map(normalizeRawModel);
+          }
+        } catch (err) {
+          console.warn('Supabase grid_models table query:', err);
+        }
+      }
+
+      // 3. Query Supabase Storage Bucket: 'models'
+      if (fetchedList.length === 0) {
+        try {
+          const { data, error } = await supabase.storage.from('models').list();
+          if (!error && Array.isArray(data) && data.length > 0) {
+            fetchedList = data
+              .filter((f) => f.name && !f.name.startsWith('.'))
+              .map((f) =>
+                normalizeRawModel({
+                  id: f.id || f.name,
+                  name: f.name,
+                })
+              );
+          }
+        } catch (err) {
+          console.warn('Supabase storage query:', err);
+        }
+      }
+    }
+
+    // 4. Fallback: Query backend API /api/models
+    if (fetchedList.length === 0) {
+      for (const base of BACKEND_URLS) {
+        try {
+          const cleanBase = base.replace(/\/+$/, '');
+          const res = await fetch(`${cleanBase}/api/models`);
+          if (res.ok) {
+            const json = await res.json();
+            const list = Array.isArray(json) ? json : json.models || json.data || [];
+            if (list.length > 0) {
+              fetchedList = list.map(normalizeRawModel);
+              break;
+            }
+          }
+        } catch {}
+      }
+    }
+
+    setModels(fetchedList);
+
+    if (fetchedList.length > 0) {
+      const savedId = typeof window !== 'undefined' ? localStorage.getItem('ml4ps_active_model_id') : null;
+      const matched =
+        fetchedList.find((m) => m.id === savedId) ||
+        fetchedList.find((m) => m.is_active) ||
+        fetchedList[0];
+
+      if (matched) setActiveModel(matched);
+    } else {
+      setActiveModel(null);
+    }
+
+    setModelsLoading(false);
   }, []);
 
   // Run AC Power Flow
@@ -152,65 +263,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     [pfVariables, trippedLines, apiFetch]
   );
 
-  // Fetch only what exists in backend storage
-  const fetchModels = useCallback(async () => {
-    setModelsLoading(true);
-    try {
-      let res: Response | null = null;
-      try {
-        res = await apiFetch('/api/models');
-      } catch {
-        res = await apiFetch('/models');
-      }
-
-      if (res && res.ok) {
-        const data = await res.json();
-        const rawList: any[] = Array.isArray(data)
-          ? data
-          : Array.isArray(data.models)
-          ? data.models
-          : Array.isArray(data.data)
-          ? data.data
-          : [];
-
-        const normalized: GridModelMeta[] = rawList.map((m: any) => ({
-          id: String(m.id || m.name),
-          name: m.name || m.filename || 'Unnamed Model',
-          voltage_level: m.voltage_level || m.voltage_class || '330kV',
-          platform: m.platform || m.format || 'MATPOWER',
-          buses: m.buses ?? m.bus_count ?? 0,
-          branches: m.branches ?? m.branch_count ?? m.line_count ?? 0,
-          total_installed_mw: m.total_installed_mw ?? m.total_capacity_mw ?? 0,
-          total_demand_mw: m.total_demand_mw ?? m.demand_mw ?? 0,
-          domain: m.domain || 'Static Power Flow',
-          is_active: Boolean(m.is_active),
-          converged: Boolean(m.converged ?? true),
-          is_default: Boolean(m.is_default),
-        }));
-
-        setModels(normalized);
-
-        const savedId = typeof window !== 'undefined' ? localStorage.getItem('ml4ps_active_model_id') : null;
-        const matching =
-          normalized.find((m) => m.id === savedId) ||
-          normalized.find((m) => m.is_active) ||
-          normalized[0] ||
-          null;
-
-        if (matching) {
-          setActiveModel(matching);
-        } else {
-          setActiveModel(null);
-        }
-      }
-    } catch {
-      // Backend asleep or network error
-    } finally {
-      setModelsLoading(false);
-    }
-  }, [apiFetch]);
-
-  // Activate model in memory
   const activateModel = useCallback(
     async (id: string) => {
       setLoading(true);
@@ -240,9 +292,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         if (res && res.ok) {
           const data = await res.json();
-          if (data.active_model) {
-            setActiveModel(data.active_model);
-          }
+          if (data.active_model) setActiveModel(data.active_model);
           setTrippedLines([]);
           setPfVariables(DEFAULT_VARIABLES);
           await runSimulation(DEFAULT_VARIABLES, []);
@@ -359,8 +409,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
 export const useGrid = () => {
   const context = useContext(GridContext);
-  if (!context) {
-    throw new Error('useGrid must be used within a GridProvider');
-  }
+  if (!context) throw new Error('useGrid must be used within a GridProvider');
   return context;
 };
