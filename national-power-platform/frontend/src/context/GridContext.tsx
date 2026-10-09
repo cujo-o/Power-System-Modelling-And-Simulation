@@ -266,7 +266,11 @@ async function callApi(path: string, options?: RequestInit): Promise<ApiResult> 
     status: res.status,
     body,
     message,
-    noModel: NO_MODEL_RE.test(message),
+    // Backend signals: power-flow -> message text; cascade -> status "NO_MODEL"; load-sharing -> model_name "No Active Model"
+    noModel:
+      NO_MODEL_RE.test(message) ||
+      body?.status === 'NO_MODEL' ||
+      body?.model_name === 'No Active Model',
   };
 }
 
@@ -283,6 +287,40 @@ function describeNetworkError(err: any): string {
  * Reads bucket/path hints from the grid_models row when they exist, so we do not
  * have to guess. Remembers the bucket that worked.
  */
+/**
+ * The solver's POST /api/models/load-payload rebuilds a network from pandapower JSON.
+ * That JSON is saved on the grid_models row (upload returns it as `network_payload`).
+ * Column names vary, so check the usual ones, then anything that looks like a network blob.
+ */
+const PAYLOAD_KEYS = [
+  'network_payload',
+  'payload',
+  'network_json',
+  'net_json',
+  'pandapower_json',
+  'pandapower_net',
+  'network',
+  'topology',
+  'net',
+];
+
+function findNetworkPayload(row: any): { key: string; value: any } | null {
+  if (!row || typeof row !== 'object') return null;
+  const usable = (v: any) =>
+    (typeof v === 'string' && v.length > 50) ||
+    (v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length > 0);
+
+  for (const k of PAYLOAD_KEYS) {
+    if (usable(row[k])) return { key: k, value: row[k] };
+  }
+  for (const k of Object.keys(row)) {
+    if (/payload|network|topology|net_?json|pandapower/i.test(k) && usable(row[k])) {
+      return { key: k, value: row[k] };
+    }
+  }
+  return null;
+}
+
 async function downloadModelFile(
   model: GridModelMeta,
   row: any
@@ -486,16 +524,62 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       };
     }
 
-    // 2. Backend lost it: fetch the .m file from Supabase Storage and re-upload it.
-    const { blob, tried } = await downloadModelFile(model, rawRowsRef.current.get(model.id));
+    // 2. Backend lost it: rebuild it from the network JSON saved on the Supabase row
+    //    (this is exactly what the solver's /api/models/load-payload endpoint is for).
+    let row = rawRowsRef.current.get(model.id);
+    let found = findNetworkPayload(row);
+
+    if (!found && supabase) {
+      // The cached row may not include the payload column; ask for this one row directly.
+      try {
+        const { data } = await supabase.from('grid_models').select('*').eq('id', model.id).maybeSingle();
+        if (data) {
+          row = data;
+          rawRowsRef.current.set(model.id, data);
+          found = findNetworkPayload(data);
+        }
+      } catch {}
+    }
+
+    if (found) {
+      try {
+        const lp = await callApi('/api/models/load-payload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: model.id,
+            name: model.name,
+            voltage_level: model.voltage_level,
+            domain: model.domain,
+            platform: model.platform,
+            network_payload: found.value,
+          }),
+        });
+        if (lp.ok) return { ok: true };
+        return {
+          ok: false,
+          reason: `The solver rejected the saved network for "${model.name}" (HTTP ${lp.status})${lp.message ? ': ' + lp.message : ''}`,
+        };
+      } catch (e: any) {
+        return { ok: false, reason: describeNetworkError(e) };
+      }
+    }
+
+    // 3. No saved network JSON on the row: fall back to a .m file in Supabase Storage.
+    const { blob, tried } = await downloadModelFile(model, row);
     if (!blob) {
-      console.warn('[ml4ps] Could not fetch model file from Supabase Storage. Attempts:', tried);
+      console.warn(
+        '[ml4ps] No network payload on the grid_models row and no file in Storage. Row columns:',
+        row ? Object.keys(row) : '(row not found)',
+        'Storage attempts:',
+        tried
+      );
       return {
         ok: false,
         reason:
-          `The solver has no copy of "${model.name}" and the file could not be found in Supabase Storage. ` +
-          'Set NEXT_PUBLIC_SUPABASE_BUCKET to your bucket name (make the bucket public or add a SELECT policy), ' +
-          'or re-upload the model.',
+          `The solver restarted and lost "${model.name}", and no saved copy of its network was found ` +
+          `(looked for a network_payload column on the grid_models row, then Supabase Storage). ` +
+          `Re-upload the model in Upload & Ingestion and make sure its network_payload is saved to Supabase.`,
       };
     }
 
@@ -514,7 +598,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return { ok: false, reason: describeNetworkError(e) };
     }
 
-    // 3. Make sure the freshly uploaded model is the active one (ignore failures: upload may auto-activate).
+    // 4. Make sure the freshly uploaded model is the active one (ignore failures: upload may auto-activate).
     for (const n of names) {
       try {
         const r = await callApi(`/api/models/activate/${encodeURIComponent(n)}`, { method: 'POST' });
@@ -855,8 +939,12 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!h.ok) throw new Error(h.reason || 'Model is not loaded on the solver.');
         r = await post();
       }
-      if (!r.ok) {
-        throw new Error(r.message || `Cascade simulation failed (HTTP ${r.status}).`);
+      if (!r.ok || r.noModel) {
+        throw new Error(
+          r.noModel
+            ? 'The solver has no model loaded. Press Solve to reload it, then run the sequence again.'
+            : r.message || `Cascade simulation failed (HTTP ${r.status}).`
+        );
       }
       return r.body as CascadeResult;
     },

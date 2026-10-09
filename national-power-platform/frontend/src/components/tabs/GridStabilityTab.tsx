@@ -223,7 +223,13 @@ export const GridStabilityTab: React.FC<Props> = ({
       });
       if (res.ok) {
         const data = await res.json();
-        setLoadSharingResult(data);
+        if (data?.model_name === 'No Active Model') {
+          // Solver is up but has no model in memory (it restarted). Reload it, then try once more.
+          setLoadSharingResult(null);
+          setLoadSharingError('The solver has no model loaded. Press Solve at the top to reload it, then run this again.');
+        } else {
+          setLoadSharingResult(data);
+        }
       } else {
         let detail = '';
         try {
