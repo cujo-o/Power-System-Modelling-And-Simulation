@@ -139,12 +139,14 @@ export const GridStabilityTab: React.FC<Props> = ({
   const [initialTripLine, setInitialTripLine] = useState<number>(0);
   const [cascadeLoading, setCascadeLoading] = useState(false);
   const [cascadeResult, setCascadeResult] = useState<CascadeResult | null>(null);
+  const [cascadeError, setCascadeError] = useState<string | null>(null);
 
   // Load Sharing State
   const [loadStepMw, setLoadStepMw] = useState<number>(300);
   const [dampingD, setDampingD] = useState<number>(1.2);
   const [loadSharingLoading, setLoadSharingLoading] = useState(false);
   const [loadSharingResult, setLoadSharingResult] = useState<any>(null);
+  const [loadSharingError, setLoadSharingError] = useState<string | null>(null);
 
   // Regional Planning State: 1. Substation + Tie
   const [newSubName, setNewSubName] = useState('');
@@ -174,15 +176,21 @@ export const GridStabilityTab: React.FC<Props> = ({
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleLiveParamChange = (field: keyof ExtendedPowerFlowVariables, value: any) => {
-    setPfVariables((prev) => {
-      const updated = { ...prev, [field]: value };
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        runSimulation();
-      }, 350);
-      return updated;
-    });
+    if (typeof value === 'number' && !Number.isFinite(value)) return; // input was cleared / invalid
+    // Keep the state updater pure; schedule the solve separately.
+    // runSimulation reads the latest variables from the context, so it never runs with stale values.
+    setPfVariables((prev) => ({ ...prev, [field]: value }));
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      runSimulation();
+    }, 350);
   };
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (lines.length > 0 && (!initialTripLine || !lines.some((l) => l.id === initialTripLine))) {
@@ -202,6 +210,7 @@ export const GridStabilityTab: React.FC<Props> = ({
 
   const runLoadSharingCalculation = async () => {
     setLoadSharingLoading(true);
+    setLoadSharingError(null);
     try {
       const res = await fetch(`${apiBaseUrl}/api/simulations/load-sharing/solve`, {
         method: 'POST',
@@ -215,19 +224,29 @@ export const GridStabilityTab: React.FC<Props> = ({
       if (res.ok) {
         const data = await res.json();
         setLoadSharingResult(data);
+      } else {
+        let detail = '';
+        try {
+          const j = await res.json();
+          detail = typeof j?.detail === 'string' ? j.detail : typeof j?.message === 'string' ? j.message : '';
+        } catch {}
+        setLoadSharingError(
+          `Load-sharing solve failed (HTTP ${res.status})${detail ? ': ' + detail : ''}. Make sure the model is loaded, then press Solve Pickup.`
+        );
       }
-    } catch (err) {
-      console.warn('Load sharing calculation error:', err);
+    } catch (err: any) {
+      setLoadSharingError(err?.message || 'Could not reach the solver backend.');
     } finally {
       setLoadSharingLoading(false);
     }
   };
 
   useEffect(() => {
-    if (workspaceTab === 'load_sharing') {
+    // Wait until buses have loaded (i.e. the solver has the model) before calling the solver.
+    if (workspaceTab === 'load_sharing' && buses.length > 0) {
       runLoadSharingCalculation();
     }
-  }, [workspaceTab, modelName]);
+  }, [workspaceTab, modelName, buses.length]);
 
   const filteredModels = useMemo(() => {
     return models.filter((m) => {
@@ -306,7 +325,7 @@ export const GridStabilityTab: React.FC<Props> = ({
     }));
 
     setNewSubName('');
-    setTimeout(runSimulation, 60);
+    setTimeout(() => runSimulation(), 60);
   };
 
   const handleAddLine = () => {
@@ -321,7 +340,7 @@ export const GridStabilityTab: React.FC<Props> = ({
     };
     setPfVariables((prev) => ({ ...prev, newLines: [...prev.newLines, item] }));
     setNewLineName('');
-    setTimeout(runSimulation, 60);
+    setTimeout(() => runSimulation(), 60);
   };
 
   const handleAddGen = () => {
@@ -335,7 +354,7 @@ export const GridStabilityTab: React.FC<Props> = ({
     };
     setPfVariables((prev) => ({ ...prev, newGenerators: [...prev.newGenerators, item] }));
     setNewGenName('');
-    setTimeout(runSimulation, 60);
+    setTimeout(() => runSimulation(), 60);
   };
 
   const currentDisplayName = activeModel?.name || modelName || 'Active Grid Model';
@@ -601,16 +620,14 @@ export const GridStabilityTab: React.FC<Props> = ({
             <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
             <span>{divergedNotice}</span>
           </div>
-          {activeModel && (
-            <button
-              onClick={() => onActivateModel(activeModel.id)}
-              disabled={loading}
-              className="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shrink-0 flex items-center gap-1"
-            >
-              <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-              <span>Solve</span>
-            </button>
-          )}
+          <button
+            onClick={() => (activeModel ? onActivateModel(activeModel.id) : runSimulation())}
+            disabled={loading}
+            className="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white font-bold text-xs shrink-0 flex items-center gap-1"
+          >
+            <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+            <span>{loading ? 'Solving…' : 'Solve'}</span>
+          </button>
         </div>
       )}
 
@@ -677,7 +694,7 @@ export const GridStabilityTab: React.FC<Props> = ({
             <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-1.5">
               <div className="flex items-center justify-between text-xs font-bold text-slate-700">
                 <span className="flex items-center">
-                  Slack Voltage ($V_0$)
+                  Slack Voltage (V₀)
                   <TooltipBadge content="Terminal voltage setpoint magnitude at the reference swing bus in per-unit." />
                 </span>
                 <span className="font-mono text-[#500b50] font-bold">{(pfVariables.slackVoltagePu || 1.05).toFixed(3)}</span>
@@ -701,7 +718,7 @@ export const GridStabilityTab: React.FC<Props> = ({
             <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-1.5">
               <div className="flex items-center justify-between text-xs font-bold text-slate-700">
                 <span className="flex items-center">
-                  Shunt MVAR ($\Delta Q$)
+                  Shunt MVAR (ΔQ)
                   <TooltipBadge content="Grid reactive support. Positive injects capacitive MVAR to boost voltage; negative absorbs MVAR." />
                 </span>
                 <span className="font-mono text-[#500b50] font-bold">{pfVariables.shuntMvarCompensation || 0}</span>
@@ -763,7 +780,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                   }`}
                 >
                   <Power className="h-3 w-3 text-rose-500" />
-                  <span>$N-1$ Breakers ({lines.length})</span>
+                  <span>N-1 Breakers ({lines.length})</span>
                   {trippedLines.length > 0 && (
                     <span className="bg-rose-600 text-white rounded-full px-1.5 py-0.2 text-[10px]">
                       {trippedLines.length}
@@ -871,7 +888,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                         <tr key={l.id} className={`hover:bg-slate-50 ${isTripped ? 'bg-rose-50/60' : ''}`}>
                           <td className="py-2 px-3 text-slate-400 font-bold">#{l.id}</td>
                           <td className="py-2 px-3 font-sans font-bold text-slate-900">{l.name}</td>
-                          <td className="py-2 px-3 text-slate-500">#{l.from_bus} $\to$ #{l.to_bus}</td>
+                          <td className="py-2 px-3 text-slate-500">#{l.from_bus} → #{l.to_bus}</td>
                           <td className="py-2 px-3 font-bold">{isTripped ? '0.0 MW' : `${(l.flow_mw ?? 0).toFixed(1)} MW`}</td>
                           <td className="py-2 px-3">
                             {isTripped ? (
@@ -891,7 +908,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                                   : 'bg-rose-600 text-white hover:bg-rose-700'
                               }`}
                             >
-                              {isTripped ? 'Reclose Breaker' : 'Trip ($N-1$)'}
+                              {isTripped ? 'Reclose Breaker' : 'Trip (N-1)'}
                             </button>
                           </td>
                         </tr>
@@ -908,10 +925,16 @@ export const GridStabilityTab: React.FC<Props> = ({
       {/* WORKSPACE SUBTAB 2: LOAD SHARING */}
       {workspaceTab === 'load_sharing' && (
         <div className="space-y-4">
+          {loadSharingError && (
+            <div className="flex items-center gap-2 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
+              <span>{loadSharingError}</span>
+            </div>
+          )}
           <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="space-y-1">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center">
-                Demand Surge Step ($\Delta P$)
+                Demand Surge Step (ΔP)
                 <TooltipBadge content="System-wide sudden active power disturbance testing decentralized governor droop pickup." />
               </span>
               <div className="flex items-center gap-2">
@@ -954,7 +977,7 @@ export const GridStabilityTab: React.FC<Props> = ({
               <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                 <span className="font-bold text-xs text-slate-900 flex items-center gap-2">
                   <GitBranch className="h-4 w-4 text-[#500b50]" />
-                  <span>Parallel Branch Impedance Flow Division ($P_1/P_2 = X_2/X_1$)</span>
+                  <span>Parallel Branch Impedance Flow Division (P₁/P₂ = X₂/X₁)</span>
                 </span>
                 <span className="text-[10px] text-slate-500">
                   Natural branch split inverse to line series reactance
@@ -989,7 +1012,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                 <tr>
                   <th className="py-2.5 px-3">Station</th>
                   <th className="py-2.5 px-3">Capacity</th>
-                  <th className="py-2.5 px-3">Droop ($R$)</th>
+                  <th className="py-2.5 px-3">Droop (R)</th>
                   <th className="py-2.5 px-3">Participation</th>
                   <th className="py-2.5 px-3">Assigned Pickup</th>
                   <th className="py-2.5 px-3 text-right">Headroom</th>
@@ -1069,9 +1092,13 @@ export const GridStabilityTab: React.FC<Props> = ({
                 <button
                   onClick={async () => {
                     setCascadeLoading(true);
+                    setCascadeError(null);
                     try {
                       const res = await onCascadeTrigger([initialTripLine], cascadeThreshold);
                       setCascadeResult(res);
+                    } catch (err: any) {
+                      setCascadeResult(null);
+                      setCascadeError(err?.message || 'Cascade simulation failed.');
                     } finally {
                       setCascadeLoading(false);
                     }
@@ -1085,6 +1112,13 @@ export const GridStabilityTab: React.FC<Props> = ({
               </div>
             </div>
           </div>
+
+          {cascadeError && (
+            <div className="flex items-center gap-2 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-700">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
+              <span>{cascadeError}</span>
+            </div>
+          )}
 
           {cascadeResult && (
             <div className="p-4 rounded-xl border border-rose-200 bg-rose-50/50 space-y-3 text-xs">
