@@ -28,6 +28,7 @@ import {
   Trash2,
   UploadCloud,
   ChevronLeft,
+  Info,
 } from 'lucide-react';
 
 interface Props {
@@ -91,11 +92,38 @@ export const GridStabilityTab: React.FC<Props> = ({
 }) => {
   const activeModel = models.find((m) => m.is_active);
 
-  // Workflow view: First view is always model selection until a model is selected
-  const [viewMode, setViewMode] = useState<'select_model' | 'workspace'>('select_model');
+  // Preserve viewMode across route changes
+  const [viewMode, setViewModeState] = useState<'select_model' | 'workspace'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('ml4ps_view_mode');
+      if (saved === 'workspace' || saved === 'select_model') return saved;
+    }
+    return 'select_model';
+  });
 
-  // Sub-tabs inside workspace
-  const [workspaceTab, setWorkspaceTab] = useState<'deck' | 'load_sharing' | 'cascade' | 'planning'>('deck');
+  const setViewMode = (mode: 'select_model' | 'workspace') => {
+    setViewModeState(mode);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('ml4ps_view_mode', mode);
+    }
+  };
+
+  // Preserve workspace subtab across route changes
+  const [workspaceTab, setWorkspaceTabState] = useState<'deck' | 'load_sharing' | 'cascade' | 'planning'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('ml4ps_workspace_subtab');
+      if (saved) return saved as any;
+    }
+    return 'deck';
+  });
+
+  const setWorkspaceTab = (tab: 'deck' | 'load_sharing' | 'cascade' | 'planning') => {
+    setWorkspaceTabState(tab);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('ml4ps_workspace_subtab', tab);
+    }
+  };
+
   const [deckView, setDeckView] = useState<'buses' | 'lines'>('buses');
   const [activatingId, setActivatingId] = useState<string | null>(null);
 
@@ -143,7 +171,6 @@ export const GridStabilityTab: React.FC<Props> = ({
   // Regional Planning State: 4. Decommission Sandbox
   const [selectedDecommissionBus, setSelectedDecommissionBus] = useState<number>(1);
 
-  // Debounced input handler for live recalculation
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleLiveParamChange = (field: keyof ExtendedPowerFlowVariables, value: any) => {
@@ -1122,7 +1149,10 @@ export const GridStabilityTab: React.FC<Props> = ({
         <div className="space-y-4">
           <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              
+              <Info className="h-4 w-4 text-blue-600 shrink-0" />
+              <span>
+                <strong>In-Memory Sandbox Guarantee:</strong> All additions and isolations here test network expansion in memory. The original `.m` base file in Supabase is never altered.
+              </span>
             </div>
             {totalSandboxModifications > 0 && (
               <button
@@ -1185,7 +1215,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                   <select
                     value={newSubKv}
                     onChange={(e) => setNewSubKv(Number(e.target.value))}
-                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 bg-white"
+                    className="w-full border border-slate-300 rounded px-2 py-1.5 bg-white"
                   >
                     <option value={330}>330 kV Bulk</option>
                     <option value={132}>132 kV Sub-T</option>
@@ -1407,7 +1437,7 @@ export const GridStabilityTab: React.FC<Props> = ({
               </button>
             </div>
 
-            {/* 4. Sandbox Node Deletion / Decommissioning */}
+            {/* 4. Sandbox Node Decommissioning */}
             <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
               <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-100">
                 <Trash2 className="h-4 w-4 text-rose-600" />

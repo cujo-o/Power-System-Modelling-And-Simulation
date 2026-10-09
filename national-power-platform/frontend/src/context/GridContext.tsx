@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
   BusData,
@@ -89,7 +89,6 @@ function normalizeRawModel(m: any): GridModelMeta {
     0;
 
   return {
-    ...m,
     id: String(m?.id || m?.name || 'model-' + Math.random().toString(36).substring(7)),
     name: String(m?.name || m?.filename || 'Unnamed Model'),
     voltage_level: String(vLevel),
@@ -100,7 +99,25 @@ function normalizeRawModel(m: any): GridModelMeta {
     total_demand_mw: Number(m?.total_demand_mw ?? m?.demand_mw ?? 0),
     domain: String(domain),
     is_active: Boolean(m?.is_active),
+    converged: Boolean(m?.converged ?? true),
+    is_default: Boolean(m?.is_default ?? false),
   };
+}
+
+function getStoredModelModifications(modelKey: string): { vars: ExtendedPowerFlowVariables; trips: number[] } | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(`ml4ps_modifications_${modelKey}`);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
+}
+
+function saveModelModifications(modelKey: string, vars: ExtendedPowerFlowVariables, trips: number[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(`ml4ps_modifications_${modelKey}`, JSON.stringify({ vars, trips }));
+  } catch {}
 }
 
 const GridContext = createContext<GridContextType | null>(null);
@@ -111,7 +128,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [buses, setBuses] = useState<BusData[]>([]);
   const [lines, setLines] = useState<LineData[]>([]);
   const [trippedLines, setTrippedLines] = useState<number[]>([]);
-  const [pfVariables, setPfVariables] = useState<ExtendedPowerFlowVariables>(DEFAULT_VARIABLES);
+  const [pfVariables, setPfVariablesState] = useState<ExtendedPowerFlowVariables>(DEFAULT_VARIABLES);
   const [loading, setLoading] = useState<boolean>(false);
   const [modelsLoading, setModelsLoading] = useState<boolean>(false);
   const [divergedNotice, setDivergedNotice] = useState<string | null>(null);
@@ -123,7 +140,19 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     total_losses_mw: 0.0,
   });
 
-  const lastActivatedIdRef = useRef<string | null>(null);
+  const setPfVariables: React.Dispatch<React.SetStateAction<ExtendedPowerFlowVariables>> = useCallback(
+    (action) => {
+      setPfVariablesState((prev) => {
+        const next = typeof action === 'function' ? action(prev) : action;
+        const currentKey = activeModel?.id || activeModel?.name;
+        if (currentKey) {
+          saveModelModifications(currentKey, next, trippedLines);
+        }
+        return next;
+      });
+    },
+    [activeModel, trippedLines]
+  );
 
   const apiFetch = useCallback(async (path: string, options?: RequestInit) => {
     let lastError: any = null;
@@ -182,6 +211,8 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         retrieved[0];
 
       if (matched) setActiveModel(matched);
+    } else {
+      setActiveModel(null);
     }
 
     setModelsLoading(false);
@@ -267,10 +298,15 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const activateModel = useCallback(
     async (id: string) => {
       setLoading(true);
+      setDivergedNotice(null);
 
       const targetModel = models.find((m) => m.id === id || m.name === id);
       const modelIdentifier = targetModel ? targetModel.id : id;
       const modelName = targetModel ? targetModel.name : id;
+
+      if (targetModel) {
+        setActiveModel({ ...targetModel, is_active: true });
+      }
 
       setModels((prev) =>
         prev.map((m) => ({
@@ -279,98 +315,41 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }))
       );
 
-      if (targetModel) {
-        setActiveModel({ ...targetModel, is_active: true });
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('ml4ps_active_model_id', modelIdentifier);
-        }
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('ml4ps_active_model_id', modelIdentifier);
       }
 
-      if (supabase) {
-        try {
-          await supabase.from('grid_models').update({ is_active: false }).neq('id', '');
-          await supabase.from('grid_models').update({ is_active: true }).eq('id', modelIdentifier);
-        } catch {}
-      }
-
-      let inMemory = false;
-
-      // 1. Try activating existing model in backend memory
       try {
-        const resName = await apiFetch(`/api/models/activate/${encodeURIComponent(modelName)}`, { method: 'POST' });
-        if (resName && resName.ok) inMemory = true;
-      } catch {}
+        let inMemory = false;
 
-      if (!inMemory) {
+        // 1. Try activating existing model in backend memory by name or ID
         try {
-          const resId = await apiFetch(`/api/models/activate/${encodeURIComponent(modelIdentifier)}`, { method: 'POST' });
-          if (resId && resId.ok) inMemory = true;
+          const resName = await apiFetch(`/api/models/activate/${encodeURIComponent(modelName)}`, { method: 'POST' });
+          if (resName && resName.ok) inMemory = true;
         } catch {}
-      }
-
-      // 2. Hydrate from Supabase if model was wiped on Render restart
-      if (!inMemory && supabase) {
-        let rowData: any = null;
-        try {
-          const { data: byName } = await supabase
-            .from('grid_models')
-            .select('*')
-            .eq('name', modelName)
-            .maybeSingle();
-          rowData = byName;
-          if (!rowData) {
-            const { data: byId } = await supabase
-              .from('grid_models')
-              .select('*')
-              .eq('id', modelIdentifier)
-              .maybeSingle();
-            rowData = byId;
-          }
-        } catch (e) {
-          console.warn('Supabase row fetch notice:', e);
-        }
-
-        const networkPayload = rowData?.network_payload || (targetModel as any)?.network_payload;
-        if (networkPayload) {
-          try {
-            const loadRes = await apiFetch('/api/models/load-payload', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                id: modelIdentifier,
-                name: modelName,
-                voltage_level: targetModel?.voltage_level || '330kV',
-                domain: targetModel?.domain || 'Static & Dynamic',
-                platform: targetModel?.platform || 'MATPOWER',
-                network_payload: networkPayload,
-              }),
-            });
-            if (loadRes && loadRes.ok) inMemory = true;
-          } catch (e) {
-            console.warn('load-payload hydration error:', e);
-          }
-        }
 
         if (!inMemory) {
+          try {
+            const resId = await apiFetch(`/api/models/activate/${encodeURIComponent(modelIdentifier)}`, { method: 'POST' });
+            if (resId && resId.ok) inMemory = true;
+          } catch {}
+        }
+
+        // 2. If memory was cleared on Render restart, re-hydrate from Supabase Storage
+        if (!inMemory && supabase) {
           const candidateBuckets = ['models', 'grid_models', 'grid-models', 'model_files'];
           let fileBlob: Blob | null = null;
-          const searchPath = rowData?.file_path || rowData?.storage_path || modelName;
 
           for (const b of candidateBuckets) {
             try {
-              const { data: d1 } = await supabase.storage.from(b).download(searchPath);
+              const { data: d1 } = await supabase.storage.from(b).download(modelName);
               if (d1) {
                 fileBlob = d1;
                 break;
               }
-              const { data: d2 } = await supabase.storage.from(b).download(modelName);
+              const { data: d2 } = await supabase.storage.from(b).download(`${modelIdentifier}.m`);
               if (d2) {
                 fileBlob = d2;
-                break;
-              }
-              const { data: d3 } = await supabase.storage.from(b).download(`${modelIdentifier}.m`);
-              if (d3) {
-                fileBlob = d3;
                 break;
               }
             } catch {}
@@ -386,18 +365,23 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               });
               if (uploadRes && uploadRes.ok) inMemory = true;
             } catch (e) {
-              console.warn('Storage upload error:', e);
+              console.warn('Storage hydration notice:', e);
             }
           }
         }
+
+        // 3. Load saved user modifications for this model if any exist
+        const saved = getStoredModelModifications(modelIdentifier) || getStoredModelModifications(modelName);
+        const varsToApply = saved?.vars || DEFAULT_VARIABLES;
+        const tripsToApply = saved?.trips || [];
+
+        setTrippedLines(tripsToApply);
+        setPfVariablesState(varsToApply);
+
+        await runSimulation(varsToApply, tripsToApply);
+      } finally {
+        setLoading(false);
       }
-
-      setTrippedLines([]);
-      setPfVariables(DEFAULT_VARIABLES);
-      await runSimulation(DEFAULT_VARIABLES, []);
-
-      lastActivatedIdRef.current = modelIdentifier;
-      setLoading(false);
     },
     [models, apiFetch, runSimulation]
   );
@@ -406,39 +390,55 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     (id: number) => {
       setTrippedLines((prev) => {
         const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+        const currentKey = activeModel?.id || activeModel?.name;
+        if (currentKey) {
+          saveModelModifications(currentKey, pfVariables, next);
+        }
         runSimulation(undefined, next);
         return next;
       });
     },
-    [runSimulation]
+    [runSimulation, activeModel, pfVariables]
   );
 
   const toggleBusService = useCallback(
     (busId: number) => {
-      setPfVariables((prev) => {
+      setPfVariablesState((prev) => {
         const disabled = prev.disabledBuses || [];
         const nextDisabled = disabled.includes(busId)
           ? disabled.filter((id) => id !== busId)
           : [...disabled, busId];
 
         const updatedVars = { ...prev, disabledBuses: nextDisabled };
+        const currentKey = activeModel?.id || activeModel?.name;
+        if (currentKey) {
+          saveModelModifications(currentKey, updatedVars, trippedLines);
+        }
         runSimulation(updatedVars);
         return updatedVars;
       });
     },
-    [runSimulation]
+    [runSimulation, activeModel, trippedLines]
   );
 
   const resetTrippedLines = useCallback(() => {
     setTrippedLines([]);
+    const currentKey = activeModel?.id || activeModel?.name;
+    if (currentKey) {
+      saveModelModifications(currentKey, pfVariables, []);
+    }
     runSimulation(undefined, []);
-  }, [runSimulation]);
+  }, [runSimulation, activeModel, pfVariables]);
 
   const resetPfVariables = useCallback(() => {
-    setPfVariables(DEFAULT_VARIABLES);
+    const currentKey = activeModel?.id || activeModel?.name;
+    if (currentKey && typeof window !== 'undefined') {
+      localStorage.removeItem(`ml4ps_modifications_${currentKey}`);
+    }
+    setPfVariablesState(DEFAULT_VARIABLES);
     setTrippedLines([]);
     runSimulation(DEFAULT_VARIABLES, []);
-  }, [runSimulation]);
+  }, [runSimulation, activeModel]);
 
   const triggerCascade = useCallback(
     async (initialTripped: number[], threshold: number): Promise<CascadeResult> => {
@@ -471,12 +471,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   useEffect(() => {
     fetchModels();
   }, [fetchModels]);
-
-  useEffect(() => {
-    if (activeModel?.id && lastActivatedIdRef.current !== activeModel.id) {
-      activateModel(activeModel.id);
-    }
-  }, [activeModel?.id, activateModel]);
 
   return (
     <GridContext.Provider
