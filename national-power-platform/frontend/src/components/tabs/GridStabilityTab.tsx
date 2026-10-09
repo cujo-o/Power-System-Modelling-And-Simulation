@@ -28,7 +28,6 @@ import {
   Trash2,
   UploadCloud,
   ChevronLeft,
-  Info,
 } from 'lucide-react';
 
 interface Props {
@@ -92,38 +91,11 @@ export const GridStabilityTab: React.FC<Props> = ({
 }) => {
   const activeModel = models.find((m) => m.is_active);
 
-  // Persist viewMode across route navigation
-  const [viewMode, setViewModeState] = useState<'select_model' | 'workspace'>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('ml4ps_view_mode');
-      if (saved === 'workspace' || saved === 'select_model') return saved;
-    }
-    return 'select_model';
-  });
+  // Workflow view: First view is always model selection until a model is selected
+  const [viewMode, setViewMode] = useState<'select_model' | 'workspace'>('select_model');
 
-  const setViewMode = (mode: 'select_model' | 'workspace') => {
-    setViewModeState(mode);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('ml4ps_view_mode', mode);
-    }
-  };
-
-  // Persist workspace subtab across route navigation
-  const [workspaceTab, setWorkspaceTabState] = useState<'deck' | 'load_sharing' | 'cascade' | 'planning'>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('ml4ps_workspace_subtab');
-      if (saved) return saved as any;
-    }
-    return 'deck';
-  });
-
-  const setWorkspaceTab = (tab: 'deck' | 'load_sharing' | 'cascade' | 'planning') => {
-    setWorkspaceTabState(tab);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('ml4ps_workspace_subtab', tab);
-    }
-  };
-
+  // Sub-tabs inside workspace
+  const [workspaceTab, setWorkspaceTab] = useState<'deck' | 'load_sharing' | 'cascade' | 'planning'>('deck');
   const [deckView, setDeckView] = useState<'buses' | 'lines'>('buses');
   const [activatingId, setActivatingId] = useState<string | null>(null);
 
@@ -171,6 +143,7 @@ export const GridStabilityTab: React.FC<Props> = ({
   // Regional Planning State: 4. Decommission Sandbox
   const [selectedDecommissionBus, setSelectedDecommissionBus] = useState<number>(1);
 
+  // Debounced input handler for live recalculation
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleLiveParamChange = (field: keyof ExtendedPowerFlowVariables, value: any) => {
@@ -339,6 +312,9 @@ export const GridStabilityTab: React.FC<Props> = ({
   };
 
   const currentDisplayName = activeModel?.name || modelName || 'Active Grid Model';
+  const totalSubstationsCount = buses.length > 0 ? buses.length : (activeModel?.buses || 0);
+  const totalBranchesCount = lines.length > 0 ? lines.length : (activeModel?.branches || 0);
+
   const totalSandboxModifications =
     pfVariables.newBuses.length +
     pfVariables.newLines.length +
@@ -536,7 +512,7 @@ export const GridStabilityTab: React.FC<Props> = ({
             <div className="flex items-center gap-2">
               <span className="font-black text-sm text-slate-900 tracking-tight">{currentDisplayName}</span>
               <span className="text-[10px] font-mono px-2 py-0.2 rounded bg-emerald-100 text-emerald-800 font-bold">
-                {buses.length} Substations • {lines.length} Branches
+                {totalSubstationsCount} Substations • {totalBranchesCount} Branches
               </span>
             </div>
           </div>
@@ -779,6 +755,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                 />
                 <button
                   onClick={() => onReset()}
+                  disabled={loading}
                   className="flex items-center gap-1 px-2.5 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold"
                 >
                   <RotateCcw className="h-3 w-3" />
@@ -1145,10 +1122,7 @@ export const GridStabilityTab: React.FC<Props> = ({
         <div className="space-y-4">
           <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Info className="h-4 w-4 text-blue-600 shrink-0" />
-              <span>
-                <strong>In-Memory Sandbox Guarantee:</strong> All additions and isolations here test network expansion in memory. The original `.m` base file in Supabase is never altered.
-              </span>
+              
             </div>
             {totalSandboxModifications > 0 && (
               <button
