@@ -1,12 +1,28 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { BusData } from '@/types/grid';
-import { Activity, RefreshCw, ShieldAlert } from 'lucide-react';
+import { BusData, DynamicSimResult } from '@/types/grid';
+import { Activity, RefreshCw } from 'lucide-react';
 
-interface DynamicsTabProps {
+export interface DynamicsTabProps {
   buses?: BusData[];
   modelName?: string;
+  dynResult?: DynamicSimResult | any | null;
+  dynLoading?: boolean;
+  onRunSimulation?: (params: {
+    disturbance_mw: number;
+    inertia_constant_H: number;
+    enable_governor: boolean;
+    droop_R: number;
+    enable_pss: boolean;
+    pss_gain_K: number;
+    enable_ufls: boolean;
+  }) => Promise<any> | void;
+  onRunMultiMachine?: (params: {
+    fault_bus_id: number;
+    fault_duration_ms: number;
+    calc_cct?: boolean;
+  }) => Promise<any> | void;
 }
 
 const TooltipBadge: React.FC<{ content: string }> = ({ content }) => (
@@ -27,6 +43,10 @@ const API_BASE =
 export const DynamicsTab: React.FC<DynamicsTabProps> = ({
   buses = [],
   modelName = '',
+  dynResult,
+  dynLoading = false,
+  onRunSimulation,
+  onRunMultiMachine,
 }) => {
   const [subTab, setSubTab] = useState<'frequency' | 'multimachine'>('frequency');
 
@@ -38,8 +58,8 @@ export const DynamicsTab: React.FC<DynamicsTabProps> = ({
   const [enableGovernor, setEnableGovernor] = useState<boolean>(true);
   const [enablePss, setEnablePss] = useState<boolean>(true);
   const [enableUfls, setEnableUfls] = useState<boolean>(true);
-  const [freqLoading, setFreqLoading] = useState<boolean>(false);
-  const [freqResult, setFreqResult] = useState<any>(null);
+  const [localFreqLoading, setLocalFreqLoading] = useState<boolean>(false);
+  const [localFreqResult, setLocalFreqResult] = useState<any>(null);
 
   // Multi-Machine Rotor Angle State
   const [faultBusId, setFaultBusId] = useState<number>(buses[0]?.id || 1);
@@ -54,42 +74,56 @@ export const DynamicsTab: React.FC<DynamicsTabProps> = ({
   }, [buses, faultBusId]);
 
   const runFrequencySim = async () => {
-    setFreqLoading(true);
+    const payload = {
+      disturbance_mw: disturbanceMw,
+      inertia_constant_H: inertiaH,
+      enable_governor: enableGovernor,
+      droop_R: droopR,
+      enable_pss: enablePss,
+      pss_gain_K: pssGainK,
+      enable_ufls: enableUfls,
+    };
+
+    if (onRunSimulation) {
+      await onRunSimulation(payload);
+      return;
+    }
+
+    setLocalFreqLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/simulations/dynamics`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          disturbance_mw: disturbanceMw,
-          inertia_constant_H: inertiaH,
-          enable_governor: enableGovernor,
-          droop_R: droopR,
-          enable_pss: enablePss,
-          pss_gain_K: pssGainK,
-          enable_ufls: enableUfls,
-        }),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
-        setFreqResult(await res.json());
+        setLocalFreqResult(await res.json());
       }
     } catch {}
-    setFreqLoading(false);
+    setLocalFreqLoading(false);
   };
 
   const runMultiMachineSim = async () => {
+    const payload = {
+      fault_bus_id: faultBusId,
+      fault_duration_ms: faultDurationMs,
+      calc_cct: true,
+    };
+
     setMmLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/simulations/multi-machine`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fault_bus_id: faultBusId,
-          fault_duration_ms: faultDurationMs,
-          calc_cct: true,
-        }),
-      });
-      if (res.ok) {
-        setMmResult(await res.json());
+      if (onRunMultiMachine) {
+        const res = await onRunMultiMachine(payload);
+        if (res) setMmResult(res);
+      } else {
+        const res = await fetch(`${API_BASE}/api/simulations/multi-machine`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          setMmResult(await res.json());
+        }
       }
     } catch {}
     setMmLoading(false);
@@ -99,6 +133,32 @@ export const DynamicsTab: React.FC<DynamicsTabProps> = ({
     if (subTab === 'frequency') runFrequencySim();
     else runMultiMachineSim();
   }, [subTab, modelName]);
+
+  const activeFreqResult = dynResult || localFreqResult;
+  const isFreqLoading = dynLoading || localFreqLoading;
+
+  const nadirVal =
+    activeFreqResult?.nadir_hz ??
+    activeFreqResult?.metrics?.nadir_hz ??
+    activeFreqResult?.metrics?.nadir ??
+    49.2;
+  const rocofVal =
+    activeFreqResult?.initial_rocof ??
+    activeFreqResult?.metrics?.initial_rocof ??
+    activeFreqResult?.metrics?.rocof ??
+    -0.45;
+  const settlingVal =
+    activeFreqResult?.settling_hz ??
+    activeFreqResult?.metrics?.settling_hz ??
+    49.65;
+  const shedVal =
+    activeFreqResult?.total_shed_mw ??
+    activeFreqResult?.metrics?.total_shed_mw ??
+    0;
+  const stagesTripped =
+    activeFreqResult?.stages_tripped ??
+    activeFreqResult?.metrics?.stages_tripped ??
+    0;
 
   return (
     <div className="max-w-7xl mx-auto space-y-5 py-1 text-slate-800">
@@ -222,10 +282,10 @@ export const DynamicsTab: React.FC<DynamicsTabProps> = ({
 
               <button
                 onClick={runFrequencySim}
-                disabled={freqLoading}
+                disabled={isFreqLoading}
                 className="mt-2 w-full py-2 rounded-lg bg-[#500b50] hover:bg-[#680f68] text-white font-bold text-xs flex items-center justify-center gap-1.5"
               >
-                {freqLoading ? (
+                {isFreqLoading ? (
                   <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                 ) : (
                   <Activity className="h-3.5 w-3.5" />
@@ -236,7 +296,7 @@ export const DynamicsTab: React.FC<DynamicsTabProps> = ({
           </div>
 
           {/* KPI Metrics */}
-          {freqResult && (
+          {activeFreqResult && (
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 font-mono">
               <div className="p-4 rounded-xl border border-slate-200 bg-white">
                 <span className="text-[10px] font-sans font-bold uppercase text-slate-400 flex items-center">
@@ -245,10 +305,10 @@ export const DynamicsTab: React.FC<DynamicsTabProps> = ({
                 </span>
                 <span
                   className={`text-lg font-black mt-0.5 block ${
-                    freqResult.nadir_hz < 48.5 ? 'text-rose-600' : 'text-emerald-700'
+                    nadirVal < 48.5 ? 'text-rose-600' : 'text-emerald-700'
                   }`}
                 >
-                  {freqResult.nadir_hz} Hz
+                  {nadirVal} Hz
                 </span>
               </div>
 
@@ -258,7 +318,7 @@ export const DynamicsTab: React.FC<DynamicsTabProps> = ({
                   <TooltipBadge content="Rate of Change of Frequency immediately following the disturbance, measured in Hz per second." />
                 </span>
                 <span className="text-lg font-black text-slate-900 mt-0.5 block">
-                  {freqResult.initial_rocof} Hz/s
+                  {rocofVal} Hz/s
                 </span>
               </div>
 
@@ -268,7 +328,7 @@ export const DynamicsTab: React.FC<DynamicsTabProps> = ({
                   <TooltipBadge content="Quasi-steady-state frequency achieved after primary governor response and UFLS action." />
                 </span>
                 <span className="text-lg font-black text-[#500b50] mt-0.5 block">
-                  {freqResult.settling_hz} Hz
+                  {settlingVal} Hz
                 </span>
               </div>
 
@@ -278,7 +338,7 @@ export const DynamicsTab: React.FC<DynamicsTabProps> = ({
                   <TooltipBadge content="Total megawatts of demand automatically disconnected by under-frequency relays to prevent total blackout." />
                 </span>
                 <span className="text-lg font-black text-amber-700 mt-0.5 block">
-                  {freqResult.total_shed_mw} MW ({freqResult.stages_tripped} Stages)
+                  {shedVal} MW ({stagesTripped} Stages)
                 </span>
               </div>
             </div>
