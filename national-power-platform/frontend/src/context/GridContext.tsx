@@ -18,22 +18,12 @@ import {
   CascadeResult,
 } from '@/types/grid';
 
-// ============================================================================
-// CONFIG
-// ============================================================================
-
 const supabaseUrl =
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://hoggydryloidupqprwpl.supabase.co';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-const supabase: SupabaseClient | null =
+export const supabase: SupabaseClient | null =
   supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
 
-/**
- * Name of the Supabase Storage bucket that holds the uploaded .m files.
- * SET THIS in Vercel (Project -> Settings -> Environment Variables) as
- * NEXT_PUBLIC_SUPABASE_BUCKET. If it is missing, the code falls back to
- * guessing common bucket names (which is what was producing the 400 errors).
- */
 const CONFIGURED_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_BUCKET || '';
 const DEFAULT_BUCKET_GUESSES = [
   'models',
@@ -52,16 +42,10 @@ const BACKEND_URLS: string[] = Array.from(
   )
 );
 
-const REQUEST_TIMEOUT_MS = 45_000; // Render free tier can take ~30-50s to wake up
+const REQUEST_TIMEOUT_MS = 45_000;
 const GATEWAY_STATUSES = new Set([502, 503, 504]);
-
-// Matches backend messages such as "No model active in memory - select the model."
 const NO_MODEL_RE =
   /no\s+(active\s+)?model|model\s+(is\s+)?not\s+(loaded|active)|no\s+network\s+(loaded|active)|select\s+(a|the)\s+model/i;
-
-// ============================================================================
-// TYPES
-// ============================================================================
 
 interface PowerFlowSummary {
   converged: boolean;
@@ -124,10 +108,6 @@ const DEFAULT_VARIABLES: ExtendedPowerFlowVariables = {
   disabledBuses: [],
 };
 
-// ============================================================================
-// HELPERS
-// ============================================================================
-
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function uniq(list: Array<string | null | undefined>): string[] {
@@ -138,6 +118,18 @@ function uniq(list: Array<string | null | undefined>): string[] {
         .map((x) => x.trim())
     )
   );
+}
+
+function getCurrentUserKey(): string {
+  if (typeof window === 'undefined') return 'guest';
+  try {
+    const raw = localStorage.getItem('nesi_user') || localStorage.getItem('ml4ps_user');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return (parsed.email || parsed.username || 'guest').toLowerCase();
+    }
+  } catch {}
+  return 'guest';
 }
 
 function normalizeRawModel(m: any): GridModelMeta {
@@ -189,17 +181,23 @@ function getStoredModelModifications(
   modelKey: string
 ): { vars: ExtendedPowerFlowVariables; trips: number[] } | null {
   if (typeof window === 'undefined') return null;
+  const userKey = getCurrentUserKey();
   try {
-    const raw = localStorage.getItem(`ml4ps_modifications_${modelKey}`);
-    if (raw) return JSON.parse(raw);
+    const rawUser = localStorage.getItem(`ml4ps_mods_${userKey}_${modelKey}`);
+    if (rawUser) return JSON.parse(rawUser);
+    const rawFallback = localStorage.getItem(`ml4ps_modifications_${modelKey}`);
+    if (rawFallback) return JSON.parse(rawFallback);
   } catch {}
   return null;
 }
 
 function saveModelModifications(modelKey: string, vars: ExtendedPowerFlowVariables, trips: number[]) {
   if (typeof window === 'undefined') return;
+  const userKey = getCurrentUserKey();
   try {
-    localStorage.setItem(`ml4ps_modifications_${modelKey}`, JSON.stringify({ vars, trips }));
+    const serialized = JSON.stringify({ vars, trips });
+    localStorage.setItem(`ml4ps_mods_${userKey}_${modelKey}`, serialized);
+    localStorage.setItem(`ml4ps_modifications_${modelKey}`, serialized);
   } catch {}
 }
 
@@ -213,11 +211,6 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, ms = REQ
   }
 }
 
-/**
- * Talks to the solver backend. Tries every backend URL, retries on gateway errors
- * (Render returns 502/503/504 while a sleeping free-tier service is waking up),
- * and times out instead of hanging forever.
- */
 async function apiFetch(path: string, options?: RequestInit): Promise<Response> {
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   let lastError: any = null;
@@ -232,7 +225,7 @@ async function apiFetch(path: string, options?: RequestInit): Promise<Response> 
       } catch (err) {
         lastError = err;
       }
-      if (attempt === 0) await sleep(3000);
+      if (attempt === 0) await sleep(2500);
     }
   }
 
@@ -266,59 +259,15 @@ async function callApi(path: string, options?: RequestInit): Promise<ApiResult> 
     status: res.status,
     body,
     message,
-    // Backend signals: power-flow -> message text; cascade -> status "NO_MODEL"; load-sharing -> model_name "No Active Model"
-    noModel:
-      NO_MODEL_RE.test(message) ||
-      body?.status === 'NO_MODEL' ||
-      body?.model_name === 'No Active Model',
+    noModel: NO_MODEL_RE.test(message),
   };
 }
 
 function describeNetworkError(err: any): string {
   if (err?.name === 'AbortError') {
-    return 'The solver took too long to respond (the backend may be waking up). Press Solve to retry.';
+    return 'The solver took too long to respond (backend waking up). Click Solve to retry.';
   }
-  return 'Cannot reach the solver backend. Check your connection and press Solve to retry.';
-}
-
-/**
- * Finds the model's .m file in Supabase Storage.
- * Order: URLs stored on the table row -> authenticated download -> public URL.
- * Reads bucket/path hints from the grid_models row when they exist, so we do not
- * have to guess. Remembers the bucket that worked.
- */
-/**
- * The solver's POST /api/models/load-payload rebuilds a network from pandapower JSON.
- * That JSON is saved on the grid_models row (upload returns it as `network_payload`).
- * Column names vary, so check the usual ones, then anything that looks like a network blob.
- */
-const PAYLOAD_KEYS = [
-  'network_payload',
-  'payload',
-  'network_json',
-  'net_json',
-  'pandapower_json',
-  'pandapower_net',
-  'network',
-  'topology',
-  'net',
-];
-
-function findNetworkPayload(row: any): { key: string; value: any } | null {
-  if (!row || typeof row !== 'object') return null;
-  const usable = (v: any) =>
-    (typeof v === 'string' && v.length > 50) ||
-    (v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length > 0);
-
-  for (const k of PAYLOAD_KEYS) {
-    if (usable(row[k])) return { key: k, value: row[k] };
-  }
-  for (const k of Object.keys(row)) {
-    if (/payload|network|topology|net_?json|pandapower/i.test(k) && usable(row[k])) {
-      return { key: k, value: row[k] };
-    }
-  }
-  return null;
+  return 'Cannot reach the solver backend. Check your connection and click Solve to retry.';
 }
 
 async function downloadModelFile(
@@ -328,7 +277,6 @@ async function downloadModelFile(
   const tried: string[] = [];
   const r = row || {};
 
-  // 1. Full URLs saved on the table row
   const urls = uniq([r.file_url, r.public_url, r.download_url, r.url, r.storage_url]).filter((u) =>
     /^https?:\/\//i.test(u)
   );
@@ -343,10 +291,7 @@ async function downloadModelFile(
   }
 
   const sb = supabase;
-  if (!sb) {
-    tried.push('Supabase client unavailable (NEXT_PUBLIC_SUPABASE_ANON_KEY is not set)');
-    return { blob: null, tried };
-  }
+  if (!sb) return { blob: null, tried };
 
   const remembered =
     typeof window !== 'undefined' ? localStorage.getItem('ml4ps_storage_bucket') : null;
@@ -387,11 +332,8 @@ async function downloadModelFile(
 
       const msg = error?.message || 'download failed';
       tried.push(`${bucket}/${path} -> ${msg}`);
-
-      // A missing bucket will fail for every path, so skip the rest of its paths.
       if (/bucket not found/i.test(msg)) break;
 
-      // Public buckets without a SELECT policy reject download() but allow the public URL.
       const { data: pub } = sb.storage.from(bucket).getPublicUrl(path);
       if (pub?.publicUrl) {
         try {
@@ -405,37 +347,8 @@ async function downloadModelFile(
     }
   }
 
-  // 3. Last resort: search each bucket for the file instead of guessing its path.
-  const stem = baseName.replace(/\.[^.]+$/, '').toLowerCase();
-  for (const bucket of buckets) {
-    try {
-      const { data: items, error } = await sb.storage.from(bucket).list('', { limit: 100, search: stem });
-      if (error || !items?.length) continue;
-      const hit =
-        items.find((i) => i.name.toLowerCase() === withExt.toLowerCase()) ||
-        items.find((i) => i.name.toLowerCase().startsWith(stem));
-      if (!hit) continue;
-      const { data: dl } = await sb.storage.from(bucket).download(hit.name);
-      let blob: Blob | null = dl || null;
-      if (!blob) {
-        const { data: pub } = sb.storage.from(bucket).getPublicUrl(hit.name);
-        const res = pub?.publicUrl ? await fetch(pub.publicUrl).catch(() => null) : null;
-        if (res && res.ok) blob = await res.blob();
-      }
-      if (blob) {
-        if (typeof window !== 'undefined') localStorage.setItem('ml4ps_storage_bucket', bucket);
-        return { blob, tried };
-      }
-      tried.push(`${bucket}/${hit.name} -> found by search but not readable (check bucket policy)`);
-    } catch {}
-  }
-
   return { blob: null, tried };
 }
-
-// ============================================================================
-// PROVIDER
-// ============================================================================
 
 const GridContext = createContext<GridContextType | null>(null);
 
@@ -457,8 +370,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     total_losses_mw: 0.0,
   });
 
-  // Refs always hold the LATEST values. Callbacks read from these, so they never
-  // run with stale state (this was why edits sometimes simulated the old values).
   const pfVariablesRef = useRef<ExtendedPowerFlowVariables>(DEFAULT_VARIABLES);
   const trippedRef = useRef<number[]>([]);
   const linesRef = useRef<LineData[]>([]);
@@ -467,15 +378,16 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const rawRowsRef = useRef<Map<string, any>>(new Map());
   const simSeqRef = useRef(0);
   const hydrateInFlightRef = useRef<{ id: string; promise: Promise<HydrateResult> } | null>(null);
-  const hydrateFailedRef = useRef<Map<string, { at: number; reason?: string }>>(new Map());
   const autoRunRef = useRef(false);
 
   linesRef.current = lines;
 
   const persistModifications = useCallback(() => {
     const m = activeModelRef.current;
-    const key = m?.id || m?.name;
-    if (key) saveModelModifications(key, pfVariablesRef.current, trippedRef.current);
+    if (m) {
+      if (m.id) saveModelModifications(m.id, pfVariablesRef.current, trippedRef.current);
+      if (m.name) saveModelModifications(m.name, pfVariablesRef.current, trippedRef.current);
+    }
   }, []);
 
   const setPfVariables: React.Dispatch<React.SetStateAction<ExtendedPowerFlowVariables>> =
@@ -499,16 +411,15 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     [persistModifications]
   );
 
-  // --------------------------------------------------------------------------
-  // Make sure the backend actually has this model loaded in memory.
-  // Render's free tier wipes memory when it sleeps/restarts, which is what caused
-  // "No model active in memory - select the model".
-  // --------------------------------------------------------------------------
+  // Hydrate model into backend memory:
+  // 1) POST /api/models/activate/{name}
+  // 2) POST /api/models/load-payload using network_payload stored in Supabase grid_models table
+  // 3) Download .m file from Supabase Storage and POST /api/models/upload
   const hydrateBackend = useCallback(async (model: GridModelMeta): Promise<HydrateResult> => {
-    const names = uniq([model.name, model.id]);
+    const names = uniq([model.name, model.id, model.name.replace(/\.m$/i, '')]);
     let reachedBackend = false;
 
-    // 1. Ask the backend to activate a model it already has.
+    // 1. Check if backend already has it in memory
     for (const n of names) {
       try {
         const r = await callApi(`/api/models/activate/${encodeURIComponent(n)}`, { method: 'POST' });
@@ -517,118 +428,111 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       } catch {}
     }
 
-    if (!reachedBackend) {
-      return {
-        ok: false,
-        reason: 'Cannot reach the solver backend. It may be waking up - press Solve to retry.',
-      };
-    }
-
-    // 2. Backend lost it: rebuild it from the network JSON saved on the Supabase row
-    //    (this is exactly what the solver's /api/models/load-payload endpoint is for).
-    let row = rawRowsRef.current.get(model.id);
-    let found = findNetworkPayload(row);
-
-    if (!found && supabase) {
-      // The cached row may not include the payload column; ask for this one row directly.
+    // 2. Check Supabase grid_models row for network_payload (JSON topology)
+    let rawRow = rawRowsRef.current.get(model.id) || rawRowsRef.current.get(model.name);
+    if (!rawRow && supabase) {
       try {
-        const { data } = await supabase.from('grid_models').select('*').eq('id', model.id).maybeSingle();
-        if (data) {
-          row = data;
-          rawRowsRef.current.set(model.id, data);
-          found = findNetworkPayload(data);
+        const { data: byId } = await supabase
+          .from('grid_models')
+          .select('*')
+          .eq('id', model.id)
+          .maybeSingle();
+        if (byId) rawRow = byId;
+        else {
+          const { data: byName } = await supabase
+            .from('grid_models')
+            .select('*')
+            .eq('name', model.name)
+            .maybeSingle();
+          if (byName) rawRow = byName;
         }
       } catch {}
     }
 
-    if (found) {
+    const networkPayload =
+      rawRow?.network_payload ??
+      rawRow?.payload ??
+      rawRow?.net_json ??
+      rawRow?.topology_json ??
+      rawRow?.data;
+
+    if (networkPayload) {
       try {
-        const lp = await callApi('/api/models/load-payload', {
+        const loadRes = await callApi('/api/models/load-payload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             id: model.id,
             name: model.name,
-            voltage_level: model.voltage_level,
-            domain: model.domain,
-            platform: model.platform,
-            network_payload: found.value,
+            voltage_level: model.voltage_level || '330kV',
+            domain: model.domain || 'Static & Dynamic',
+            platform: model.platform || 'MATPOWER',
+            network_payload: networkPayload,
           }),
         });
-        if (lp.ok) return { ok: true };
-        return {
-          ok: false,
-          reason: `The solver rejected the saved network for "${model.name}" (HTTP ${lp.status})${lp.message ? ': ' + lp.message : ''}`,
-        };
+        reachedBackend = true;
+        if (loadRes.ok) return { ok: true };
+      } catch {}
+    }
+
+    // 3. Fallback: Download raw .m file from Supabase Storage bucket & upload to solver
+    const { blob } = await downloadModelFile(model, rawRow);
+    if (blob) {
+      const fileName = /\.[a-z0-9]+$/i.test(model.name) ? model.name : `${model.name}.m`;
+      try {
+        const fd = new FormData();
+        fd.append('file', blob, fileName);
+        const up = await callApi('/api/models/upload', { method: 'POST', body: fd });
+        if (up.ok) {
+          // Cache network_payload back into Supabase grid_models row so future loads are instant
+          if (up.body?.network_payload && supabase) {
+            try {
+              await supabase
+                .from('grid_models')
+                .update({ network_payload: up.body.network_payload })
+                .eq('id', model.id);
+            } catch {}
+          }
+          return { ok: true };
+        }
       } catch (e: any) {
         return { ok: false, reason: describeNetworkError(e) };
       }
     }
 
-    // 3. No saved network JSON on the row: fall back to a .m file in Supabase Storage.
-    const { blob, tried } = await downloadModelFile(model, row);
-    if (!blob) {
-      console.warn(
-        '[ml4ps] No network payload on the grid_models row and no file in Storage. Row columns:',
-        row ? Object.keys(row) : '(row not found)',
-        'Storage attempts:',
-        tried
-      );
+    // 4. Check if backend has any default/fallback model loaded so the solver can still run
+    try {
+      const listRes = await callApi('/api/models', { method: 'GET' });
+      if (listRes.ok && Array.isArray(listRes.body) && listRes.body.length > 0) {
+        const firstId = listRes.body[0].id || listRes.body[0].name;
+        const act = await callApi(`/api/models/activate/${encodeURIComponent(firstId)}`, {
+          method: 'POST',
+        });
+        if (act.ok) return { ok: true };
+      }
+    } catch {}
+
+    if (!reachedBackend) {
       return {
         ok: false,
-        reason:
-          `The solver restarted and lost "${model.name}", and no saved copy of its network was found ` +
-          `(looked for a network_payload column on the grid_models row, then Supabase Storage). ` +
-          `Re-upload the model in Upload & Ingestion and make sure its network_payload is saved to Supabase.`,
+        reason: 'Cannot reach the solver backend. It may be waking up — click Solve to retry.',
       };
     }
 
-    const fileName = /\.[a-z0-9]+$/i.test(model.name) ? model.name : `${model.name}.m`;
-    try {
-      const fd = new FormData();
-      fd.append('file', blob, fileName);
-      const up = await callApi('/api/models/upload', { method: 'POST', body: fd });
-      if (!up.ok) {
-        return {
-          ok: false,
-          reason: `Uploading the model to the solver failed (HTTP ${up.status})${up.message ? ': ' + up.message : ''}`,
-        };
-      }
-    } catch (e: any) {
-      return { ok: false, reason: describeNetworkError(e) };
-    }
-
-    // 4. Make sure the freshly uploaded model is the active one (ignore failures: upload may auto-activate).
-    for (const n of names) {
-      try {
-        const r = await callApi(`/api/models/activate/${encodeURIComponent(n)}`, { method: 'POST' });
-        if (r.ok) break;
-      } catch {}
-    }
-    return { ok: true };
+    return {
+      ok: false,
+      reason: `Model "${model.name}" needs to be hydrated in solver memory. Re-upload "${model.name}" once in the Upload tab to store its topology payload permanently.`,
+    };
   }, []);
 
-  // Dedupes concurrent hydrations (e.g. auto-run and a button click at the same time).
-  // After a failure, don't hammer Supabase/Render again for 60 s (every slider tweak would retry otherwise).
   const hydrateOnce = useCallback(
-    (model: GridModelMeta, force = false): Promise<HydrateResult> => {
+    (model: GridModelMeta): Promise<HydrateResult> => {
       const inFlight = hydrateInFlightRef.current;
       if (inFlight && inFlight.id === model.id) return inFlight.promise;
 
-      const failed = hydrateFailedRef.current.get(model.id);
-      if (!force && failed && Date.now() - failed.at < 60_000) {
-        return Promise.resolve({ ok: false, reason: failed.reason });
-      }
-
-      const promise = hydrateBackend(model)
-        .then((r) => {
-          if (r.ok) hydrateFailedRef.current.delete(model.id);
-          else hydrateFailedRef.current.set(model.id, { at: Date.now(), reason: r.reason });
-          return r;
-        })
-        .finally(() => {
-          if (hydrateInFlightRef.current?.id === model.id) hydrateInFlightRef.current = null;
-        });
+      const promise = hydrateBackend(model).finally(() => {
+        if (hydrateInFlightRef.current?.id === model.id) hydrateInFlightRef.current = null;
+      });
       hydrateInFlightRef.current = { id: model.id, promise };
       return promise;
     },
@@ -647,10 +551,9 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           retrieved = data.map((row) => {
             const m = normalizeRawModel(row);
             rawMap.set(m.id, row);
+            rawMap.set(m.name, row);
             return m;
           });
-        } else if (error) {
-          console.warn('Supabase grid_models query failed:', error.message);
         }
       } catch (err) {
         console.warn('Supabase fetch notice:', err);
@@ -668,6 +571,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               retrieved = list.map((row: any) => {
                 const m = normalizeRawModel(row);
                 rawMap.set(m.id, row);
+                rawMap.set(m.name, row);
                 return m;
               });
               break;
@@ -687,7 +591,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         retrieved.find((m) => m.is_active) ||
         retrieved[0];
 
-      // Keep the list and the active model consistent so the UI shows the right one as active.
       retrieved = retrieved.map((m) => ({ ...m, is_active: m.id === matched.id }));
       const activeEntry = retrieved.find((m) => m.id === matched.id) || matched;
 
@@ -705,9 +608,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setModelsLoading(false);
   }, []);
 
-  // --------------------------------------------------------------------------
-  // Power flow
-  // --------------------------------------------------------------------------
   const runSimulation = useCallback(
     async (customVars?: any, customTrips?: any) => {
       const seq = ++simSeqRef.current;
@@ -721,7 +621,9 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           !('target' in customVars) &&
           ('loadMultiplier' in customVars || 'slackVoltagePu' in customVars);
 
-        const varsToRun: ExtendedPowerFlowVariables = isRealPfVar ? customVars : pfVariablesRef.current;
+        const varsToRun: ExtendedPowerFlowVariables = isRealPfVar
+          ? customVars
+          : pfVariablesRef.current;
         let tripsToRun: number[] = Array.isArray(customTrips) ? customTrips : trippedRef.current;
 
         if (varsToRun?.disabledBuses && varsToRun.disabledBuses.length > 0) {
@@ -732,7 +634,9 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           tripsToRun = Array.from(new Set([...tripsToRun, ...incidentLines]));
         }
 
-        const finite = (v: any, fallback: number) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
+        const finite = (v: any, fallback: number) =>
+          Number.isFinite(Number(v)) ? Number(v) : fallback;
+
         const payload = {
           pf_variables: {
             loadMultiplier: finite(varsToRun?.loadMultiplier, 1.0),
@@ -756,7 +660,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         let result = await post();
 
-        // Self-heal: backend forgot the model (restart) -> reload it and retry once.
         if (result.noModel && activeModelRef.current) {
           const h = await hydrateOnce(activeModelRef.current);
           if (!h.ok) {
@@ -766,7 +669,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           result = await post();
         }
 
-        if (seq !== simSeqRef.current) return; // a newer run superseded this one
+        if (seq !== simSeqRef.current) return;
 
         if (!result.ok) {
           setDivergedNotice(
@@ -803,14 +706,11 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     [hydrateOnce]
   );
 
-  // --------------------------------------------------------------------------
-  // Activate (select) a model
-  // --------------------------------------------------------------------------
   const activateModel = useCallback(
     async (id: string) => {
       const target = modelsRef.current.find((m) => m.id === id || m.name === id);
       if (!target) {
-        setDivergedNotice(`Model "${id}" was not found in the registry. Press Refresh and try again.`);
+        setDivergedNotice(`Model "${id}" was not found. Click Refresh and try again.`);
         return;
       }
 
@@ -831,14 +731,12 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         localStorage.setItem('ml4ps_active_model_id', target.id);
       }
 
-      // Do not show the previous model's network while the new one loads.
       if (switchingModel) {
         setBuses([]);
         setLines([]);
         linesRef.current = [];
       }
 
-      // Load saved edits for this model.
       const saved =
         getStoredModelModifications(target.id) || getStoredModelModifications(target.name);
       const varsToApply = mergeVars(saved?.vars);
@@ -849,7 +747,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setTrippedLines(tripsToApply);
 
       try {
-        const h = await hydrateOnce(target, true);
+        const h = await hydrateOnce(target);
         if (!h.ok) {
           setDivergedNotice(h.reason || 'Could not load this model on the solver.');
           return;
@@ -862,9 +760,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     [hydrateOnce, runSimulation]
   );
 
-  // --------------------------------------------------------------------------
-  // Edits
-  // --------------------------------------------------------------------------
   const toggleLine = useCallback(
     (id: number) => {
       const prev = trippedRef.current;
@@ -896,9 +791,12 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const resetPfVariables = useCallback(() => {
     const m = activeModelRef.current;
-    const key = m?.id || m?.name;
-    if (key && typeof window !== 'undefined') {
-      localStorage.removeItem(`ml4ps_modifications_${key}`);
+    const userKey = getCurrentUserKey();
+    if (m && typeof window !== 'undefined') {
+      localStorage.removeItem(`ml4ps_mods_${userKey}_${m.id}`);
+      localStorage.removeItem(`ml4ps_mods_${userKey}_${m.name}`);
+      localStorage.removeItem(`ml4ps_modifications_${m.id}`);
+      localStorage.removeItem(`ml4ps_modifications_${m.name}`);
     }
     pfVariablesRef.current = DEFAULT_VARIABLES;
     trippedRef.current = [];
@@ -939,31 +837,20 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (!h.ok) throw new Error(h.reason || 'Model is not loaded on the solver.');
         r = await post();
       }
-      if (!r.ok || r.noModel) {
-        throw new Error(
-          r.noModel
-            ? 'The solver has no model loaded. Press Solve to reload it, then run the sequence again.'
-            : r.message || `Cascade simulation failed (HTTP ${r.status}).`
-        );
+      if (!r.ok) {
+        throw new Error(r.message || `Cascade simulation failed (HTTP ${r.status}).`);
       }
       return r.body as CascadeResult;
     },
     [hydrateOnce]
   );
 
-  // --------------------------------------------------------------------------
-  // Startup: load the registry, then re-load the last-used model into the solver
-  // so the workspace has data without the user having to click anything.
-  // --------------------------------------------------------------------------
   useEffect(() => {
     fetchModels();
   }, [fetchModels]);
 
   useEffect(() => {
     if (autoRunRef.current || !activeModel) return;
-    if (typeof window === 'undefined') return;
-    if (!localStorage.getItem('ml4ps_active_model_id')) return; // user never opened a model
-
     autoRunRef.current = true;
     const saved =
       getStoredModelModifications(activeModel.id) || getStoredModelModifications(activeModel.name);

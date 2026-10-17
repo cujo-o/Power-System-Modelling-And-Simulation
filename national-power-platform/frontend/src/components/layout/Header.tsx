@@ -1,80 +1,61 @@
 'use client';
 
 import React from 'react';
-import { Menu, X, LogOut, LogIn } from 'lucide-react';
-import { UserAccount } from '@/types/grid';
+import { LogOut, Globe } from 'lucide-react';
+import { PlatformUser } from './AppShell';
 
 interface HeaderProps {
-  mobileMenuOpen: boolean;
-  setMobileMenuOpen: (val: boolean) => void;
-  currentUser: UserAccount | null;
-  onLoginClick: () => void;
-  onLogoutClick: () => void;
+  user: PlatformUser;
+  isAdmin: boolean;
+  modelName: string;
+  converged: boolean;
+  frequency: number;
+  onLogout: () => void;
+  onOpenCompanyPortal: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
-  mobileMenuOpen,
-  setMobileMenuOpen,
-  currentUser,
-  onLoginClick,
-  onLogoutClick,
-}) => (
-  <header className="flex h-16 w-full items-center justify-between border-b border-slate-200/80 bg-white px-4 md:px-6 z-30 select-none shadow-xs shrink-0">
-    <div className="flex items-center gap-3">
-      {/* Mobile Drawer Toggle (Shown only on small screens) */}
-      <button
-        onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-        className="flex md:hidden h-9 w-9 items-center justify-center rounded-lg bg-[#500b50] text-white hover:bg-[#680f68] transition"
-        aria-label="Toggle Navigation Menu"
-      >
-        {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-      </button>
-
-      {/* Brand & Crest */}
+  onLogout,
+  onOpenCompanyPortal,
+}) => {
+  return (
+    <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between shrink-0">
       <div className="flex items-center gap-3">
         <img
           src="/ml4ps-logo.png"
-          alt="ML4PS Crest"
-          className="h-9 w-9 object-contain rounded-md bg-white p-0.5 border border-slate-200 shrink-0"
+          alt="ML4PS"
+          className="h-8 w-8 object-contain rounded-md border border-slate-200 p-0.5"
           onError={(e) => {
             e.currentTarget.style.display = 'none';
           }}
         />
-
-        <div className="leading-tight">
-          <h1 className="text-sm md:text-base font-black tracking-tight text-[#500b50]">
+        <div>
+          <h1 className="text-sm font-black text-slate-900 leading-tight">
             National Power System Simulation
           </h1>
-          <p className="text-xs text-slate-500 font-medium hidden sm:block">
+          <p className="text-[11px] text-slate-500">
             Machine Learning 4 Power Systems (ML4PS) • FUT Minna
           </p>
         </div>
       </div>
-    </div>
 
-
-      {currentUser ? (
-        <div className="flex items-center gap-3">
-          <div className="hidden sm:flex flex-col text-right leading-tight">
-            <span className="text-sm font-bold text-slate-900">{currentUser.name}</span>
-            <span className="text-xs text-emerald-700 font-semibold">{currentUser.role}</span>
-          </div>
-          <button
-            onClick={onLogoutClick}
-            className="flex items-center gap-1.5 rounded-lg bg-orange-50 px-3.5 py-1.5 text-xs font-bold text-orange-700 border border-orange-200 hover:bg-orange-100 transition shadow-xs"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            <span>Log out</span>
-          </button>
-        </div>
-      ) : (
+      <div className="flex items-center gap-2.5">
         <button
-          onClick={onLoginClick}
-          className="flex items-center gap-2 rounded-lg bg-[#500b50] text-white px-4 py-2 text-xs font-bold hover:bg-[#680f68] transition shadow-xs"
+          onClick={onOpenCompanyPortal}
+          className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-bold transition"
         >
-          <LogIn className="h-4 w-4" />
-          <span>Sign In</span>
+          <Globe className="h-3.5 w-3.5 text-[#500b50]" />
+          <span>Learning &amp; Company Portal</span>
         </button>
-      )}
-  </header>
-);
+
+        <button
+          onClick={onLogout}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50/50 hover:bg-amber-100/60 text-amber-900 text-xs font-bold transition"
+        >
+          <LogOut className="h-3.5 w-3.5" />
+          <span>Log out</span>
+        </button>
+      </div>
+    </header>
+  );
+};

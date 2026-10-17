@@ -1,180 +1,110 @@
 'use client';
 
 import React from 'react';
-import { UserAccount } from '@/types/grid';
-import { RotateCcw, User, LucideIcon, ChevronLeft, ChevronRight, LogIn } from 'lucide-react';
-
-interface NavItem {
-  id: string;
-  label: string;
-  icon: LucideIcon;
-}
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import {
+  LayoutDashboard,
+  Sliders,
+  Activity,
+  DollarSign,
+  UploadCloud,
+  GitFork,
+  FileText,
+  Users,
+  Info,
+  ShieldCheck,
+  Globe,
+} from 'lucide-react';
+import { PlatformUser } from './AppShell';
 
 interface SidebarProps {
-  navItems: NavItem[];
-  activeTab: string;
-  setActiveTab: (tab: string) => void;
-  onReset: () => void;
-  loading: boolean;
-  currentUser: UserAccount | null;
-  onLoginClick: () => void;
-  desktopCollapsed: boolean;
-  setDesktopCollapsed: (val: boolean) => void;
-  mobileMenuOpen: boolean;
-  setMobileMenuOpen: (val: boolean) => void;
+  user: PlatformUser;
+  isAdmin: boolean;
+  onOpenCompanyPortal: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({
-  navItems,
-  activeTab,
-  setActiveTab,
-  onReset,
-  loading,
-  currentUser,
-  onLoginClick,
-  desktopCollapsed,
-  setDesktopCollapsed,
-  mobileMenuOpen,
-  setMobileMenuOpen,
-}) => {
+export const Sidebar: React.FC<SidebarProps> = ({ user, isAdmin, onOpenCompanyPortal }) => {
+  const pathname = usePathname();
+
+  const navItems = [
+    { label: 'Dashboard', href: '/', icon: LayoutDashboard, adminOnly: false },
+    { label: 'Grid Stability Models', href: '/stability', icon: Sliders, adminOnly: false },
+    { label: 'Single-Line Diagram', href: '/sld', icon: GitFork, adminOnly: false },
+    { label: 'Time-Domain', href: '/dynamics', icon: Activity, adminOnly: false },
+    { label: 'Market (ASSUME)', href: '/market', icon: DollarSign, adminOnly: false },
+    { label: 'Upload & Ingestion', href: '/upload', icon: UploadCloud, adminOnly: true },
+    { label: 'Access & Admin', href: '/organization', icon: ShieldCheck, adminOnly: true },
+    { label: 'Reports & Publications', href: '/reports', icon: FileText, adminOnly: false },
+    { label: 'Workforce', href: '/workforce', icon: Users, adminOnly: false },
+    { label: 'About Us', href: '/about', icon: Info, adminOnly: false },
+  ];
+
+  const initials = (user.name || 'U')
+    .split(' ')
+    .map((n) => n[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+
   return (
-    <>
-      {/* Mobile Backdrop */}
-      {mobileMenuOpen && (
-        <div
-          onClick={() => setMobileMenuOpen(false)}
-          className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-xs md:hidden"
-        />
-      )}
-
-      {/* Main Sidebar Element */}
-      <aside
-        className={`fixed md:static inset-y-0 left-0 z-50 flex flex-col justify-between bg-[#460946] text-white transition-all duration-300 ease-in-out shadow-xl md:shadow-none select-none h-screen ${
-          mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
-        } ${desktopCollapsed ? 'md:w-20' : 'md:w-64'}`}
-      >
-        {/* Top: Header, User Profile & Sidebar Collapse Button */}
-        <div className="flex flex-col flex-1 min-h-0">
-          <div className="p-3.5 border-b border-white/10 flex items-center justify-between gap-2">
-            {desktopCollapsed ? (
-              <div className="w-full flex flex-col items-center gap-2">
-                <div
-                  className="h-10 w-10 rounded-full bg-white/10 flex items-center justify-center text-white"
-                  title={currentUser ? `${currentUser.name} (${currentUser.role})` : 'Guest Session'}
-                >
-                  <User className="h-5 w-5" />
-                </div>
-                {/* Expand Button on Collapsed Rail */}
-                <button
-                  onClick={() => setDesktopCollapsed(false)}
-                  className="hidden md:flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white/80 hover:bg-white/20 hover:text-white transition"
-                  title="Expand Sidebar"
-                  aria-label="Expand Sidebar"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-              </div>
-            ) : (
-              <>
-                {currentUser ? (
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <div className="h-10 w-10 rounded-full bg-white/15 flex items-center justify-center text-white shrink-0">
-                      <User className="h-5 w-5" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <h3 className="text-sm font-bold text-white truncate leading-snug">
-                        {currentUser.name}
-                      </h3>
-                      <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
-                        {currentUser.role}
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-between w-full min-w-0">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="h-9 w-9 rounded-full bg-white/10 flex items-center justify-center text-white/60 shrink-0">
-                        <User className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <span className="text-xs font-semibold text-white/80 block leading-tight">Guest Session</span>
-                        <button
-                          onClick={onLoginClick}
-                          className="text-[11px] text-amber-300 font-bold hover:underline hover:text-white inline-flex items-center gap-1 mt-0.5"
-                        >
-                          <LogIn className="h-3 w-3" />
-                          <span>Sign In / Register</span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Collapse Button inside Expanded Sidebar */}
-                <button
-                  onClick={() => setDesktopCollapsed(true)}
-                  className="hidden md:flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white/70 hover:bg-white/20 hover:text-white transition shrink-0 ml-1"
-                  title="Collapse Sidebar"
-                  aria-label="Collapse Sidebar"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </button>
-              </>
-            )}
+    <aside className="w-60 bg-[#3b073b] text-white flex flex-col justify-between shrink-0 select-none">
+      <div>
+        {/* User Profile Header */}
+        <div className="p-4 border-b border-white/10 flex items-center gap-3">
+          <div className="h-9 w-9 rounded-full bg-white/15 flex items-center justify-center font-bold text-xs shrink-0">
+            {initials}
           </div>
+          <div className="min-w-0">
+            <p className="text-xs font-bold truncate">{user.name}</p>
+            <span
+              className={`inline-block mt-0.5 px-2 py-0.2 rounded text-[10px] font-bold ${
+                isAdmin ? 'bg-emerald-500 text-white' : 'bg-white/15 text-white/80'
+              }`}
+            >
+              {isAdmin ? 'Admin' : 'Researcher / User'}
+            </span>
+          </div>
+        </div>
 
-          {/* Navigation Links with Sleek Matching Scrollbar */}
-          <nav
-            className="flex-1 p-3 space-y-1.5 overflow-y-auto pr-1.5 
-            [scrollbar-width:thin] 
-            [scrollbar-color:rgba(255,255,255,0.2)_transparent] 
-            [&::-webkit-scrollbar]:w-1.5 
-            [&::-webkit-scrollbar-track]:bg-transparent 
-            [&::-webkit-scrollbar-thumb]:bg-white/20 
-            hover:[&::-webkit-scrollbar-thumb]:bg-white/35 
-            [&::-webkit-scrollbar-thumb]:rounded-full"
-          >
-            {navItems.map((item) => {
+        {/* Navigation Links */}
+        <nav className="p-2.5 space-y-1">
+          {navItems
+            .filter((item) => !item.adminOnly || isAdmin)
+            .map((item) => {
               const Icon = item.icon;
-              const isActive = activeTab === item.id;
-
+              const isActive = pathname === item.href;
               return (
-                <button
-                  key={item.id}
-                  onClick={() => {
-                    setActiveTab(item.id);
-                    setMobileMenuOpen(false);
-                  }}
-                  title={desktopCollapsed ? item.label : undefined}
-                  className={`w-full flex items-center gap-3.5 px-3.5 py-3 rounded-xl text-sm font-bold transition-all ${
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition ${
                     isActive
-                      ? 'bg-emerald-600 text-white shadow-md'
+                      ? 'bg-emerald-600 text-white shadow-xs'
                       : 'text-white/80 hover:bg-white/10 hover:text-white'
-                  } ${desktopCollapsed ? 'justify-center px-0' : ''}`}
+                  }`}
                 >
-                  <Icon className="h-5 w-5 shrink-0" />
-                  {!desktopCollapsed && <span className="truncate">{item.label}</span>}
-                </button>
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="truncate">{item.label}</span>
+                </Link>
               );
             })}
-          </nav>
-        </div>
+        </nav>
+      </div>
 
-        {/* Bottom: Reset Action Button */}
-        <div className="p-3 border-t border-white/10 shrink-0">
-          <button
-            onClick={onReset}
-            disabled={loading}
-            title={desktopCollapsed ? 'Reset Grid Baseline' : undefined}
-            className={`w-full flex items-center gap-2 rounded-xl bg-white/10 py-2.5 px-3 text-xs font-bold text-white hover:bg-white/20 transition disabled:opacity-50 ${
-              desktopCollapsed ? 'justify-center px-0' : 'justify-center'
-            }`}
-          >
-            <RotateCcw className="h-4 w-4 shrink-0" />
-            {!desktopCollapsed && <span>Reset Baseline</span>}
-          </button>
-        </div>
-      </aside>
-    </>
+      {/* Switch to Public Company & Learning Site */}
+      <div className="p-3 border-t border-white/10 space-y-2">
+        <button
+          onClick={onOpenCompanyPortal}
+          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold text-white transition"
+        >
+          <Globe className="h-3.5 w-3.5" />
+          <span>Company &amp; Learning Site</span>
+        </button>
+        <p className="text-[10px] text-white/50 text-center leading-snug">
+          ML4PS • FUT Minna
+        </p>
+      </div>
+    </aside>
   );
 };
