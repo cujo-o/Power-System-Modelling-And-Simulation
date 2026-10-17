@@ -9,11 +9,10 @@ import {
   Image as ImageIcon,
   FileSpreadsheet,
   Search,
+  Zap,
   Layers,
   X,
   Compass,
-  Power,
-  Zap,
 } from 'lucide-react';
 
 interface SingleLineDiagramProps {
@@ -32,457 +31,53 @@ interface Point {
   y: number;
 }
 
-const BUS_HALF_W = 38;
-const BUS_HALF_H = 4.5;
-
-/**
- * Continuous Ray-Rectangle Intersection.
- * Docks transmission line endpoints smoothly to the exact border of the 76x9 flat busbar.
- */
-function getContinuousBusDockPoint(
-  sourceCenter: Point,
-  targetCenter: Point,
-  laneOffset = 0,
-  halfW = BUS_HALF_W,
-  halfH = BUS_HALF_H
-): Point {
-  const dx = targetCenter.x - sourceCenter.x;
-  const dy = targetCenter.y - sourceCenter.y;
-  const len = Math.hypot(dx, dy);
-  if (len < 1e-3) return sourceCenter;
-
-  const ux = dx / len;
-  const uy = dy / len;
-
-  // Perpendicular normal vector for parallel circuit separation
-  const nx = -uy;
-  const ny = ux;
-
-  const originX = sourceCenter.x + nx * laneOffset * 0.85;
-  const originY = sourceCenter.y + ny * laneOffset * 0.35;
-
-  const tx = Math.abs(ux) > 1e-5 ? halfW / Math.abs(ux) : Infinity;
-  const ty = Math.abs(uy) > 1e-5 ? halfH / Math.abs(uy) : Infinity;
-  const t = Math.min(tx, ty);
-
+// Ray-box intersection for busbar border clipping (76px x 8px)
+function getBusBorderPoint(center: Point, target: Point, halfW = 38, halfH = 5): Point {
+  const dx = target.x - center.x;
+  const dy = target.y - center.y;
+  if (Math.abs(dx) < 1e-4 && Math.abs(dy) < 1e-4) return center;
+  const scaleX = Math.abs(dx) > 0 ? halfW / Math.abs(dx) : Infinity;
+  const scaleY = Math.abs(dy) > 0 ? halfH / Math.abs(dy) : Infinity;
+  const s = Math.min(scaleX, scaleY);
   return {
-    x: originX + ux * t,
-    y: originY + uy * t,
+    x: center.x + dx * s,
+    y: center.y + dy * s,
   };
 }
 
-/**
- * Geographic + Topological Anchor Hints for Nigerian 330kV & 132kV Substations.
- * Normalized in [0..1, 0..1] (West->East, North->South) so Nigerian networks
- * naturally untangle along their real physical corridors.
- */
-const NIGERIA_GEO_HINTS: Array<{ pattern: RegExp; x: number; y: number }> = [
-  { pattern: /birnin|kebbi|sokoto|talata/i, x: 0.12, y: 0.14 },
-  { pattern: /kainji/i, x: 0.22, y: 0.32 },
-  { pattern: /jebba/i, x: 0.26, y: 0.42 },
-  { pattern: /ganmo|ilorin|omupo/i, x: 0.26, y: 0.54 },
-  { pattern: /oshogbo|osogbo|ife|ilesha/i, x: 0.25, y: 0.64 },
-  { pattern: /ayede|ibadan|jericho/i, x: 0.19, y: 0.70 },
-  { pattern: /olorunsogo|papalanto|abeokuta/i, x: 0.14, y: 0.76 },
-  { pattern: /ikeja|akangba|egbin|lekki|aja|lagos|agbara|oworonsoki/i, x: 0.12, y: 0.86 },
-  { pattern: /omotosho|ond/i, x: 0.28, y: 0.78 },
-  { pattern: /benin|ihovbor|azura|oluku/i, x: 0.38, y: 0.78 },
-  { pattern: /sapele|delta|ughelli|warri|effurun/i, x: 0.40, y: 0.88 },
-  { pattern: /katsina|funtua|kankia/i, x: 0.44, y: 0.12 },
-  { pattern: /kano|kumbotso|dakata|wudil|dan.?agundi/i, x: 0.52, y: 0.16 },
-  { pattern: /kaduna|zaria|mando|jaji/i, x: 0.46, y: 0.28 },
-  { pattern: /shiroro|zungeru|minna|bida|suleja|tegina/i, x: 0.40, y: 0.38 },
-  { pattern: /katampe|gwagwa|abuja|apo|central.?area|kubwa|karu/i, x: 0.48, y: 0.46 },
-  { pattern: /lokoja|ajaokuta|geregu|obajana|okene/i, x: 0.47, y: 0.64 },
-  { pattern: /jos|makeri|pankshin/i, x: 0.60, y: 0.34 },
-  { pattern: /lafia|akwanga|keffi/i, x: 0.57, y: 0.48 },
-  { pattern: /makurdi|oko|gboko|otukpo|yandev/i, x: 0.62, y: 0.60 },
-  { pattern: /bauchi|ningi/i, x: 0.68, y: 0.28 },
-  { pattern: /gombe|ashaka|dadinkowa|biu/i, x: 0.78, y: 0.30 },
-  { pattern: /damaturu|potiskum/i, x: 0.84, y: 0.20 },
-  { pattern: /maiduguri|molai/i, x: 0.92, y: 0.16 },
-  { pattern: /yola|mayo|jalingo|numan/i, x: 0.88, y: 0.42 },
-  { pattern: /onitsha|okpai|asaba|nnewi|awka/i, x: 0.52, y: 0.78 },
-  { pattern: /new.?haven|enugu|nsukka|abakaliki|nnkalagu/i, x: 0.60, y: 0.72 },
-  { pattern: /alaoji|aba|owerri|umuahia|omoku/i, x: 0.58, y: 0.86 },
-  { pattern: /afam|port.?harcourt|ph.?main|trans.?amadi|yenagoa|ahoada/i, x: 0.52, y: 0.92 },
-  { pattern: /ikot.?ekpene|uyo|ekim|itu/i, x: 0.67, y: 0.88 },
-  { pattern: /calabar|adiabo|ikom|ogoja/i, x: 0.76, y: 0.84 },
-];
-
-function getGeoSeed(name: string, index: number, total: number): { x: number; y: number } | null {
-  for (const h of NIGERIA_GEO_HINTS) {
-    if (h.pattern.test(name)) {
-      // Deterministic micro-offset based on index so multiple buses in the same city don't stack on (0,0)
-      const angle = (index * 2.39996) % (2 * Math.PI);
-      const r = 0.018 * ((index % 5) + 1);
-      return {
-        x: h.x + Math.cos(angle) * r,
-        y: h.y + Math.sin(angle) * r,
-      };
-    }
-  }
-  return null;
+// Tests whether two line segments (p1-p2) and (p3-p4) intersect
+function checkSegmentsCross(p1: Point, p2: Point, p3: Point, p4: Point): boolean {
+  const ccw = (a: Point, b: Point, c: Point) => (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x);
+  return ccw(p1, p3, p4) !== ccw(p2, p3, p4) && ccw(p1, p2, p3) !== ccw(p1, p2, p4);
 }
 
-function segmentsCross(a: Point, b: Point, c: Point, d: Point): boolean {
-  const ccw = (p1: Point, p2: Point, p3: Point) =>
-    (p3.y - p1.y) * (p2.x - p1.x) > (p2.y - p1.y) * (p3.x - p1.x);
-  return ccw(a, c, d) !== ccw(b, c, d) && ccw(a, b, c) !== ccw(a, b, d);
-}
-
-/**
- * Hybrid Geographic + Force-Directed Anti-Crossing Layout Engine.
- */
-function solveCleanGridLayout(buses: BusData[], lines: LineData[]): Record<number, Point> {
-  const N = buses.length;
-  if (N === 0) return {};
-
-  const idToIdx = new Map<number, number>();
-  buses.forEach((b, i) => idToIdx.set(b.id, i));
-
-  const adj: number[][] = Array.from({ length: N }, () => []);
-  const edgeSet = new Set<string>();
-  const edges: [number, number][] = [];
-
-  lines.forEach((l) => {
-    const u = idToIdx.get(l.from_bus);
-    const v = idToIdx.get(l.to_bus);
-    if (u !== undefined && v !== undefined && u !== v) {
-      const key = u < v ? `${u}_${v}` : `${v}_${u}`;
-      if (!edgeSet.has(key)) {
-        edgeSet.add(key);
-        adj[u].push(v);
-        adj[v].push(u);
-        edges.push([u, v]);
-      }
-    }
-  });
-
-  // Canvas target area scaled to number of buses in a wide 16:10 aspect ratio
-  const idealSpacing = N <= 10 ? 220 : N <= 80 ? 185 : 155;
-  const worldW = Math.max(950, Math.sqrt(N) * idealSpacing * 1.45);
-  const worldH = Math.max(680, Math.sqrt(N) * idealSpacing * 1.05);
-
-  const pos: Point[] = Array.from({ length: N }, () => ({ x: 0, y: 0 }));
-  const hasGeo = new Uint8Array(N);
-
-  // 1. Seed buses with Nigerian Geographic Hints where recognized
-  let geoCount = 0;
-  buses.forEach((b, i) => {
-    const g = getGeoSeed(b.name || '', i, N);
-    if (g) {
-      pos[i] = {
-        x: 120 + g.x * (worldW - 240),
-        y: 120 + g.y * (worldH - 240),
-      };
-      hasGeo[i] = 1;
-      geoCount++;
-    }
-  });
-
-  // 2. For buses without geographic match, seed via BFS from anchored neighbors or circular/grid order
-  if (geoCount > 0 && geoCount < N) {
-    // Iterative barycentric interpolation from anchored neighbors
-    for (let pass = 0; pass < 12; pass++) {
-      for (let i = 0; i < N; i++) {
-        if (hasGeo[i]) continue;
-        const anchoredNbrs = adj[i].filter((nb) => hasGeo[nb]);
-        if (anchoredNbrs.length > 0) {
-          let sx = 0;
-          let sy = 0;
-          anchoredNbrs.forEach((nb) => {
-            sx += pos[nb].x;
-            sy += pos[nb].y;
-          });
-          const angle = ((i * 137.5) * Math.PI) / 180;
-          pos[i] = {
-            x: sx / anchoredNbrs.length + Math.cos(angle) * (idealSpacing * 0.7),
-            y: sy / anchoredNbrs.length + Math.sin(angle) * (idealSpacing * 0.7),
-          };
-          hasGeo[i] = 2; // soft-anchored
-        }
-      }
-    }
+// Dynamic Free-Angle Calculation: Finds the widest open angular sector away from connected lines
+function computeCleanDecoratorAngles(busPos: Point, neighborPositions: Point[]): { genAngle: number; loadAngle: number } {
+  if (!neighborPositions || neighborPositions.length === 0) {
+    return { genAngle: -Math.PI / 2, loadAngle: Math.PI / 2 };
   }
 
-  // Any remaining unplaced nodes get a clean topological BFS grid/circle seed
-  const unplaced: number[] = [];
-  for (let i = 0; i < N; i++) {
-    if (!hasGeo[i]) unplaced.push(i);
+  const angles: number[] = neighborPositions.map((np) => Math.atan2(np.y - busPos.y, np.x - busPos.x));
+  angles.sort((a, b) => a - b);
+
+  const gaps: { diff: number; mid: number }[] = [];
+  for (let i = 0; i < angles.length; i++) {
+    const a1 = angles[i];
+    const a2 = angles[(i + 1) % angles.length];
+    let diff = a2 - a1;
+    if (diff <= 0) diff += 2 * Math.PI;
+
+    let mid = a1 + diff / 2.0;
+    if (mid > Math.PI) mid -= 2 * Math.PI;
+    gaps.push({ diff, mid });
   }
 
-  if (unplaced.length > 0) {
-    const cols = Math.ceil(Math.sqrt(unplaced.length * 1.4));
-    unplaced.forEach((uIdx, k) => {
-      if (N <= 15) {
-        const theta = (2 * Math.PI * k) / unplaced.length - Math.PI / 2;
-        pos[uIdx] = {
-          x: worldW / 2 + Math.cos(theta) * (idealSpacing * 1.15),
-          y: worldH / 2 + Math.sin(theta) * (idealSpacing * 0.95),
-        };
-      } else {
-        const col = k % cols;
-        const row = Math.floor(k / cols);
-        pos[uIdx] = {
-          x: 140 + col * idealSpacing,
-          y: 140 + row * (idealSpacing * 0.85),
-        };
-      }
-    });
-  }
+  gaps.sort((a, b) => b.diff - a.diff);
 
-  // Save initial anchor targets for geo-matched nodes so they stay in their true region
-  const geoAnchor: Point[] = pos.map((p) => ({ x: p.x, y: p.y }));
+  const genAngle = gaps[0].mid;
+  const loadAngle = gaps.length > 1 ? gaps[1].mid : genAngle + Math.PI;
 
-  // 3. Force-Directed Untangling + Edge-Crossing Reduction + Node-Edge Repulsion
-  const iterations = N > 150 ? 90 : 140;
-  const kSq = idealSpacing * idealSpacing;
-
-  for (let it = 0; it < iterations; it++) {
-    const progress = it / iterations;
-    const temp = idealSpacing * 0.45 * (1 - progress * 0.85);
-    const disp: Point[] = Array.from({ length: N }, () => ({ x: 0, y: 0 }));
-
-    // A. Node-to-Node Repulsion (Spatial cutoff for fast 369-bus performance)
-    const repCutoff = idealSpacing * 2.8;
-    for (let i = 0; i < N; i++) {
-      for (let j = i + 1; j < N; j++) {
-        let dx = pos[i].x - pos[j].x;
-        let dy = pos[i].y - pos[j].y;
-        if (Math.abs(dx) > repCutoff || Math.abs(dy) > repCutoff) continue;
-
-        // Anisotropic distance: horizontal busbars need wider X separation than Y
-        const dist = Math.hypot(dx, dy * 1.25) || 0.5;
-        if (dist < repCutoff) {
-          const force = (kSq / (dist * dist)) * idealSpacing * 0.55;
-          const fx = (dx / dist) * force;
-          const fy = (dy / dist) * force;
-          disp[i].x += fx;
-          disp[i].y += fy;
-          disp[j].x -= fx;
-          disp[j].y -= fy;
-        }
-      }
-    }
-
-    // B. Spring Attraction along Transmission Corridors
-    for (const [u, v] of edges) {
-      const dx = pos[v].x - pos[u].x;
-      const dy = pos[v].y - pos[u].y;
-      const dist = Math.hypot(dx, dy) || 1;
-      const delta = dist - idealSpacing * 0.88;
-      const force = delta * 0.18;
-      const fx = (dx / dist) * force;
-      const fy = (dy / dist) * force;
-      disp[u].x += fx;
-      disp[u].y += fy;
-      disp[v].x -= fx;
-      disp[v].y -= fy;
-    }
-
-    // C. Soft Geographic Anchor Pull (keeps North in North, Lagos in South-West, etc.)
-    for (let i = 0; i < N; i++) {
-      if (hasGeo[i] === 1) {
-        disp[i].x += (geoAnchor[i].x - pos[i].x) * 0.12;
-        disp[i].y += (geoAnchor[i].y - pos[i].y) * 0.12;
-      }
-    }
-
-    // D. Edge-to-Edge Uncrossing Force (for models up to 140 lines)
-    if (edges.length <= 160 && it % 2 === 0) {
-      for (let i = 0; i < edges.length; i++) {
-        const [u1, v1] = edges[i];
-        for (let j = i + 1; j < edges.length; j++) {
-          const [u2, v2] = edges[j];
-          if (u1 === u2 || u1 === v2 || v1 === u2 || v1 === v2) continue;
-          if (segmentsCross(pos[u1], pos[v1], pos[u2], pos[v2])) {
-            // Pull endpoints toward uncrossing
-            const mid1x = (pos[u1].x + pos[v1].x) * 0.5;
-            const mid1y = (pos[u1].y + pos[v1].y) * 0.5;
-            const mid2x = (pos[u2].x + pos[v2].x) * 0.5;
-            const mid2y = (pos[u2].y + pos[v2].y) * 0.5;
-            const cdx = mid1x - mid2x;
-            const cdy = mid1y - mid2y;
-            const clen = Math.hypot(cdx, cdy) || 1;
-            const push = 18;
-            disp[u1].x += (cdx / clen) * push;
-            disp[u1].y += (cdy / clen) * push;
-            disp[v1].x += (cdx / clen) * push;
-            disp[v1].y += (cdy / clen) * push;
-            disp[u2].x -= (cdx / clen) * push;
-            disp[u2].y -= (cdy / clen) * push;
-            disp[v2].x -= (cdx / clen) * push;
-            disp[v2].y -= (cdy / clen) * push;
-          }
-        }
-      }
-    }
-
-    // E. Node-to-Line Segment Clearance (Prevents lines from passing through unrelated busbars)
-    if (it > iterations * 0.35) {
-      const CLEAR_DIST = 68;
-      for (const [u, v] of edges) {
-        const ax = pos[u].x;
-        const ay = pos[u].y;
-        const bx = pos[v].x;
-        const by = pos[v].y;
-        const abx = bx - ax;
-        const aby = by - ay;
-        const abSq = abx * abx + aby * aby;
-        if (abSq < 1) continue;
-
-        const minBx = Math.min(ax, bx) - CLEAR_DIST;
-        const maxBx = Math.max(ax, bx) + CLEAR_DIST;
-        const minBy = Math.min(ay, by) - CLEAR_DIST;
-        const maxBy = Math.max(ay, by) + CLEAR_DIST;
-
-        for (let k = 0; k < N; k++) {
-          if (k === u || k === v) continue;
-          const px = pos[k].x;
-          const py = pos[k].y;
-          if (px < minBx || px > maxBx || py < minBy || py > maxBy) continue;
-
-          const t = ((px - ax) * abx + (py - ay) * aby) / abSq;
-          if (t > 0.08 && t < 0.92) {
-            const projX = ax + t * abx;
-            const projY = ay + t * aby;
-            let dx = px - projX;
-            let dy = py - projY;
-            const d = Math.hypot(dx, dy);
-            if (d < CLEAR_DIST) {
-              if (d < 1e-2) {
-                dx = -aby;
-                dy = abx;
-              }
-              const norm = Math.hypot(dx, dy) || 1;
-              const push = (CLEAR_DIST - d) * 0.9;
-              disp[k].x += (dx / norm) * push;
-              disp[k].y += (dy / norm) * push;
-            }
-          }
-        }
-      }
-    }
-
-    // Apply displacements with temperature cap
-    for (let i = 0; i < N; i++) {
-      const dLen = Math.hypot(disp[i].x, disp[i].y) || 1;
-      const step = Math.min(dLen, temp);
-      pos[i].x += (disp[i].x / dLen) * step;
-      pos[i].y += (disp[i].y / dLen) * step;
-    }
-  }
-
-  // 4. Compact Connected-Component Packing (Eliminates huge empty gaps in 369-bus 132kV models)
-  const visited = new Uint8Array(N);
-  const comps: number[][] = [];
-  for (let i = 0; i < N; i++) {
-    if (!visited[i]) {
-      const c: number[] = [];
-      const q = [i];
-      visited[i] = 1;
-      while (q.length > 0) {
-        const curr = q.shift()!;
-        c.push(curr);
-        for (const nb of adj[curr]) {
-          if (!visited[nb]) {
-            visited[nb] = 1;
-            q.push(nb);
-          }
-        }
-      }
-      comps.push(c);
-    }
-  }
-
-  if (comps.length > 1) {
-    comps.sort((a, b) => b.length - a.length);
-    const boxes = comps.map((c) => {
-      let minX = Infinity;
-      let maxX = -Infinity;
-      let minY = Infinity;
-      let maxY = -Infinity;
-      c.forEach((idx) => {
-        minX = Math.min(minX, pos[idx].x);
-        maxX = Math.max(maxX, pos[idx].x);
-        minY = Math.min(minY, pos[idx].y);
-        maxY = Math.max(maxY, pos[idx].y);
-      });
-      c.forEach((idx) => {
-        pos[idx].x -= minX;
-        pos[idx].y -= minY;
-      });
-      return {
-        nodes: c,
-        w: Math.max(150, maxX - minX + 140),
-        h: Math.max(130, maxY - minY + 130),
-      };
-    });
-
-    const totalArea = boxes.reduce((acc, b) => acc + b.w * b.h, 0);
-    const targetWidth = Math.max(boxes[0].w, Math.sqrt(totalArea) * 1.55);
-
-    let cx = 80;
-    let cy = 80;
-    let rowH = 0;
-
-    boxes.forEach((box) => {
-      if (cx > 80 && cx + box.w > targetWidth) {
-        cx = 80;
-        cy += rowH + 65;
-        rowH = 0;
-      }
-      box.nodes.forEach((idx) => {
-        pos[idx].x += cx;
-        pos[idx].y += cy;
-      });
-      cx += box.w + 65;
-      rowH = Math.max(rowH, box.h);
-    });
-  }
-
-  // 5. Final Hard Bounding-Box Separation Pass (Guarantees zero overlapping busbars or labels)
-  const MIN_W = 142;
-  const MIN_H = 116;
-  for (let pass = 0; pass < 25; pass++) {
-    let moved = false;
-    for (let i = 0; i < N; i++) {
-      for (let j = i + 1; j < N; j++) {
-        const dx = pos[j].x - pos[i].x;
-        const dy = pos[j].y - pos[i].y;
-        const absDx = Math.abs(dx);
-        const absDy = Math.abs(dy);
-        if (absDx < MIN_W && absDy < MIN_H) {
-          moved = true;
-          const overlapX = MIN_W - absDx;
-          const overlapY = MIN_H - absDy;
-          if (overlapX < overlapY) {
-            const push = overlapX * 0.52 + 1;
-            const sign = dx >= 0 ? 1 : -1;
-            pos[j].x += sign * push;
-            pos[i].x -= sign * push;
-          } else {
-            const push = overlapY * 0.52 + 1;
-            const sign = dy >= 0 ? 1 : -1;
-            pos[j].y += sign * push;
-            pos[i].y -= sign * push;
-          }
-        }
-      }
-    }
-    if (!moved) break;
-  }
-
-  const finalMap: Record<number, Point> = {};
-  buses.forEach((b, i) => {
-    finalMap[b.id] = {
-      x: Math.round(pos[i].x),
-      y: Math.round(pos[i].y),
-    };
-  });
-
-  return finalMap;
+  return { genAngle, loadAngle };
 }
 
 export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
@@ -490,86 +85,260 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   lines = [],
   trippedLines = [],
   toggleLine,
-  selectedBus: propSelectedBus,
-  setSelectedBus: propSetSelectedBus,
+  selectedBus,
+  setSelectedBus,
+  onReset,
   modelName,
 }) => {
   const [viewStyle, setViewStyle] = useState<'stac_direct' | 'orthogonal'>('stac_direct');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Internal + Prop synced Bus & Line Selection state so tapping ALWAYS opens the inspector
-  const [internalSelectedBusId, setInternalSelectedBusId] = useState<number | null>(
-    propSelectedBus?.id ?? null
-  );
-  const [selectedLineId, setSelectedLineId] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (propSelectedBus !== undefined) {
-      setInternalSelectedBusId(propSelectedBus ? propSelectedBus.id : null);
-    }
-  }, [propSelectedBus]);
-
-  const activeSelectedBus = useMemo(() => {
-    if (internalSelectedBusId === null) return null;
-    return buses.find((b) => b.id === internalSelectedBusId) || null;
-  }, [buses, internalSelectedBusId]);
-
-  const activeSelectedLine = useMemo(() => {
-    if (selectedLineId === null) return null;
-    return lines.find((l) => l.id === selectedLineId) || null;
-  }, [lines, selectedLineId]);
-
-  const handleSelectBus = useCallback(
-    (bus: BusData | null) => {
-      setInternalSelectedBusId(bus ? bus.id : null);
-      if (bus) setSelectedLineId(null);
-      if (propSetSelectedBus) propSetSelectedBus(bus);
-    },
-    [propSetSelectedBus]
-  );
-
   // Canvas Viewport Pan & Zoom
   const [scale, setScale] = useState<number>(0.85);
   const [pan, setPan] = useState<Point>({ x: 80, y: 60 });
   const [isPanning, setIsPanning] = useState<boolean>(false);
+  const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
 
   // Persistent Draggable Busbar Coordinates
   const [busPositions, setBusPositions] = useState<Record<number, Point>>({});
   const busPositionsRef = useRef<Record<number, Point>>({});
   busPositionsRef.current = busPositions;
 
-  // Dragging Interaction Refs (5px threshold so taps are never mistaken for drags)
   const [draggingBusId, setDraggingBusId] = useState<number | null>(null);
-  const pointerDownInfoRef = useRef<{
-    type: 'bus' | 'canvas';
-    busId?: number;
-    pointerId: number;
-    startX: number;
-    startY: number;
-    worldOffsetX: number;
-    worldOffsetY: number;
-    panStartX: number;
-    panStartY: number;
-    isDraggingNow: boolean;
-  } | null>(null);
+  const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
+  const [hasDragged, setHasDragged] = useState<boolean>(false);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const currentModelRef = useRef<string>('');
 
+  // Keep state refs updated for native non-passive wheel events
   const scaleRef = useRef<number>(scale);
   scaleRef.current = scale;
   const panRef = useRef<Point>(pan);
   panRef.current = pan;
 
+  // =========================================================================
+  // Condensed Topological Untangler (Compact Links + Anti-Crossing Colliders)
+  // =========================================================================
+  const solveUntangledLayout = useCallback((): Record<number, Point> => {
+    const N = buses.length;
+    if (N === 0) return {};
+
+    const idToIndex = new Map<number, number>();
+    buses.forEach((b, i) => idToIndex.set(b.id, i));
+
+    // Adjacency graph
+    const adj: number[][] = Array.from({ length: N }, () => []);
+    const edgePairs: [number, number][] = [];
+    lines.forEach((l) => {
+      const u = idToIndex.get(l.from_bus);
+      const v = idToIndex.get(l.to_bus);
+      if (u !== undefined && v !== undefined && u !== v) {
+        adj[u].push(v);
+        adj[v].push(u);
+        edgePairs.push([u, v]);
+      }
+    });
+
+    // BFS Topological Ordering for circular seeding
+    const visited = new Set<number>();
+    const bfsOrder: number[] = [];
+    for (let i = 0; i < N; i++) {
+      if (!visited.has(i)) {
+        const queue = [i];
+        visited.add(i);
+        while (queue.length > 0) {
+          const curr = queue.shift()!;
+          bfsOrder.push(curr);
+          for (const nbr of adj[curr]) {
+            if (!visited.has(nbr)) {
+              visited.add(nbr);
+              queue.push(nbr);
+            }
+          }
+        }
+      }
+    }
+
+    // Condensed Dimensions: Compact radius keeps lines short and connected
+    const radius = N <= 8 ? 130 : Math.min(320, N * 8);
+    const cx = 800;
+    const cy = 550;
+
+    const posArr: Point[] = Array.from({ length: N }, () => ({ x: 0, y: 0 }));
+    bfsOrder.forEach((nodeIdx, orderIdx) => {
+      const theta = (orderIdx / N) * 2 * Math.PI;
+      posArr[nodeIdx] = {
+        x: cx + Math.cos(theta) * radius,
+        y: cy + Math.sin(theta) * radius,
+      };
+    });
+
+    // Ideal edge length: Tight, compact link spacing
+    const idealEdgeLen = N <= 8 ? 130 : Math.max(85, 125 - N * 0.45);
+    const kSq = idealEdgeLen * idealEdgeLen;
+
+    let temp = Math.min(120, radius * 0.7);
+    const iterations = N > 30 ? 140 : 90;
+    const dt = temp / iterations;
+
+    const MIN_NODE_DIST = 105; // Tight busbar clearance
+    const MIN_EDGE_DIST = 55;  // Clearance from lines
+
+    for (let it = 0; it < iterations; it++) {
+      const disp: Point[] = Array.from({ length: N }, () => ({ x: 0, y: 0 }));
+
+      // A. Repulsion between nodes
+      for (let i = 0; i < N; i++) {
+        for (let j = 0; j < N; j++) {
+          if (i === j) continue;
+          const dx = posArr[i].x - posArr[j].x;
+          const dy = posArr[i].y - posArr[j].y;
+          const dist = Math.hypot(dx, dy) || 1.0;
+          if (dist < 600) {
+            const f = kSq / dist;
+            disp[i].x += (dx / dist) * f;
+            disp[i].y += (dy / dist) * f;
+          }
+        }
+      }
+
+      // B. Spring Attraction along transmission lines
+      for (const [u, v] of edgePairs) {
+        const dx = posArr[v].x - posArr[u].x;
+        const dy = posArr[v].y - posArr[u].y;
+        const dist = Math.hypot(dx, dy) || 1.0;
+        const f = (dist * dist) / idealEdgeLen;
+        disp[u].x += (dx / dist) * f;
+        disp[u].y += (dy / dist) * f;
+        disp[v].x -= (dx / dist) * f;
+        disp[v].y -= (dy / dist) * f;
+      }
+
+      // C. Node-to-Edge Colliders (Prevents lines slicing through other nodes)
+      for (const [u, v] of edgePairs) {
+        const ax = posArr[u].x, ay = posArr[u].y;
+        const bx = posArr[v].x, by = posArr[v].y;
+        const abx = bx - ax, aby = by - ay;
+        const abSq = abx * abx + aby * aby;
+        if (abSq < 1.0) continue;
+
+        for (let kIdx = 0; kIdx < N; kIdx++) {
+          if (kIdx === u || kIdx === v) continue;
+          const px = posArr[kIdx].x, py = posArr[kIdx].y;
+          const t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / abSq));
+
+          if (t > 0.08 && t < 0.92) {
+            const projX = ax + t * abx;
+            const projY = ay + t * aby;
+            const diffX = px - projX;
+            const diffY = py - projY;
+            const dist = Math.hypot(diffX, diffY) || 1.0;
+
+            if (dist < MIN_EDGE_DIST) {
+              const push = (MIN_EDGE_DIST - dist) * 1.2;
+              disp[kIdx].x += (diffX / dist) * push;
+              disp[kIdx].y += (diffY / dist) * push;
+              disp[u].x -= (diffX / dist) * push * 0.4 * (1 - t);
+              disp[u].y -= (diffX / dist) * push * 0.4 * (1 - t);
+              disp[v].x -= (diffX / dist) * push * 0.4 * t;
+              disp[v].y -= (diffX / dist) * push * 0.4 * t;
+            }
+          }
+        }
+      }
+
+      // D. Edge-to-Edge Anti-Crossing Forces
+      for (let i = 0; i < edgePairs.length; i++) {
+        const [u1, v1] = edgePairs[i];
+        for (let j = i + 1; j < edgePairs.length; j++) {
+          const [u2, v2] = edgePairs[j];
+          if (u1 === u2 || u1 === v2 || v1 === u2 || v1 === v2) continue;
+
+          if (checkSegmentsCross(posArr[u1], posArr[v1], posArr[u2], posArr[v2])) {
+            const d1x = posArr[v1].x - posArr[u1].x;
+            const d1y = posArr[v1].y - posArr[u1].y;
+            const len1 = Math.hypot(d1x, d1y) || 1;
+            const norm1x = -d1y / len1, norm1y = d1x / len1;
+
+            const d2x = posArr[v2].x - posArr[u2].x;
+            const d2y = posArr[v2].y - posArr[u2].y;
+            const len2 = Math.hypot(d2x, d2y) || 1;
+            const norm2x = -d2y / len2, norm2y = d2x / len2;
+
+            const pushMag = 12.0;
+            disp[u1].x += norm2x * pushMag;
+            disp[u1].y += norm2y * pushMag;
+            disp[v1].x += norm2x * pushMag;
+            disp[v1].y += norm2y * pushMag;
+            disp[u2].x += norm1x * pushMag;
+            disp[u2].y += norm1y * pushMag;
+            disp[v2].x += norm1x * pushMag;
+            disp[v2].y += norm1y * pushMag;
+          }
+        }
+      }
+
+      // Apply displacements with cooling
+      for (let i = 0; i < N; i++) {
+        const dLen = Math.hypot(disp[i].x, disp[i].y) || 1.0;
+        const step = Math.min(dLen, temp);
+        posArr[i].x += (disp[i].x / dLen) * step;
+        posArr[i].y += (disp[i].y / dLen) * step;
+      }
+
+      temp -= dt;
+    }
+
+    // 3. Compact Bounding Box Separation Pass
+    const MIN_DX = 92;
+    const MIN_DY = 55;
+
+    for (let pass = 0; pass < 25; pass++) {
+      for (let i = 0; i < N; i++) {
+        for (let j = i + 1; j < N; j++) {
+          const dx = posArr[j].x - posArr[i].x;
+          const dy = posArr[j].y - posArr[i].y;
+          const absDx = Math.abs(dx);
+          const absDy = Math.abs(dy);
+
+          if (absDx < MIN_DX && absDy < MIN_DY) {
+            const overlapX = MIN_DX - absDx;
+            const overlapY = MIN_DY - absDy;
+
+            if (overlapX < overlapY) {
+              const pushX = overlapX / 2 + 2;
+              const sign = dx >= 0 ? 1 : -1;
+              posArr[j].x += sign * pushX;
+              posArr[i].x -= sign * pushX;
+            } else {
+              const pushY = overlapY / 2 + 2;
+              const sign = dy >= 0 ? 1 : -1;
+              posArr[j].y += sign * pushY;
+              posArr[i].y -= sign * pushY;
+            }
+          }
+        }
+      }
+    }
+
+    const finalPositions: Record<number, Point> = {};
+    buses.forEach((b, i) => {
+      finalPositions[b.id] = {
+        x: Math.round(posArr[i].x),
+        y: Math.round(posArr[i].y),
+      };
+    });
+
+    return finalPositions;
+  }, [buses, lines]);
+
   const handleAutoFit = useCallback(() => {
     const positions = Object.values(busPositionsRef.current);
     if (positions.length === 0) return;
 
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     positions.forEach((p) => {
       minX = Math.min(minX, p.x);
       maxX = Math.max(maxX, p.x);
@@ -577,16 +346,17 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       maxY = Math.max(maxY, p.y);
     });
 
-    const w = Math.max(400, maxX - minX + 240);
-    const h = Math.max(350, maxY - minY + 240);
+    const w = maxX - minX + 220;
+    const h = maxY - minY + 220;
     const containerW = containerRef.current?.clientWidth || 1200;
-    const containerH = containerRef.current?.clientHeight || 820;
+    const containerH = containerRef.current?.clientHeight || 850;
 
+    // Normal, comfortable scale range for condensed diagrams
     const fitScale = Math.min(containerW / w, containerH / h, 1.25);
-    const newScale = Math.max(0.22, fitScale);
+    const newScale = Math.max(0.40, fitScale);
     const newPan = {
-      x: (containerW - w * newScale) / 2 - minX * newScale + 120 * newScale,
-      y: (containerH - h * newScale) / 2 - minY * newScale + 120 * newScale,
+      x: (containerW - w * newScale) / 2 - minX * newScale + 110 * newScale,
+      y: (containerH - h * newScale) / 2 - minY * newScale + 110 * newScale,
     };
 
     setScale(newScale);
@@ -595,53 +365,56 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     panRef.current = newPan;
   }, []);
 
-  // Compute Layout ONLY when model or bus count changes (Never on breaker toggle)
-  const layoutVersionKey = `nesi_sld_v4_${modelName || 'default'}_${buses.length}`;
+  // Compute Layout on Model Load & Persist during Breaker Toggles
   useEffect(() => {
     if (!buses || buses.length === 0) return;
 
-    if (
-      Object.keys(busPositionsRef.current).length === buses.length &&
-      buses.every((b) => busPositionsRef.current[b.id] !== undefined)
-    ) {
+    const isNewModel = currentModelRef.current !== modelName;
+    currentModelRef.current = modelName;
+    const storageKey = `nesi_sld_pos_${modelName || 'default'}`;
+
+    if (!isNewModel && Object.keys(busPositionsRef.current).length >= buses.length) {
       return;
     }
 
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(layoutVersionKey);
+    if (typeof window !== 'undefined' && !isNewModel) {
+      const saved = localStorage.getItem(storageKey);
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
           if (buses.every((b) => parsed[b.id] !== undefined)) {
             setBusPositions(parsed);
             busPositionsRef.current = parsed;
-            setTimeout(handleAutoFit, 50);
             return;
           }
-        } catch {}
+        } catch (_) {}
       }
     }
 
-    const freshLayout = solveCleanGridLayout(buses, lines);
-    setBusPositions(freshLayout);
-    busPositionsRef.current = freshLayout;
+    const layout = solveUntangledLayout();
+    setBusPositions(layout);
+    busPositionsRef.current = layout;
 
     if (typeof window !== 'undefined') {
       try {
-        localStorage.setItem(layoutVersionKey, JSON.stringify(freshLayout));
-      } catch {}
+        localStorage.setItem(storageKey, JSON.stringify(layout));
+      } catch (_) {}
     }
 
-    setTimeout(handleAutoFit, 60);
-  }, [layoutVersionKey, buses.length, handleAutoFit]);
+    const timer = setTimeout(handleAutoFit, 80);
+    return () => clearTimeout(timer);
+  }, [modelName, buses.length, solveUntangledLayout, handleAutoFit]);
 
-  // Smooth Wheel / Pinch Zoom Centered at Cursor
+  // =========================================================================
+  // Non-Passive Native Wheel Listener: Smooth, Dynamic Touchpad/Mouse Zoom
+  // Traps pinch gestures to the container to prevent webpage zoom
+  // =========================================================================
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const handleNativeWheel = (e: WheelEvent) => {
-      e.preventDefault();
+      e.preventDefault(); // Prevents whole-page browser zoom
       e.stopPropagation();
 
       const rect = container.getBoundingClientRect();
@@ -650,18 +423,23 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
 
       let zoomFactor: number;
       if (e.ctrlKey) {
+        // Trackpad pinch gesture: smooth, granular continuous scaling
         const clampedDelta = Math.max(-30, Math.min(30, e.deltaY));
         zoomFactor = Math.exp(-clampedDelta * 0.005);
       } else {
+        // Standard mouse wheel notch: gentle 5% step per notch
         const clampedDelta = Math.max(-80, Math.min(80, e.deltaY));
         zoomFactor = Math.exp(-clampedDelta * 0.0018);
       }
 
-      zoomFactor = Math.min(1.06, Math.max(0.94, zoomFactor));
+      // Smooth step clamp: changes smoothly by 2%-5% per event (no sudden 74% -> 14% plunge)
+      zoomFactor = Math.min(1.05, Math.max(0.95, zoomFactor));
+
       const currScale = scaleRef.current;
       const currPan = panRef.current;
-      const nextScale = Math.min(3.5, Math.max(0.15, currScale * zoomFactor));
+      const nextScale = Math.min(3.5, Math.max(0.25, currScale * zoomFactor));
 
+      // Zoom accurately centered around the cursor position
       const mouseWorldX = (mouseX - currPan.x) / currScale;
       const mouseWorldY = (mouseY - currPan.y) / currScale;
 
@@ -682,137 +460,90 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     };
   }, []);
 
-  const screenToWorld = useCallback((clientX: number, clientY: number): Point => {
-    if (!svgRef.current) return { x: 0, y: 0 };
-    const rect = svgRef.current.getBoundingClientRect();
-    return {
-      x: (clientX - rect.left - panRef.current.x) / scaleRef.current,
-      y: (clientY - rect.top - panRef.current.y) / scaleRef.current,
-    };
-  }, []);
+  // Convert Client Coordinates to SVG Coordinates
+  const getSvgCoordinates = useCallback(
+    (clientX: number, clientY: number): Point => {
+      if (!svgRef.current) return { x: 0, y: 0 };
+      const rect = svgRef.current.getBoundingClientRect();
+      return {
+        x: (clientX - rect.left - pan.x) / scale,
+        y: (clientY - rect.top - pan.y) / scale,
+      };
+    },
+    [pan, scale]
+  );
 
-  // Bus Pointer Down (Does NOT capture pointer until >5px drag movement, so taps always work!)
-  const handleBusPointerDown = (e: React.PointerEvent, busId: number) => {
+  // Mouse pan and bus drag events
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    setIsPanning(true);
+    setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+  };
+
+  const handleBusMouseDown = (e: React.MouseEvent, busId: number) => {
     e.stopPropagation();
     if (e.button !== 0) return;
 
-    const mouseWorld = screenToWorld(e.clientX, e.clientY);
-    const busPos = busPositionsRef.current[busId] || { x: 200, y: 200 };
+    const mouseWorld = getSvgCoordinates(e.clientX, e.clientY);
+    const busPos = busPositions[busId] || { x: 200, y: 200 };
 
-    pointerDownInfoRef.current = {
-      type: 'bus',
-      busId,
-      pointerId: e.pointerId,
-      startX: e.clientX,
-      startY: e.clientY,
-      worldOffsetX: mouseWorld.x - busPos.x,
-      worldOffsetY: mouseWorld.y - busPos.y,
-      panStartX: 0,
-      panStartY: 0,
-      isDraggingNow: false,
-    };
+    setDraggingBusId(busId);
+    setHasDragged(false);
+    setDragOffset({
+      x: mouseWorld.x - busPos.x,
+      y: mouseWorld.y - busPos.y,
+    });
   };
 
-  // Canvas Background Pointer Down
-  const handleCanvasPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
-
-    pointerDownInfoRef.current = {
-      type: 'canvas',
-      pointerId: e.pointerId,
-      startX: e.clientX,
-      startY: e.clientY,
-      worldOffsetX: 0,
-      worldOffsetY: 0,
-      panStartX: e.clientX - panRef.current.x,
-      panStartY: e.clientY - panRef.current.y,
-      isDraggingNow: false,
-    };
-  };
-
-  const handleCanvasPointerMove = (e: React.PointerEvent) => {
-    const info = pointerDownInfoRef.current;
-    if (!info) return;
-
-    const moveDist = Math.hypot(e.clientX - info.startX, e.clientY - info.startY);
-
-    // Only enter drag/pan mode once pointer moves past 5px threshold
-    if (!info.isDraggingNow) {
-      if (moveDist < 5) return;
-      info.isDraggingNow = true;
-      try {
-        containerRef.current?.setPointerCapture(info.pointerId);
-      } catch {}
-
-      if (info.type === 'bus' && info.busId !== undefined) {
-        setDraggingBusId(info.busId);
-      } else {
-        setIsPanning(true);
-      }
-    }
-
-    if (info.type === 'bus' && info.busId !== undefined) {
-      const busId = info.busId;
-      const mouseWorld = screenToWorld(e.clientX, e.clientY);
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (draggingBusId !== null) {
+      setHasDragged(true);
+      const mouseWorld = getSvgCoordinates(e.clientX, e.clientY);
       const newPos = {
-        x: Math.round(mouseWorld.x - info.worldOffsetX),
-        y: Math.round(mouseWorld.y - info.worldOffsetY),
+        x: Math.round(mouseWorld.x - dragOffset.x),
+        y: Math.round(mouseWorld.y - dragOffset.y),
       };
 
       setBusPositions((prev) => {
-        const next = { ...prev, [busId]: newPos };
+        const next = { ...prev, [draggingBusId]: newPos };
         busPositionsRef.current = next;
         return next;
       });
-    } else if (info.type === 'canvas') {
+    } else if (isPanning) {
       const nextPan = {
-        x: e.clientX - info.panStartX,
-        y: e.clientY - info.panStartY,
+        x: e.clientX - panStart.x,
+        y: e.clientY - panStart.y,
       };
       setPan(nextPan);
       panRef.current = nextPan;
     }
   };
 
-  const handleCanvasPointerUp = (e: React.PointerEvent) => {
-    const info = pointerDownInfoRef.current;
-    if (!info) return;
-    pointerDownInfoRef.current = null;
-
-    if (info.isDraggingNow) {
-      try {
-        containerRef.current?.releasePointerCapture(info.pointerId);
-      } catch {}
-
-      if (info.type === 'bus' && typeof window !== 'undefined') {
-        try {
-          localStorage.setItem(layoutVersionKey, JSON.stringify(busPositionsRef.current));
-        } catch {}
-      }
+  const handleMouseUp = () => {
+    setIsPanning(false);
+    if (draggingBusId !== null) {
       setDraggingBusId(null);
-      setIsPanning(false);
-    } else {
-      // It was a clean tap (< 5px movement)!
-      if (info.type === 'bus' && info.busId !== undefined) {
-        const tappedBus = buses.find((b) => b.id === info.busId) || null;
-        handleSelectBus(tappedBus);
+      if (typeof window !== 'undefined' && modelName) {
+        try {
+          localStorage.setItem(`nesi_sld_pos_${modelName}`, JSON.stringify(busPositionsRef.current));
+        } catch (_) {}
       }
     }
   };
 
   const handleResetLayout = () => {
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem(layoutVersionKey);
+    if (typeof window !== 'undefined' && modelName) {
+      localStorage.removeItem(`nesi_sld_pos_${modelName}`);
     }
-    const fresh = solveCleanGridLayout(buses, lines);
+    const fresh = solveUntangledLayout();
     setBusPositions(fresh);
     busPositionsRef.current = fresh;
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && modelName) {
       try {
-        localStorage.setItem(layoutVersionKey, JSON.stringify(fresh));
-      } catch {}
+        localStorage.setItem(`nesi_sld_pos_${modelName}`, JSON.stringify(fresh));
+      } catch (_) {}
     }
-    setTimeout(handleAutoFit, 50);
+    setTimeout(handleAutoFit, 60);
   };
 
   const handleSearchSelect = (busId: number) => {
@@ -820,20 +551,18 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     if (pos && containerRef.current) {
       const containerW = containerRef.current.clientWidth;
       const containerH = containerRef.current.clientHeight;
-      const targetScale = Math.max(scaleRef.current, 0.95);
       const nextPan = {
-        x: containerW / 2 - pos.x * targetScale,
-        y: containerH / 2 - pos.y * targetScale,
+        x: containerW / 2 - pos.x * scale,
+        y: containerH / 2 - pos.y * scale,
       };
-      setScale(targetScale);
       setPan(nextPan);
-      scaleRef.current = targetScale;
       panRef.current = nextPan;
       const b = buses.find((item) => item.id === busId);
-      if (b) handleSelectBus(b);
+      if (b) setSelectedBus(b);
     }
   };
 
+  // High-Resolution Clear White Vector Exports
   const exportAsPNG = () => {
     if (!svgRef.current) return;
     const serializer = new XMLSerializer();
@@ -855,7 +584,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       const pngUrl = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = pngUrl;
-      a.download = `NESI_SLD_${modelName || 'Grid'}.png`;
+      a.download = `NESI_STAC_SLD_${modelName || 'Grid'}.png`;
       a.click();
       URL.revokeObjectURL(url);
     };
@@ -870,7 +599,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `NESI_SLD_${modelName || 'Grid'}.svg`;
+    a.download = `NESI_STAC_SLD_${modelName || 'Grid'}.svg`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -900,8 +629,26 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  // Group parallel lines between identical bus pairs
-  const multiLineMeta = useMemo(() => {
+  // Pre-calculate clean decorator angles for each bus
+  const busDecoratorAngles = useMemo(() => {
+    const result: Record<number, { genAngle: number; loadAngle: number }> = {};
+    buses.forEach((b) => {
+      const bPos = busPositions[b.id] || { x: 0, y: 0 };
+      const connectedNeighbors = lines
+        .filter((l) => l.from_bus === b.id || l.to_bus === b.id)
+        .map((l) => {
+          const otherId = l.from_bus === b.id ? l.to_bus : l.from_bus;
+          return busPositions[otherId];
+        })
+        .filter(Boolean);
+
+      result[b.id] = computeCleanDecoratorAngles(bPos, connectedNeighbors);
+    });
+    return result;
+  }, [buses, lines, busPositions]);
+
+  // STAC MultiLineEdge normal vector grouping: Prevents parallel lines from overlapping
+  const multiLineOffsets = useMemo(() => {
     const corridorMap = new Map<string, number[]>();
     lines.forEach((l) => {
       const key = l.from_bus < l.to_bus ? `${l.from_bus}_${l.to_bus}` : `${l.to_bus}_${l.from_bus}`;
@@ -909,31 +656,25 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       corridorMap.get(key)!.push(l.id);
     });
 
-    const metaMap = new Map<number, { offset: number; tPos: number; count: number }>();
+    const offsetMap = new Map<number, number>();
     corridorMap.forEach((lineIds) => {
       const count = lineIds.length;
       lineIds.forEach((id, idx) => {
-        const offset = (idx - (count - 1) / 2) * 20;
-        const tPos = count === 1 ? 0.5 : 0.38 + (idx / Math.max(1, count - 1)) * 0.24;
-        metaMap.set(id, { offset, tPos, count });
+        const offset = (idx - (count - 1) / 2) * 18; // 18px compact parallel lane separation
+        offsetMap.set(id, offset);
       });
     });
-    return metaMap;
+    return offsetMap;
   }, [lines]);
 
   return (
     <div className="space-y-3 max-w-7xl mx-auto py-1">
       {/* Top Controls Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 border-b border-slate-200 gap-3">
-        <div className="flex items-center gap-3">
-          <p className="text-xs text-slate-700 font-bold">
+        <div>
+          <p className="text-xs text-slate-500 mt-0.5 font-medium">
             {buses.length} Substations • {lines.length} Corridors
           </p>
-          {trippedLines.length > 0 && (
-            <span className="px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[11px] font-bold">
-              {trippedLines.length} Line(s) Shut Down (N-1)
-            </span>
-          )}
         </div>
 
         {/* Action Controls Toolbar */}
@@ -988,9 +729,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             <button
               onClick={() => setViewStyle('stac_direct')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition ${
-                viewStyle === 'stac_direct'
-                  ? 'bg-[#500b50] text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                viewStyle === 'stac_direct' ? 'bg-[#500b50] text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <Compass className="h-3.5 w-3.5" />
@@ -999,9 +738,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             <button
               onClick={() => setViewStyle('orthogonal')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition ${
-                viewStyle === 'orthogonal'
-                  ? 'bg-[#500b50] text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                viewStyle === 'orthogonal' ? 'bg-[#500b50] text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <Layers className="h-3.5 w-3.5" />
@@ -1051,172 +788,143 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
         </div>
       </div>
 
-      {/* Main Canvas Area */}
+      {/* Main Spacious Canvas Area */}
       <div className="relative w-full">
         <div
           ref={containerRef}
-          onPointerDown={handleCanvasPointerDown}
-          onPointerMove={handleCanvasPointerMove}
-          onPointerUp={handleCanvasPointerUp}
-          onPointerCancel={handleCanvasPointerUp}
-          className={`h-[820px] w-full rounded-2xl border border-slate-300 bg-white relative overflow-hidden shadow-sm select-none touch-none ${
-            draggingBusId !== null ? 'cursor-grabbing' : isPanning ? 'cursor-grabbing' : 'cursor-grab'
+          onMouseDown={handleCanvasMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+          className={`h-[850px] w-full rounded-2xl border border-slate-300 bg-white relative overflow-hidden shadow-sm select-none ${
+            isPanning ? 'cursor-grabbing' : draggingBusId !== null ? 'cursor-move' : 'cursor-grab'
           }`}
         >
-          <div className="absolute bottom-3 left-4 z-10 pointer-events-none text-[11px] font-mono text-slate-500 bg-white/85 px-2.5 py-1 rounded-md border border-slate-200">
-            Tap any Busbar to inspect voltage &amp; corridors • Tap any Line or Breaker Box to Shut Down / Restore
+          {/* Engineering CAD Header Tag */}
+          <div className="absolute top-4 left-4 z-10 flex items-center gap-2 pointer-events-none opacity-60">
+            
           </div>
+
+
 
           {/* Vector SVG Canvas */}
           <svg ref={svgRef} className="w-full h-full" style={{ width: '100%', height: '100%' }}>
             <defs>
+              {/* STAC Engineering Dot Grid */}
               <pattern id="stacCadGrid" width="40" height="40" patternUnits="userSpaceOnUse">
                 <circle cx="20" cy="20" r="0.85" fill="#cbd5e1" opacity="0.8" />
               </pattern>
+              {/* Bold Load Arrow Marker */}
               <marker
                 id="loadArrow"
                 viewBox="0 0 10 10"
-                refX="7"
+                refX="5"
                 refY="5"
-                markerWidth="5.5"
-                markerHeight="5.5"
-                orient="auto"
+                markerWidth="5"
+                markerHeight="5"
+                orient="auto-start-reverse"
               >
-                <path d="M 0 1 L 9 5 L 0 9 z" fill="#0f172a" />
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#000000" />
               </marker>
             </defs>
 
-            <rect
-              x="-20000"
-              y="-20000"
-              width="50000"
-              height="50000"
-              fill="url(#stacCadGrid)"
-              pointerEvents="none"
-            />
+            {/* Clear CAD Background Grid */}
+            <rect x="-10000" y="-10000" width="30000" height="30000" fill="url(#stacCadGrid)" pointerEvents="none" />
 
             <g transform={`translate(${pan.x}, ${pan.y}) scale(${scale})`}>
               {/* ========================================================================= */}
-              {/* 1. TRANSMISSION LINES & INTERACTIVE CIRCUIT BREAKERS                      */}
+              {/* 1. TRANSMISSION LINES WITH COMPACT INLINE BREAKERS & PARALLEL LANES        */}
               {/* ========================================================================= */}
               {lines.map((line) => {
                 const rawPosA = busPositions[line.from_bus];
                 const rawPosB = busPositions[line.to_bus];
                 if (!rawPosA || !rawPosB) return null;
 
-                const canonicalFlip = line.from_bus > line.to_bus ? -1 : 1;
-                const meta = multiLineMeta.get(line.id) || { offset: 0, tPos: 0.5, count: 1 };
-                const signedOffset = meta.offset * canonicalFlip;
+                // Normal vector lane offset for parallel circuits
+                const laneOffset = multiLineOffsets.get(line.id) || 0;
+                const cdx = rawPosB.x - rawPosA.x;
+                const cdy = rawPosB.y - rawPosA.y;
+                const cLen = Math.hypot(cdx, cdy) || 1;
+                const normX = -cdy / cLen;
+                const normY = cdx / cLen;
 
-                const posA = getContinuousBusDockPoint(rawPosA, rawPosB, signedOffset);
-                const posB = getContinuousBusDockPoint(rawPosB, rawPosA, -signedOffset);
+                const shiftedPosA = { x: rawPosA.x + normX * laneOffset, y: rawPosA.y + normY * laneOffset };
+                const shiftedPosB = { x: rawPosB.x + normX * laneOffset, y: rawPosB.y + normY * laneOffset };
+
+                // Compact border clipping (38px half-width, 5px half-height)
+                const posA = getBusBorderPoint(shiftedPosA, shiftedPosB, 38, 5);
+                const posB = getBusBorderPoint(shiftedPosB, shiftedPosA, 38, 5);
 
                 const isTripped = trippedLines.includes(line.id);
-                const isSelectedLine = selectedLineId === line.id;
                 const loadingPercent = line.loading_percent ?? 0;
                 const isOverload = loadingPercent > 100;
-                const lineColor = isTripped
-                  ? '#dc2626'
-                  : isSelectedLine
-                  ? '#500b50'
-                  : isOverload
-                  ? '#ea580c'
-                  : '#0f172a';
+                const lineColor = isTripped ? '#dc2626' : isOverload ? '#ea580c' : '#000000';
                 const flow = line.flow_mw ?? line.p_mw ?? 0;
 
                 const dx = posB.x - posA.x;
                 const dy = posB.y - posA.y;
                 const lineDist = Math.hypot(dx, dy);
+                const midX = (posA.x + posB.x) / 2;
+                const midY = (posA.y + posB.y) / 2;
 
-                const tBox = meta.tPos;
-                const boxX = posA.x + dx * tBox;
-                const boxY = posA.y + dy * tBox;
-
-                const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
-                const textFlipped = angleDeg > 90 || angleDeg < -90;
+                let angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+                let textFlipped = false;
+                if (angleDeg > 90 || angleDeg < -90) {
+                  textFlipped = true;
+                }
 
                 let pathData = '';
                 if (viewStyle === 'orthogonal') {
-                  const midY = (posA.y + posB.y) / 2;
                   pathData = `M ${posA.x} ${posA.y} L ${posA.x} ${midY} L ${posB.x} ${midY} L ${posB.x} ${posB.y}`;
                 } else {
                   pathData = `M ${posA.x} ${posA.y} L ${posB.x} ${posB.y}`;
                 }
 
-                const showBreakerBox = lineDist >= 38;
+                const showBreakerBox = lineDist >= 60;
 
                 return (
                   <g
                     key={`line-${line.id}`}
                     className="cursor-pointer group"
-                    onPointerDown={(e) => {
-                      // Stop canvas pan capture so clicking a line always fires cleanly
-                      e.stopPropagation();
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedLineId(line.id);
-                      toggleLine(line.id);
-                    }}
+                    onClick={() => toggleLine(line.id)}
                   >
-                    {/* Wide 18px transparent click target along the entire corridor */}
+                    {/* Hover Buffer */}
                     <path d={pathData} fill="none" stroke="transparent" strokeWidth="18" />
 
-                    {/* Constant-width background underlay when tripped so visual length never changes */}
-                    {isTripped && (
-                      <path
-                        d={pathData}
-                        fill="none"
-                        stroke="#fecaca"
-                        strokeWidth="2.6"
-                        strokeLinecap="butt"
-                      />
-                    )}
-
-                    {/* Primary Transmission Line Stroke */}
+                    {/* Bold Transmission Line Path */}
                     <path
                       d={pathData}
                       fill="none"
                       stroke={lineColor}
-                      strokeWidth={isSelectedLine ? '3.4' : '2.5'}
-                      strokeLinecap="butt"
-                      strokeDasharray={isTripped ? '7 5' : undefined}
+                      strokeWidth={isTripped ? 2 : 2.75}
+                      strokeDasharray={isTripped ? '6 4' : undefined}
+                      strokeOpacity={isTripped ? 0.35 : 0.95}
+                      className="transition-all duration-150 group-hover:stroke-[#500b50] group-hover:stroke-width-3"
                     />
 
-                    {/* Terminal anchor dots at both busbar dock points */}
-                    <circle cx={posA.x} cy={posA.y} r="2.2" fill={lineColor} />
-                    <circle cx={posB.x} cy={posB.y} r="2.2" fill={lineColor} />
-
-                    {/* Inline Breaker & MW Flow Box */}
+                    {/* Compact STAC In-line Breaker Indicator */}
                     {showBreakerBox && (
-                      <g
-                        transform={`translate(${
-                          viewStyle === 'orthogonal' ? (posA.x + posB.x) / 2 : boxX
-                        }, ${viewStyle === 'orthogonal' ? (posA.y + posB.y) / 2 : boxY}) rotate(${
-                          viewStyle === 'orthogonal' ? 0 : angleDeg
-                        })`}
-                      >
+                      <g transform={`translate(${midX}, ${midY}) rotate(${angleDeg})`}>
                         <rect
-                          x="-21"
-                          y="-8.5"
-                          width="42"
-                          height="17"
-                          rx="3"
-                          fill={isTripped ? '#dc2626' : '#ffffff'}
+                          x="-18"
+                          y="-7.5"
+                          width="36"
+                          height="15"
+                          rx="2"
+                          fill="#ffffff"
                           stroke={lineColor}
-                          strokeWidth="1.6"
+                          strokeWidth="1.5"
+                          className="transition group-hover:fill-purple-50"
                         />
                         <text
                           x="0"
-                          y="3"
+                          y="2.5"
                           textAnchor="middle"
-                          fontSize="8.5"
+                          fontSize="8"
                           fontFamily="monospace"
                           fontWeight="900"
-                          fill={isTripped ? '#ffffff' : isOverload ? '#c2410c' : '#0f172a'}
-                          transform={
-                            viewStyle !== 'orthogonal' && textFlipped ? 'rotate(180)' : undefined
-                          }
+                          fill={isTripped ? '#dc2626' : isOverload ? '#c2410c' : '#000000'}
+                          transform={textFlipped ? 'rotate(180)' : undefined}
                         >
                           {isTripped ? 'OPEN' : `${Math.abs(flow).toFixed(0)}M`}
                         </text>
@@ -1227,158 +935,172 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
               })}
 
               {/* ========================================================================= */}
-              {/* 2. FLAT RECTANGULAR BUSBARS WITH FIXED TOP (~) & BOTTOM (↓) DECORATORS    */}
+              {/* 2. RECTANGULAR BUSBARS (COMPACT CAD BUSBARS WITH STAC ATTACHMENTS)        */}
               {/* ========================================================================= */}
               {buses.map((bus) => {
                 const pos = busPositions[bus.id];
                 if (!pos) return null;
 
-                const isSelected = activeSelectedBus?.id === bus.id;
+                const isSelected = selectedBus?.id === bus.id;
                 const isDragging = draggingBusId === bus.id;
                 const vVal = bus.v_pu ?? 1.0;
                 const isUnder = vVal < 0.95;
                 const isOver = vVal > 1.05;
-                const busBarFill = isUnder ? '#dc2626' : isOver ? '#d97706' : '#0f172a';
+                const busBarColor = isUnder ? '#dc2626' : isOver ? '#d97706' : '#000000';
 
-                const pVal = bus.p_mw ?? 0;
-                const nameLower = (bus.name || '').toLowerCase();
                 const isGen =
-                  pVal < -5 ||
-                  nameLower.includes('gs') ||
-                  nameLower.includes('ps') ||
-                  nameLower.includes('slack') ||
-                  nameLower.includes('ipp') ||
-                  nameLower.includes('gen');
+                  (bus.p_mw ?? 0) < -20 ||
+                  (bus.name || '').toLowerCase().includes('gs') ||
+                  (bus.name || '').toLowerCase().includes('ps') ||
+                  (bus.name || '').toLowerCase().includes('slack');
 
-                const hasLoad = !isGen && Math.abs(pVal) > 1;
+                const hasLoad = (bus.p_mw ?? 0) > 10;
+                const { genAngle, loadAngle } = busDecoratorAngles[bus.id] || {
+                  genAngle: -Math.PI / 2,
+                  loadAngle: Math.PI / 2,
+                };
+
+                // Free-angle coordinates for Generator
+                const genStubLen = 28;
+                const genX = Math.cos(genAngle) * genStubLen;
+                const genY = Math.sin(genAngle) * genStubLen;
+                const genBorder = getBusBorderPoint(pos, { x: pos.x + genX, y: pos.y + genY }, 38, 5);
+                const relGenBorderX = genBorder.x - pos.x;
+                const relGenBorderY = genBorder.y - pos.y;
+
+                // Free-angle coordinates for Load
+                const loadStubStart = 9;
+                const loadStubEnd = 28;
+                const loadStartX = Math.cos(loadAngle) * loadStubStart;
+                const loadStartY = Math.sin(loadAngle) * loadStubStart;
+                const loadEndX = Math.cos(loadAngle) * loadStubEnd;
+                const loadEndY = Math.sin(loadAngle) * loadStubEnd;
 
                 return (
                   <g
                     key={`bus-${bus.id}`}
                     transform={`translate(${pos.x}, ${pos.y})`}
-                    onPointerDown={(e) => handleBusPointerDown(e, bus.id)}
-                    className="cursor-pointer"
+                    onMouseDown={(e) => handleBusMouseDown(e, bus.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!hasDragged) {
+                        setSelectedBus(bus);
+                      }
+                    }}
+                    className="cursor-move group"
                   >
-                    {/* Invisible enlarged hit box so tapping a busbar is effortless */}
-                    <rect
-                      x={-BUS_HALF_W - 8}
-                      y={-BUS_HALF_H - 12}
-                      width={(BUS_HALF_W + 8) * 2}
-                      height={(BUS_HALF_H + 12) * 2}
-                      fill="transparent"
-                    />
-
-                    {/* Selection Highlight Halo */}
+                    {/* Selection Beacon */}
                     {isSelected && (
                       <rect
                         x="-46"
-                        y="-12"
+                        y="-20"
                         width="92"
-                        height="24"
-                        rx="5"
+                        height="40"
+                        rx="6"
                         fill="#500b50"
-                        fillOpacity="0.16"
+                        fillOpacity="0.12"
                         stroke="#500b50"
-                        strokeWidth="2.2"
+                        strokeWidth="2"
                         strokeDasharray="4 2"
                       />
                     )}
 
-                    {/* STAC TOP DECORATOR: Generator (~) ALWAYS Pointing Straight UP */}
+                    {/* Generator Infeed Symbol (~ in circle) */}
                     {isGen && (
-                      <g pointerEvents="none">
-                        <line x1="0" y1="-4.5" x2="0" y2="-17" stroke="#0f172a" strokeWidth="2" />
-                        <circle
-                          cx="0"
-                          cy="-28"
-                          r="11"
-                          fill="#ffffff"
-                          stroke="#0f172a"
+                      <g>
+                        <line
+                          x1={relGenBorderX}
+                          y1={relGenBorderY}
+                          x2={genX}
+                          y2={genY}
+                          stroke="#000000"
                           strokeWidth="2"
                         />
+                        <circle cx={genX} cy={genY} r="11" fill="#ffffff" stroke="#000000" strokeWidth="2" />
                         <path
-                          d="M -5.5 -28 Q -2.75 -33 0 -28 T 5.5 -28"
+                          d={`M ${genX - 5} ${genY} Q ${genX - 2.5} ${genY - 4.5} ${genX} ${genY} T ${genX + 5} ${genY}`}
                           fill="none"
-                          stroke="#0f172a"
+                          stroke="#000000"
                           strokeWidth="2"
                         />
                         <text
-                          x="0"
-                          y="-43"
+                          x={genX}
+                          y={genY - 14}
                           textAnchor="middle"
                           fontSize="9"
-                          fill="#0f172a"
+                          fill="#000000"
                           fontFamily="monospace"
                           fontWeight="900"
                         >
-                          {Math.abs(pVal).toFixed(0)} MW
+                          {Math.abs(bus.p_mw ?? 0).toFixed(0)} MW
                         </text>
                       </g>
                     )}
 
-                    {/* STAC BOTTOM DECORATOR: Load Arrow ALWAYS Pointing Straight DOWN */}
-                    {hasLoad && (
-                      <g pointerEvents="none">
+                    {/* Load Drop Symbol */}
+                    {hasLoad && !isGen && (
+                      <g>
                         <line
-                          x1="0"
-                          y1="20"
-                          x2="0"
-                          y2="37"
-                          stroke="#0f172a"
+                          x1={loadStartX}
+                          y1={loadStartY}
+                          x2={loadEndX}
+                          y2={loadEndY}
+                          stroke="#000000"
                           strokeWidth="2"
                           markerEnd="url(#loadArrow)"
                         />
                         <text
-                          x="0"
-                          y="49"
+                          x={loadEndX + Math.cos(loadAngle) * 11}
+                          y={loadEndY + Math.sin(loadAngle) * 11 + 3}
                           textAnchor="middle"
                           fontSize="8.5"
                           fontFamily="monospace"
                           fontWeight="900"
                           fill="#1e293b"
                         >
-                          {Math.abs(pVal).toFixed(0)} MW
+                          {(bus.p_mw ?? 0).toFixed(0)} MW
                         </text>
                       </g>
                     )}
 
-                    {/* SHARP FLAT RECTANGULAR BUSBAR (76px x 9px) */}
+                    {/* Condensed Rectangular Copper Busbar (76px x 8px) */}
                     <rect
-                      x={-BUS_HALF_W}
-                      y={-BUS_HALF_H}
-                      width={BUS_HALF_W * 2}
-                      height={BUS_HALF_H * 2}
+                      x="-38"
+                      y="-4.5"
+                      width="76"
+                      height="9"
                       rx="2"
-                      fill={busBarFill}
-                      stroke={isSelected ? '#500b50' : '#000000'}
-                      strokeWidth={isDragging || isSelected ? '2.2' : '1.4'}
+                      fill={busBarColor}
+                      stroke="#000000"
+                      strokeWidth="1.4"
+                      className={`transition-shadow ${
+                        isDragging ? 'filter drop-shadow-lg' : 'group-hover:filter drop-shadow-md'
+                      }`}
                     />
 
                     {/* Substation Name Label */}
                     <text
                       x="0"
-                      y={isGen ? -54 : -10}
+                      y="-10"
                       textAnchor="middle"
                       fontSize="10"
                       fontFamily="sans-serif"
                       fontWeight="900"
-                      fill="#0f172a"
+                      fill="#000000"
                       letterSpacing="0.2px"
-                      pointerEvents="none"
                     >
                       {bus.name}
                     </text>
 
-                    {/* Bus Voltage Magnitude Reading */}
+                    {/* Voltage Magnitude Reading */}
                     <text
                       x="0"
-                      y="16"
+                      y="18"
                       textAnchor="middle"
-                      fontSize="9.5"
+                      fontSize="9"
                       fontFamily="monospace"
                       fontWeight="900"
                       fill={isUnder ? '#dc2626' : isOver ? '#d97706' : '#15803d'}
-                      pointerEvents="none"
                     >
                       {vVal.toFixed(3)} pu
                     </text>
@@ -1389,114 +1111,26 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           </svg>
 
           {/* ========================================================================= */}
-          {/* 3. SELECTED LINE BREAKER QUICK CONTROL CARD                               */}
+          {/* 3. STAC-STYLE TECHNICAL PROPERTY INSPECTOR                                */}
           {/* ========================================================================= */}
-          {activeSelectedLine && !activeSelectedBus && (
-            <div
-              onPointerDown={(e) => e.stopPropagation()}
-              className="absolute top-4 right-4 z-20 w-80 rounded-2xl border border-slate-300 bg-white/95 backdrop-blur-md shadow-2xl p-4 text-xs font-sans"
-            >
-              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Power
-                    className={`h-4 w-4 shrink-0 ${
-                      trippedLines.includes(activeSelectedLine.id)
-                        ? 'text-rose-600'
-                        : 'text-emerald-600'
-                    }`}
-                  />
-                  <span className="font-black text-slate-900 text-sm truncate">
-                    {activeSelectedLine.name || `Line #${activeSelectedLine.id}`}
-                  </span>
-                </div>
-                <button
-                  onClick={() => setSelectedLineId(null)}
-                  className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-
-              <div className="mt-3 space-y-2 text-[11px]">
-                <div className="flex justify-between">
-                  <span className="text-slate-500 font-semibold">Circuit Status:</span>
-                  <span
-                    className={`font-bold px-2 py-0.5 rounded text-[10px] ${
-                      trippedLines.includes(activeSelectedLine.id)
-                        ? 'bg-rose-100 text-rose-800'
-                        : 'bg-emerald-100 text-emerald-800'
-                    }`}
-                  >
-                    {trippedLines.includes(activeSelectedLine.id)
-                      ? 'SHUT DOWN (BREAKER OPEN)'
-                      : 'IN SERVICE (CLOSED)'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500 font-semibold">Interconnection:</span>
-                  <span className="font-mono font-bold text-slate-800">
-                    Bus #{activeSelectedLine.from_bus} → Bus #{activeSelectedLine.to_bus}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500 font-semibold">Active Power Flow:</span>
-                  <span className="font-mono font-bold text-slate-900">
-                    {trippedLines.includes(activeSelectedLine.id)
-                      ? '0.0 MW'
-                      : `${(activeSelectedLine.flow_mw ?? activeSelectedLine.p_mw ?? 0).toFixed(1)} MW`}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500 font-semibold">Thermal Loading:</span>
-                  <span className="font-mono font-bold text-[#500b50]">
-                    {trippedLines.includes(activeSelectedLine.id)
-                      ? '0.0%'
-                      : `${(activeSelectedLine.loading_percent ?? 0).toFixed(1)}%`}
-                  </span>
-                </div>
-              </div>
-
-              <button
-                onClick={() => toggleLine(activeSelectedLine.id)}
-                className={`mt-4 w-full py-2.5 rounded-xl font-bold text-xs text-white transition flex items-center justify-center gap-2 shadow-xs ${
-                  trippedLines.includes(activeSelectedLine.id)
-                    ? 'bg-emerald-600 hover:bg-emerald-700'
-                    : 'bg-rose-600 hover:bg-rose-700'
-                }`}
-              >
-                <Power className="h-4 w-4" />
-                <span>
-                  {trippedLines.includes(activeSelectedLine.id)
-                    ? 'Close Breaker (Restore Line)'
-                    : 'Shut Down Line (Trip Breaker)'}
-                </span>
-              </button>
-            </div>
-          )}
-
-          {/* ========================================================================= */}
-          {/* 4. SUBSTATION BUS TECHNICAL PROPERTY INSPECTOR & LINE BREAKER DRAWER      */}
-          {/* ========================================================================= */}
-          {activeSelectedBus && (
-            <div
-              onPointerDown={(e) => e.stopPropagation()}
-              className="absolute top-4 right-4 z-20 w-80 rounded-2xl border border-slate-300 bg-white/95 backdrop-blur-md shadow-2xl p-4 text-xs font-sans"
-            >
+          {selectedBus && (
+            <div className="absolute top-4 right-4 z-20 w-80 rounded-2xl border border-slate-300 bg-white/95 backdrop-blur-md shadow-2xl p-4 text-xs font-sans animate-in fade-in zoom-in-95 duration-150">
               <div className="flex items-center justify-between pb-2 border-b border-slate-200">
                 <div className="flex items-center gap-2">
                   <div className="h-3 w-3 rounded-full bg-[#500b50]" />
                   <span className="font-black text-slate-900 text-sm">
-                    Bus #{activeSelectedBus.id} ({activeSelectedBus.name})
+                    Bus {selectedBus.id} ({selectedBus.name})
                   </span>
                 </div>
                 <button
-                  onClick={() => handleSelectBus(null)}
+                  onClick={() => setSelectedBus(null)}
                   className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
 
+              {/* Exact STAC Technical Data Table */}
               <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
                 <table className="w-full text-left text-[11px]">
                   <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
@@ -1509,68 +1143,65 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                   <tbody className="divide-y divide-slate-100 text-slate-800">
                     <tr className="bg-slate-50/70 font-bold text-slate-500 text-[10px]">
                       <td colSpan={3} className="py-1 px-2.5 uppercase tracking-wider">
-                        Substation Topology
+                        Static Topology
                       </td>
                     </tr>
                     <tr>
-                      <td className="py-1 px-2.5 font-bold">Bus ID</td>
-                      <td className="py-1 px-2.5 font-mono font-bold">#{activeSelectedBus.id}</td>
+                      <td className="py-1 px-2.5 font-bold">Id</td>
+                      <td className="py-1 px-2.5 font-mono font-bold">{selectedBus.id}</td>
                       <td className="py-1 px-2.5 text-slate-400">-</td>
                     </tr>
                     <tr>
-                      <td className="py-1 px-2.5 font-bold">Grid Zone</td>
-                      <td className="py-1 px-2.5 font-semibold">
-                        {activeSelectedBus.zone || 'Bulk Transmission'}
-                      </td>
+                      <td className="py-1 px-2.5 font-bold">Zone</td>
+                      <td className="py-1 px-2.5 font-semibold">{selectedBus.zone || 'Bulk Grid'}</td>
                       <td className="py-1 px-2.5 text-slate-400">-</td>
                     </tr>
                     <tr>
-                      <td className="py-1 px-2.5 font-bold">Nominal kV</td>
-                      <td className="py-1 px-2.5 font-mono font-bold">
-                        {activeSelectedBus.vn_kv || 330.0}
-                      </td>
+                      <td className="py-1 px-2.5 font-bold">Base KV</td>
+                      <td className="py-1 px-2.5 font-mono font-bold">{selectedBus.vn_kv || 330.0}</td>
                       <td className="py-1 px-2.5 text-slate-500 font-mono">kV</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1 px-2.5 font-bold">V Max</td>
+                      <td className="py-1 px-2.5 font-mono font-bold text-amber-700">1.05000</td>
+                      <td className="py-1 px-2.5 text-slate-500 font-mono">Volts p.u.</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1 px-2.5 font-bold">V Min</td>
+                      <td className="py-1 px-2.5 font-mono font-bold text-rose-700">0.95000</td>
+                      <td className="py-1 px-2.5 text-slate-500 font-mono">Volts p.u.</td>
                     </tr>
 
                     <tr className="bg-slate-50/70 font-bold text-slate-500 text-[10px]">
                       <td colSpan={3} className="py-1 px-2.5 uppercase tracking-wider">
-                        Steady-State Telemetry
+                        Power Flow Result
                       </td>
                     </tr>
                     <tr>
-                      <td className="py-1 px-2.5 font-bold">Voltage (|V|)</td>
+                      <td className="py-1 px-2.5 font-bold">Voltage</td>
                       <td className="py-1 px-2.5 font-mono font-black text-[#500b50]">
-                        {(activeSelectedBus.v_pu ?? 1.0).toFixed(4)}
+                        {(selectedBus.v_pu ?? 1.0).toFixed(5)}
                       </td>
-                      <td className="py-1 px-2.5 text-slate-500 font-mono">p.u.</td>
-                    </tr>
-                    <tr>
-                      <td className="py-1 px-2.5 font-bold">Line-to-Line</td>
-                      <td className="py-1 px-2.5 font-mono font-bold">
-                        {(
-                          (activeSelectedBus.v_pu ?? 1.0) * (activeSelectedBus.vn_kv || 330.0)
-                        ).toFixed(1)}
-                      </td>
-                      <td className="py-1 px-2.5 text-slate-500 font-mono">kV</td>
+                      <td className="py-1 px-2.5 text-slate-500 font-mono">Volts p.u.</td>
                     </tr>
                     <tr>
                       <td className="py-1 px-2.5 font-bold">Phase Angle</td>
                       <td className="py-1 px-2.5 font-mono font-bold">
-                        {(activeSelectedBus.va_deg ?? 0.0).toFixed(2)}°
+                        {(selectedBus.va_deg ?? 0.0).toFixed(5)}
                       </td>
-                      <td className="py-1 px-2.5 text-slate-500 font-mono">deg</td>
+                      <td className="py-1 px-2.5 text-slate-500 font-mono">Degrees</td>
                     </tr>
                     <tr>
                       <td className="py-1 px-2.5 font-bold">Active Power</td>
                       <td className="py-1 px-2.5 font-mono font-black">
-                        {(activeSelectedBus.p_mw ?? 0).toFixed(2)}
+                        {(selectedBus.p_mw ?? 0).toFixed(2)}
                       </td>
                       <td className="py-1 px-2.5 text-slate-500 font-mono">MW</td>
                     </tr>
                     <tr>
                       <td className="py-1 px-2.5 font-bold">Reactive Power</td>
                       <td className="py-1 px-2.5 font-mono font-bold">
-                        {(activeSelectedBus.q_mvar ?? 0).toFixed(2)}
+                        {(selectedBus.q_mvar ?? 0).toFixed(2)}
                       </td>
                       <td className="py-1 px-2.5 text-slate-500 font-mono">MVAR</td>
                     </tr>
@@ -1578,45 +1209,36 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 </table>
               </div>
 
-              {/* Connected Branch Corridors with Direct Shut Down / Close Buttons */}
+              {/* Connected Branch Corridors */}
               <div className="mt-3">
                 <span className="text-[10px] uppercase font-black text-slate-500 block tracking-wider mb-1.5">
-                  Connected Transmission Lines (Shut Down / Restore)
+                  Connected Branch Corridors
                 </span>
-                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
                   {lines
-                    .filter(
-                      (l) =>
-                        l.from_bus === activeSelectedBus.id || l.to_bus === activeSelectedBus.id
-                    )
+                    .filter((l) => l.from_bus === selectedBus.id || l.to_bus === selectedBus.id)
                     .map((l) => {
                       const isTripped = trippedLines.includes(l.id);
                       return (
                         <div
                           key={l.id}
-                          className="flex items-center justify-between p-2 rounded-lg border border-slate-200 bg-slate-50 text-[10px]"
+                          className="flex items-center justify-between p-1.5 rounded-lg border border-slate-200 bg-slate-50 text-[10px]"
                         >
                           <div className="truncate pr-2">
-                            <span className="font-bold text-slate-900 block truncate">
-                              {l.name || `Line #${l.id}`}
-                            </span>
+                            <span className="font-bold text-slate-900 block truncate">{l.name}</span>
                             <span className="font-mono text-slate-500 text-[9px] font-semibold">
-                              {isTripped
-                                ? 'OPEN (0.0 MW)'
-                                : `${(l.flow_mw ?? l.p_mw ?? 0).toFixed(1)} MW • ${(
-                                    l.loading_percent ?? 0
-                                  ).toFixed(0)}% load`}
+                              {(l.flow_mw ?? l.p_mw ?? 0).toFixed(1)} MW • {(l.loading_percent ?? 0).toFixed(0)}% load
                             </span>
                           </div>
                           <button
                             onClick={() => toggleLine(l.id)}
-                            className={`px-2.5 py-1 rounded font-bold transition shrink-0 ${
+                            className={`px-2 py-0.5 rounded font-black transition shrink-0 ${
                               isTripped
                                 ? 'bg-emerald-600 text-white hover:bg-emerald-700'
                                 : 'bg-rose-600 text-white hover:bg-rose-700'
                             }`}
                           >
-                            {isTripped ? 'Close Line' : 'Shut Down'}
+                            {isTripped ? 'Reclose' : 'Trip Breaker'}
                           </button>
                         </div>
                       );
