@@ -9,10 +9,11 @@ import {
   Image as ImageIcon,
   FileSpreadsheet,
   Search,
-  Zap,
   Layers,
   X,
   Compass,
+  Power,
+  Zap,
 } from 'lucide-react';
 
 interface SingleLineDiagramProps {
@@ -35,9 +36,8 @@ const BUS_HALF_W = 38;
 const BUS_HALF_H = 4.5;
 
 /**
- * Continuous Ray-Rectangle Intersection (STAC BaseEdge / MultiLineEdge style).
- * Smoothly docks line endpoints to the exact perimeter of the 76x9 flat busbar
- * without discontinuous jumping when dragging nodes around each other.
+ * Continuous Ray-Rectangle Intersection.
+ * Docks transmission line endpoints smoothly to the exact border of the 76x9 flat busbar.
  */
 function getContinuousBusDockPoint(
   sourceCenter: Point,
@@ -58,11 +58,9 @@ function getContinuousBusDockPoint(
   const nx = -uy;
   const ny = ux;
 
-  // Shift origin along the busbar's width/height for parallel circuits
   const originX = sourceCenter.x + nx * laneOffset * 0.85;
   const originY = sourceCenter.y + ny * laneOffset * 0.35;
 
-  // Ray-box intersection from shifted origin along direction (ux, uy)
   const tx = Math.abs(ux) > 1e-5 ? halfW / Math.abs(ux) : Infinity;
   const ty = Math.abs(uy) > 1e-5 ? halfH / Math.abs(uy) : Infinity;
   const t = Math.min(tx, ty);
@@ -74,17 +72,75 @@ function getContinuousBusDockPoint(
 }
 
 /**
- * STAC-inspired Shortest-Path Stress Majorization + Component Packing + Non-Overlap Solver.
- * Handles 5-bus test cases, 63-bus 330kV grids, and 369-bus 132kV multi-island networks cleanly.
+ * Geographic + Topological Anchor Hints for Nigerian 330kV & 132kV Substations.
+ * Normalized in [0..1, 0..1] (West->East, North->South) so Nigerian networks
+ * naturally untangle along their real physical corridors.
  */
-function computeStacPlanarLayout(buses: BusData[], lines: LineData[]): Record<number, Point> {
+const NIGERIA_GEO_HINTS: Array<{ pattern: RegExp; x: number; y: number }> = [
+  { pattern: /birnin|kebbi|sokoto|talata/i, x: 0.12, y: 0.14 },
+  { pattern: /kainji/i, x: 0.22, y: 0.32 },
+  { pattern: /jebba/i, x: 0.26, y: 0.42 },
+  { pattern: /ganmo|ilorin|omupo/i, x: 0.26, y: 0.54 },
+  { pattern: /oshogbo|osogbo|ife|ilesha/i, x: 0.25, y: 0.64 },
+  { pattern: /ayede|ibadan|jericho/i, x: 0.19, y: 0.70 },
+  { pattern: /olorunsogo|papalanto|abeokuta/i, x: 0.14, y: 0.76 },
+  { pattern: /ikeja|akangba|egbin|lekki|aja|lagos|agbara|oworonsoki/i, x: 0.12, y: 0.86 },
+  { pattern: /omotosho|ond/i, x: 0.28, y: 0.78 },
+  { pattern: /benin|ihovbor|azura|oluku/i, x: 0.38, y: 0.78 },
+  { pattern: /sapele|delta|ughelli|warri|effurun/i, x: 0.40, y: 0.88 },
+  { pattern: /katsina|funtua|kankia/i, x: 0.44, y: 0.12 },
+  { pattern: /kano|kumbotso|dakata|wudil|dan.?agundi/i, x: 0.52, y: 0.16 },
+  { pattern: /kaduna|zaria|mando|jaji/i, x: 0.46, y: 0.28 },
+  { pattern: /shiroro|zungeru|minna|bida|suleja|tegina/i, x: 0.40, y: 0.38 },
+  { pattern: /katampe|gwagwa|abuja|apo|central.?area|kubwa|karu/i, x: 0.48, y: 0.46 },
+  { pattern: /lokoja|ajaokuta|geregu|obajana|okene/i, x: 0.47, y: 0.64 },
+  { pattern: /jos|makeri|pankshin/i, x: 0.60, y: 0.34 },
+  { pattern: /lafia|akwanga|keffi/i, x: 0.57, y: 0.48 },
+  { pattern: /makurdi|oko|gboko|otukpo|yandev/i, x: 0.62, y: 0.60 },
+  { pattern: /bauchi|ningi/i, x: 0.68, y: 0.28 },
+  { pattern: /gombe|ashaka|dadinkowa|biu/i, x: 0.78, y: 0.30 },
+  { pattern: /damaturu|potiskum/i, x: 0.84, y: 0.20 },
+  { pattern: /maiduguri|molai/i, x: 0.92, y: 0.16 },
+  { pattern: /yola|mayo|jalingo|numan/i, x: 0.88, y: 0.42 },
+  { pattern: /onitsha|okpai|asaba|nnewi|awka/i, x: 0.52, y: 0.78 },
+  { pattern: /new.?haven|enugu|nsukka|abakaliki|nnkalagu/i, x: 0.60, y: 0.72 },
+  { pattern: /alaoji|aba|owerri|umuahia|omoku/i, x: 0.58, y: 0.86 },
+  { pattern: /afam|port.?harcourt|ph.?main|trans.?amadi|yenagoa|ahoada/i, x: 0.52, y: 0.92 },
+  { pattern: /ikot.?ekpene|uyo|ekim|itu/i, x: 0.67, y: 0.88 },
+  { pattern: /calabar|adiabo|ikom|ogoja/i, x: 0.76, y: 0.84 },
+];
+
+function getGeoSeed(name: string, index: number, total: number): { x: number; y: number } | null {
+  for (const h of NIGERIA_GEO_HINTS) {
+    if (h.pattern.test(name)) {
+      // Deterministic micro-offset based on index so multiple buses in the same city don't stack on (0,0)
+      const angle = (index * 2.39996) % (2 * Math.PI);
+      const r = 0.018 * ((index % 5) + 1);
+      return {
+        x: h.x + Math.cos(angle) * r,
+        y: h.y + Math.sin(angle) * r,
+      };
+    }
+  }
+  return null;
+}
+
+function segmentsCross(a: Point, b: Point, c: Point, d: Point): boolean {
+  const ccw = (p1: Point, p2: Point, p3: Point) =>
+    (p3.y - p1.y) * (p2.x - p1.x) > (p2.y - p1.y) * (p3.x - p1.x);
+  return ccw(a, c, d) !== ccw(b, c, d) && ccw(a, b, c) !== ccw(a, b, d);
+}
+
+/**
+ * Hybrid Geographic + Force-Directed Anti-Crossing Layout Engine.
+ */
+function solveCleanGridLayout(buses: BusData[], lines: LineData[]): Record<number, Point> {
   const N = buses.length;
   if (N === 0) return {};
 
   const idToIdx = new Map<number, number>();
-  buses.forEach((b, idx) => idToIdx.set(b.id, idx));
+  buses.forEach((b, i) => idToIdx.set(b.id, i));
 
-  // Build adjacency list & unique undirected edges
   const adj: number[][] = Array.from({ length: N }, () => []);
   const edgeSet = new Set<string>();
   const edges: [number, number][] = [];
@@ -103,323 +159,330 @@ function computeStacPlanarLayout(buses: BusData[], lines: LineData[]): Record<nu
     }
   });
 
-  // 1. Decompose into Connected Components (prevents disconnected 132kV islands from scattering)
-  const visited = new Uint8Array(N);
-  const components: number[][] = [];
+  // Canvas target area scaled to number of buses in a wide 16:10 aspect ratio
+  const idealSpacing = N <= 10 ? 220 : N <= 80 ? 185 : 155;
+  const worldW = Math.max(950, Math.sqrt(N) * idealSpacing * 1.45);
+  const worldH = Math.max(680, Math.sqrt(N) * idealSpacing * 1.05);
 
-  for (let i = 0; i < N; i++) {
-    if (!visited[i]) {
-      const comp: number[] = [];
-      const queue = [i];
-      visited[i] = 1;
-      while (queue.length > 0) {
-        const curr = queue.shift()!;
-        comp.push(curr);
-        for (const nbr of adj[curr]) {
-          if (!visited[nbr]) {
-            visited[nbr] = 1;
-            queue.push(nbr);
-          }
+  const pos: Point[] = Array.from({ length: N }, () => ({ x: 0, y: 0 }));
+  const hasGeo = new Uint8Array(N);
+
+  // 1. Seed buses with Nigerian Geographic Hints where recognized
+  let geoCount = 0;
+  buses.forEach((b, i) => {
+    const g = getGeoSeed(b.name || '', i, N);
+    if (g) {
+      pos[i] = {
+        x: 120 + g.x * (worldW - 240),
+        y: 120 + g.y * (worldH - 240),
+      };
+      hasGeo[i] = 1;
+      geoCount++;
+    }
+  });
+
+  // 2. For buses without geographic match, seed via BFS from anchored neighbors or circular/grid order
+  if (geoCount > 0 && geoCount < N) {
+    // Iterative barycentric interpolation from anchored neighbors
+    for (let pass = 0; pass < 12; pass++) {
+      for (let i = 0; i < N; i++) {
+        if (hasGeo[i]) continue;
+        const anchoredNbrs = adj[i].filter((nb) => hasGeo[nb]);
+        if (anchoredNbrs.length > 0) {
+          let sx = 0;
+          let sy = 0;
+          anchoredNbrs.forEach((nb) => {
+            sx += pos[nb].x;
+            sy += pos[nb].y;
+          });
+          const angle = ((i * 137.5) * Math.PI) / 180;
+          pos[i] = {
+            x: sx / anchoredNbrs.length + Math.cos(angle) * (idealSpacing * 0.7),
+            y: sy / anchoredNbrs.length + Math.sin(angle) * (idealSpacing * 0.7),
+          };
+          hasGeo[i] = 2; // soft-anchored
         }
       }
-      components.push(comp);
     }
   }
 
-  // Sort components largest first
-  components.sort((a, b) => b.length - a.length);
+  // Any remaining unplaced nodes get a clean topological BFS grid/circle seed
+  const unplaced: number[] = [];
+  for (let i = 0; i < N; i++) {
+    if (!hasGeo[i]) unplaced.push(i);
+  }
 
-  // Ideal link length scaled by network size
-  const idealEdgeLen = N > 150 ? 155 : N > 40 ? 175 : 210;
-  const globalPositions: Point[] = Array.from({ length: N }, () => ({ x: 0, y: 0 }));
-
-  // 2. Solve each connected component using Graph-Distance Stress Majorization (Cola style)
-  const compBoxes: { nodes: number[]; width: number; height: number }[] = [];
-
-  for (const comp of components) {
-    const C = comp.length;
-    if (C === 1) {
-      globalPositions[comp[0]] = { x: 0, y: 0 };
-      compBoxes.push({ nodes: comp, width: 160, height: 140 });
-      continue;
-    }
-
-    const localIdxMap = new Map<number, number>();
-    comp.forEach((gIdx, lIdx) => localIdxMap.set(gIdx, lIdx));
-
-    // Compute BFS shortest-path hop distances between all pairs in this component
-    const distMatrix: Uint16Array[] = Array.from({ length: C }, () => new Uint16Array(C));
-    for (let s = 0; s < C; s++) {
-      const dist = distMatrix[s];
-      dist.fill(65535);
-      dist[s] = 0;
-      const q = [comp[s]];
-      let head = 0;
-      while (head < q.length) {
-        const uGlobal = q[head++];
-        const uLocal = localIdxMap.get(uGlobal)!;
-        const dNext = dist[uLocal] + 1;
-        for (const vGlobal of adj[uGlobal]) {
-          const vLocal = localIdxMap.get(vGlobal);
-          if (vLocal !== undefined && dist[vLocal] === 65535) {
-            dist[vLocal] = dNext;
-            q.push(vGlobal);
-          }
-        }
-      }
-    }
-
-    // Seed initial positions using BFS radial layering from the highest-degree central hub
-    let hubLocal = 0;
-    let maxDeg = -1;
-    for (let i = 0; i < C; i++) {
-      const deg = adj[comp[i]].length;
-      if (deg > maxDeg) {
-        maxDeg = deg;
-        hubLocal = i;
-      }
-    }
-
-    const layers: number[][] = [];
-    const placed = new Uint8Array(C);
-    const bfsQ = [hubLocal];
-    placed[hubLocal] = 1;
-    const nodeLayer = new Int32Array(C);
-    const parentAngle = new Float64Array(C);
-
-    while (bfsQ.length > 0) {
-      const lIdx = bfsQ.shift()!;
-      const lyr = nodeLayer[lIdx];
-      if (!layers[lyr]) layers[lyr] = [];
-      layers[lyr].push(lIdx);
-
-      for (const nbrGlobal of adj[comp[lIdx]]) {
-        const nbrLocal = localIdxMap.get(nbrGlobal);
-        if (nbrLocal !== undefined && !placed[nbrLocal]) {
-          placed[nbrLocal] = 1;
-          nodeLayer[nbrLocal] = lyr + 1;
-          bfsQ.push(nbrLocal);
-        }
-      }
-    }
-
-    const localPos: Point[] = Array.from({ length: C }, () => ({ x: 0, y: 0 }));
-    layers.forEach((layerNodes, lyrIdx) => {
-      if (lyrIdx === 0) {
-        localPos[layerNodes[0]] = { x: 0, y: 0 };
-        return;
-      }
-      const r = lyrIdx * idealEdgeLen * 0.92;
-      const count = layerNodes.length;
-      layerNodes.forEach((lIdx, k) => {
-        const angle = (2 * Math.PI * k) / count + (lyrIdx % 2) * 0.25;
-        parentAngle[lIdx] = angle;
-        localPos[lIdx] = {
-          x: Math.cos(angle) * r,
-          y: Math.sin(angle) * r,
+  if (unplaced.length > 0) {
+    const cols = Math.ceil(Math.sqrt(unplaced.length * 1.4));
+    unplaced.forEach((uIdx, k) => {
+      if (N <= 15) {
+        const theta = (2 * Math.PI * k) / unplaced.length - Math.PI / 2;
+        pos[uIdx] = {
+          x: worldW / 2 + Math.cos(theta) * (idealSpacing * 1.15),
+          y: worldH / 2 + Math.sin(theta) * (idealSpacing * 0.95),
         };
-      });
+      } else {
+        const col = k % cols;
+        const row = Math.floor(k / cols);
+        pos[uIdx] = {
+          x: 140 + col * idealSpacing,
+          y: 140 + row * (idealSpacing * 0.85),
+        };
+      }
     });
+  }
 
-    // Iterative Stress Majorization (minimizes sum_{i<j} w_ij (||p_i - p_j|| - L * d_ij)^2)
-    const iterations = C > 120 ? 85 : 130;
-    const kHopLimit = C > 120 ? 5 : 12; // Local + medium-range neighborhood for large 132kV speed
+  // Save initial anchor targets for geo-matched nodes so they stay in their true region
+  const geoAnchor: Point[] = pos.map((p) => ({ x: p.x, y: p.y }));
 
-    for (let iter = 0; iter < iterations; iter++) {
-      const stepScale = 0.45 * (1 - iter / (iterations * 1.15));
+  // 3. Force-Directed Untangling + Edge-Crossing Reduction + Node-Edge Repulsion
+  const iterations = N > 150 ? 90 : 140;
+  const kSq = idealSpacing * idealSpacing;
 
-      for (let i = 0; i < C; i++) {
-        let sumWx = 0;
-        let sumWy = 0;
-        let sumW = 0;
-        const rowDist = distMatrix[i];
+  for (let it = 0; it < iterations; it++) {
+    const progress = it / iterations;
+    const temp = idealSpacing * 0.45 * (1 - progress * 0.85);
+    const disp: Point[] = Array.from({ length: N }, () => ({ x: 0, y: 0 }));
 
-        for (let j = 0; j < C; j++) {
-          if (i === j) continue;
-          const hops = rowDist[j];
-          if (hops === 0 || hops > kHopLimit) continue;
+    // A. Node-to-Node Repulsion (Spatial cutoff for fast 369-bus performance)
+    const repCutoff = idealSpacing * 2.8;
+    for (let i = 0; i < N; i++) {
+      for (let j = i + 1; j < N; j++) {
+        let dx = pos[i].x - pos[j].x;
+        let dy = pos[i].y - pos[j].y;
+        if (Math.abs(dx) > repCutoff || Math.abs(dy) > repCutoff) continue;
 
-          const targetDist = hops * idealEdgeLen;
-          // Weight w_ij = 1 / hops^2 (stronger for direct neighbors, gentler for distant nodes)
-          const w = hops === 1 ? 2.5 : 1.0 / (hops * hops);
-
-          const dx = localPos[i].x - localPos[j].x;
-          const dy = localPos[i].y - localPos[j].y;
-          const actualDist = Math.hypot(dx, dy) || 0.1;
-
-          // Target position of i relative to j
-          const targetX = localPos[j].x + (dx / actualDist) * targetDist;
-          const targetY = localPos[j].y + (dy / actualDist) * targetDist;
-
-          sumWx += w * targetX;
-          sumWy += w * targetY;
-          sumW += w;
+        // Anisotropic distance: horizontal busbars need wider X separation than Y
+        const dist = Math.hypot(dx, dy * 1.25) || 0.5;
+        if (dist < repCutoff) {
+          const force = (kSq / (dist * dist)) * idealSpacing * 0.55;
+          const fx = (dx / dist) * force;
+          const fy = (dy / dist) * force;
+          disp[i].x += fx;
+          disp[i].y += fy;
+          disp[j].x -= fx;
+          disp[j].y -= fy;
         }
+      }
+    }
 
-        // Additional short-range repulsion against all nodes closer than idealEdgeLen * 0.85
-        for (let j = 0; j < C; j++) {
-          if (i === j) continue;
-          const dx = localPos[i].x - localPos[j].x;
-          const dy = localPos[i].y - localPos[j].y;
-          const distSq = dx * dx + dy * dy;
-          const minSep = idealEdgeLen * 0.82;
-          if (distSq < minSep * minSep && distSq > 1e-2) {
-            const d = Math.sqrt(distSq);
-            const wRep = 3.0;
-            sumWx += wRep * (localPos[j].x + (dx / d) * minSep);
-            sumWy += wRep * (localPos[j].y + (dy / d) * minSep);
-            sumW += wRep;
+    // B. Spring Attraction along Transmission Corridors
+    for (const [u, v] of edges) {
+      const dx = pos[v].x - pos[u].x;
+      const dy = pos[v].y - pos[u].y;
+      const dist = Math.hypot(dx, dy) || 1;
+      const delta = dist - idealSpacing * 0.88;
+      const force = delta * 0.18;
+      const fx = (dx / dist) * force;
+      const fy = (dy / dist) * force;
+      disp[u].x += fx;
+      disp[u].y += fy;
+      disp[v].x -= fx;
+      disp[v].y -= fy;
+    }
+
+    // C. Soft Geographic Anchor Pull (keeps North in North, Lagos in South-West, etc.)
+    for (let i = 0; i < N; i++) {
+      if (hasGeo[i] === 1) {
+        disp[i].x += (geoAnchor[i].x - pos[i].x) * 0.12;
+        disp[i].y += (geoAnchor[i].y - pos[i].y) * 0.12;
+      }
+    }
+
+    // D. Edge-to-Edge Uncrossing Force (for models up to 140 lines)
+    if (edges.length <= 160 && it % 2 === 0) {
+      for (let i = 0; i < edges.length; i++) {
+        const [u1, v1] = edges[i];
+        for (let j = i + 1; j < edges.length; j++) {
+          const [u2, v2] = edges[j];
+          if (u1 === u2 || u1 === v2 || v1 === u2 || v1 === v2) continue;
+          if (segmentsCross(pos[u1], pos[v1], pos[u2], pos[v2])) {
+            // Pull endpoints toward uncrossing
+            const mid1x = (pos[u1].x + pos[v1].x) * 0.5;
+            const mid1y = (pos[u1].y + pos[v1].y) * 0.5;
+            const mid2x = (pos[u2].x + pos[v2].x) * 0.5;
+            const mid2y = (pos[u2].y + pos[v2].y) * 0.5;
+            const cdx = mid1x - mid2x;
+            const cdy = mid1y - mid2y;
+            const clen = Math.hypot(cdx, cdy) || 1;
+            const push = 18;
+            disp[u1].x += (cdx / clen) * push;
+            disp[u1].y += (cdy / clen) * push;
+            disp[v1].x += (cdx / clen) * push;
+            disp[v1].y += (cdy / clen) * push;
+            disp[u2].x -= (cdx / clen) * push;
+            disp[u2].y -= (cdy / clen) * push;
+            disp[v2].x -= (cdx / clen) * push;
+            disp[v2].y -= (cdy / clen) * push;
           }
         }
-
-        if (sumW > 0) {
-          const nextX = sumWx / sumW;
-          const nextY = sumWy / sumW;
-          localPos[i].x += (nextX - localPos[i].x) * stepScale;
-          localPos[i].y += (nextY - localPos[i].y) * stepScale;
-        }
       }
     }
 
-    // 3. Node-to-Edge Clearance Pass (Prevents lines from slicing across unrelated busbars)
-    const compEdges: [number, number][] = [];
-    for (let i = 0; i < C; i++) {
-      const uG = comp[i];
-      for (const vG of adj[uG]) {
-        const j = localIdxMap.get(vG);
-        if (j !== undefined && i < j) {
-          compEdges.push([i, j]);
-        }
-      }
-    }
-
-    const EDGE_CLEARANCE = 72;
-    for (let pass = 0; pass < 18; pass++) {
-      // A. Push nodes away from non-incident line segments
-      for (const [u, v] of compEdges) {
-        const ax = localPos[u].x;
-        const ay = localPos[u].y;
-        const bx = localPos[v].x;
-        const by = localPos[v].y;
+    // E. Node-to-Line Segment Clearance (Prevents lines from passing through unrelated busbars)
+    if (it > iterations * 0.35) {
+      const CLEAR_DIST = 68;
+      for (const [u, v] of edges) {
+        const ax = pos[u].x;
+        const ay = pos[u].y;
+        const bx = pos[v].x;
+        const by = pos[v].y;
         const abx = bx - ax;
         const aby = by - ay;
-        const abLenSq = abx * abx + aby * aby;
-        if (abLenSq < 1) continue;
+        const abSq = abx * abx + aby * aby;
+        if (abSq < 1) continue;
 
-        for (let k = 0; k < C; k++) {
+        const minBx = Math.min(ax, bx) - CLEAR_DIST;
+        const maxBx = Math.max(ax, bx) + CLEAR_DIST;
+        const minBy = Math.min(ay, by) - CLEAR_DIST;
+        const maxBy = Math.max(ay, by) + CLEAR_DIST;
+
+        for (let k = 0; k < N; k++) {
           if (k === u || k === v) continue;
-          const px = localPos[k].x;
-          const py = localPos[k].y;
-          const t = ((px - ax) * abx + (py - ay) * aby) / abLenSq;
+          const px = pos[k].x;
+          const py = pos[k].y;
+          if (px < minBx || px > maxBx || py < minBy || py > maxBy) continue;
+
+          const t = ((px - ax) * abx + (py - ay) * aby) / abSq;
           if (t > 0.08 && t < 0.92) {
             const projX = ax + t * abx;
             const projY = ay + t * aby;
             let dx = px - projX;
             let dy = py - projY;
-            const dist = Math.hypot(dx, dy);
-            if (dist < EDGE_CLEARANCE) {
-              if (dist < 1e-2) {
+            const d = Math.hypot(dx, dy);
+            if (d < CLEAR_DIST) {
+              if (d < 1e-2) {
                 dx = -aby;
                 dy = abx;
               }
               const norm = Math.hypot(dx, dy) || 1;
-              const push = (EDGE_CLEARANCE - dist) * 0.65;
-              localPos[k].x += (dx / norm) * push;
-              localPos[k].y += (dy / norm) * push;
-              localPos[u].x -= (dx / norm) * push * 0.25;
-              localPos[v].x -= (dx / norm) * push * 0.25;
-            }
-          }
-        }
-      }
-
-      // B. Rectangular Non-Overlap Constraint (Busbar + Top Generator + Bottom Load box)
-      const BOX_W = 148;
-      const BOX_H = 122;
-      for (let i = 0; i < C; i++) {
-        for (let j = i + 1; j < C; j++) {
-          const dx = localPos[j].x - localPos[i].x;
-          const dy = localPos[j].y - localPos[i].y;
-          const absDx = Math.abs(dx);
-          const absDy = Math.abs(dy);
-          if (absDx < BOX_W && absDy < BOX_H) {
-            const overlapX = BOX_W - absDx;
-            const overlapY = BOX_H - absDy;
-            if (overlapX < overlapY) {
-              const shift = overlapX * 0.52;
-              const sign = dx >= 0 ? 1 : -1;
-              localPos[j].x += sign * shift;
-              localPos[i].x -= sign * shift;
-            } else {
-              const shift = overlapY * 0.52;
-              const sign = dy >= 0 ? 1 : -1;
-              localPos[j].y += sign * shift;
-              localPos[i].y -= sign * shift;
+              const push = (CLEAR_DIST - d) * 0.9;
+              disp[k].x += (dx / norm) * push;
+              disp[k].y += (dy / norm) * push;
             }
           }
         }
       }
     }
 
-    // Normalize component local coordinates to start at (0, 0)
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-    for (let i = 0; i < C; i++) {
-      minX = Math.min(minX, localPos[i].x);
-      maxX = Math.max(maxX, localPos[i].x);
-      minY = Math.min(minY, localPos[i].y);
-      maxY = Math.max(maxY, localPos[i].y);
+    // Apply displacements with temperature cap
+    for (let i = 0; i < N; i++) {
+      const dLen = Math.hypot(disp[i].x, disp[i].y) || 1;
+      const step = Math.min(dLen, temp);
+      pos[i].x += (disp[i].x / dLen) * step;
+      pos[i].y += (disp[i].y / dLen) * step;
     }
+  }
 
-    for (let i = 0; i < C; i++) {
-      globalPositions[comp[i]] = {
-        x: localPos[i].x - minX,
-        y: localPos[i].y - minY,
+  // 4. Compact Connected-Component Packing (Eliminates huge empty gaps in 369-bus 132kV models)
+  const visited = new Uint8Array(N);
+  const comps: number[][] = [];
+  for (let i = 0; i < N; i++) {
+    if (!visited[i]) {
+      const c: number[] = [];
+      const q = [i];
+      visited[i] = 1;
+      while (q.length > 0) {
+        const curr = q.shift()!;
+        c.push(curr);
+        for (const nb of adj[curr]) {
+          if (!visited[nb]) {
+            visited[nb] = 1;
+            q.push(nb);
+          }
+        }
+      }
+      comps.push(c);
+    }
+  }
+
+  if (comps.length > 1) {
+    comps.sort((a, b) => b.length - a.length);
+    const boxes = comps.map((c) => {
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      c.forEach((idx) => {
+        minX = Math.min(minX, pos[idx].x);
+        maxX = Math.max(maxX, pos[idx].x);
+        minY = Math.min(minY, pos[idx].y);
+        maxY = Math.max(maxY, pos[idx].y);
+      });
+      c.forEach((idx) => {
+        pos[idx].x -= minX;
+        pos[idx].y -= minY;
+      });
+      return {
+        nodes: c,
+        w: Math.max(150, maxX - minX + 140),
+        h: Math.max(130, maxY - minY + 130),
       };
-    }
+    });
 
-    compBoxes.push({
-      nodes: comp,
-      width: Math.max(180, maxX - minX + 180),
-      height: Math.max(150, maxY - minY + 160),
+    const totalArea = boxes.reduce((acc, b) => acc + b.w * b.h, 0);
+    const targetWidth = Math.max(boxes[0].w, Math.sqrt(totalArea) * 1.55);
+
+    let cx = 80;
+    let cy = 80;
+    let rowH = 0;
+
+    boxes.forEach((box) => {
+      if (cx > 80 && cx + box.w > targetWidth) {
+        cx = 80;
+        cy += rowH + 65;
+        rowH = 0;
+      }
+      box.nodes.forEach((idx) => {
+        pos[idx].x += cx;
+        pos[idx].y += cy;
+      });
+      cx += box.w + 65;
+      rowH = Math.max(rowH, box.h);
     });
   }
 
-  // 4. Shelf Bin-Packing for Multiple Connected Components (Keeps 132kV sub-grids organized)
-  const totalArea = compBoxes.reduce((acc, b) => acc + b.width * b.height, 0);
-  const maxRowWidth = Math.max(
-    compBoxes[0]?.width || 1200,
-    Math.sqrt(totalArea) * 1.35
-  );
-
-  let cursorX = 100;
-  let cursorY = 100;
-  let rowHeight = 0;
-
-  for (const box of compBoxes) {
-    if (cursorX > 100 && cursorX + box.width > maxRowWidth) {
-      cursorX = 100;
-      cursorY += rowHeight + 120;
-      rowHeight = 0;
+  // 5. Final Hard Bounding-Box Separation Pass (Guarantees zero overlapping busbars or labels)
+  const MIN_W = 142;
+  const MIN_H = 116;
+  for (let pass = 0; pass < 25; pass++) {
+    let moved = false;
+    for (let i = 0; i < N; i++) {
+      for (let j = i + 1; j < N; j++) {
+        const dx = pos[j].x - pos[i].x;
+        const dy = pos[j].y - pos[i].y;
+        const absDx = Math.abs(dx);
+        const absDy = Math.abs(dy);
+        if (absDx < MIN_W && absDy < MIN_H) {
+          moved = true;
+          const overlapX = MIN_W - absDx;
+          const overlapY = MIN_H - absDy;
+          if (overlapX < overlapY) {
+            const push = overlapX * 0.52 + 1;
+            const sign = dx >= 0 ? 1 : -1;
+            pos[j].x += sign * push;
+            pos[i].x -= sign * push;
+          } else {
+            const push = overlapY * 0.52 + 1;
+            const sign = dy >= 0 ? 1 : -1;
+            pos[j].y += sign * push;
+            pos[i].y -= sign * push;
+          }
+        }
+      }
     }
-
-    for (const gIdx of box.nodes) {
-      globalPositions[gIdx].x = Math.round(globalPositions[gIdx].x + cursorX);
-      globalPositions[gIdx].y = Math.round(globalPositions[gIdx].y + cursorY);
-    }
-
-    cursorX += box.width + 110;
-    rowHeight = Math.max(rowHeight, box.height);
+    if (!moved) break;
   }
 
-  const result: Record<number, Point> = {};
-  buses.forEach((b, idx) => {
-    result[b.id] = globalPositions[idx];
+  const finalMap: Record<number, Point> = {};
+  buses.forEach((b, i) => {
+    finalMap[b.id] = {
+      x: Math.round(pos[i].x),
+      y: Math.round(pos[i].y),
+    };
   });
 
-  return result;
+  return finalMap;
 }
 
 export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
@@ -427,29 +490,68 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   lines = [],
   trippedLines = [],
   toggleLine,
-  selectedBus,
-  setSelectedBus,
+  selectedBus: propSelectedBus,
+  setSelectedBus: propSetSelectedBus,
   modelName,
 }) => {
   const [viewStyle, setViewStyle] = useState<'stac_direct' | 'orthogonal'>('stac_direct');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Internal + Prop synced Bus & Line Selection state so tapping ALWAYS opens the inspector
+  const [internalSelectedBusId, setInternalSelectedBusId] = useState<number | null>(
+    propSelectedBus?.id ?? null
+  );
+  const [selectedLineId, setSelectedLineId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (propSelectedBus !== undefined) {
+      setInternalSelectedBusId(propSelectedBus ? propSelectedBus.id : null);
+    }
+  }, [propSelectedBus]);
+
+  const activeSelectedBus = useMemo(() => {
+    if (internalSelectedBusId === null) return null;
+    return buses.find((b) => b.id === internalSelectedBusId) || null;
+  }, [buses, internalSelectedBusId]);
+
+  const activeSelectedLine = useMemo(() => {
+    if (selectedLineId === null) return null;
+    return lines.find((l) => l.id === selectedLineId) || null;
+  }, [lines, selectedLineId]);
+
+  const handleSelectBus = useCallback(
+    (bus: BusData | null) => {
+      setInternalSelectedBusId(bus ? bus.id : null);
+      if (bus) setSelectedLineId(null);
+      if (propSetSelectedBus) propSetSelectedBus(bus);
+    },
+    [propSetSelectedBus]
+  );
+
   // Canvas Viewport Pan & Zoom
   const [scale, setScale] = useState<number>(0.85);
   const [pan, setPan] = useState<Point>({ x: 80, y: 60 });
   const [isPanning, setIsPanning] = useState<boolean>(false);
-  const panStartRef = useRef<Point>({ x: 0, y: 0 });
 
   // Persistent Draggable Busbar Coordinates
   const [busPositions, setBusPositions] = useState<Record<number, Point>>({});
   const busPositionsRef = useRef<Record<number, Point>>({});
   busPositionsRef.current = busPositions;
 
-  // High-Precision Dragging State
+  // Dragging Interaction Refs (5px threshold so taps are never mistaken for drags)
   const [draggingBusId, setDraggingBusId] = useState<number | null>(null);
-  const draggingBusIdRef = useRef<number | null>(null);
-  const dragOffsetRef = useRef<Point>({ x: 0, y: 0 });
-  const hasDraggedRef = useRef<boolean>(false);
+  const pointerDownInfoRef = useRef<{
+    type: 'bus' | 'canvas';
+    busId?: number;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    worldOffsetX: number;
+    worldOffsetY: number;
+    panStartX: number;
+    panStartY: number;
+    isDraggingNow: boolean;
+  } | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -475,16 +577,16 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       maxY = Math.max(maxY, p.y);
     });
 
-    const w = Math.max(400, maxX - minX + 260);
-    const h = Math.max(350, maxY - minY + 260);
+    const w = Math.max(400, maxX - minX + 240);
+    const h = Math.max(350, maxY - minY + 240);
     const containerW = containerRef.current?.clientWidth || 1200;
     const containerH = containerRef.current?.clientHeight || 820;
 
     const fitScale = Math.min(containerW / w, containerH / h, 1.25);
-    const newScale = Math.max(0.18, fitScale);
+    const newScale = Math.max(0.22, fitScale);
     const newPan = {
-      x: (containerW - w * newScale) / 2 - minX * newScale + 130 * newScale,
-      y: (containerH - h * newScale) / 2 - minY * newScale + 130 * newScale,
+      x: (containerW - w * newScale) / 2 - minX * newScale + 120 * newScale,
+      y: (containerH - h * newScale) / 2 - minY * newScale + 120 * newScale,
     };
 
     setScale(newScale);
@@ -493,13 +595,11 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     panRef.current = newPan;
   }, []);
 
-  // Compute Layout ONLY when model changes or when new buses are added.
-  // Opening/closing lines NEVER recalculates or shifts any node positions.
-  const layoutVersionKey = `nesi_sld_v3_${modelName || 'default'}_${buses.length}`;
+  // Compute Layout ONLY when model or bus count changes (Never on breaker toggle)
+  const layoutVersionKey = `nesi_sld_v4_${modelName || 'default'}_${buses.length}`;
   useEffect(() => {
     if (!buses || buses.length === 0) return;
 
-    // If all current buses already have positions in memory for this model, keep them locked
     if (
       Object.keys(busPositionsRef.current).length === buses.length &&
       buses.every((b) => busPositionsRef.current[b.id] !== undefined)
@@ -522,7 +622,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       }
     }
 
-    const freshLayout = computeStacPlanarLayout(buses, lines);
+    const freshLayout = solveCleanGridLayout(buses, lines);
     setBusPositions(freshLayout);
     busPositionsRef.current = freshLayout;
 
@@ -582,7 +682,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     };
   }, []);
 
-  // Convert screen coordinates to world SVG coordinates using live refs (zero lag during drag)
   const screenToWorld = useCallback((clientX: number, clientY: number): Point => {
     if (!svgRef.current) return { x: 0, y: 0 };
     const rect = svgRef.current.getBoundingClientRect();
@@ -592,65 +691,83 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     };
   }, []);
 
-  // Unified Canvas Pointer Tracking (Handles both fast node dragging & canvas panning smoothly)
+  // Bus Pointer Down (Does NOT capture pointer until >5px drag movement, so taps always work!)
   const handleBusPointerDown = (e: React.PointerEvent, busId: number) => {
     e.stopPropagation();
     if (e.button !== 0) return;
 
-    if (containerRef.current) {
-      try {
-        containerRef.current.setPointerCapture(e.pointerId);
-      } catch {}
-    }
-
     const mouseWorld = screenToWorld(e.clientX, e.clientY);
     const busPos = busPositionsRef.current[busId] || { x: 200, y: 200 };
 
-    draggingBusIdRef.current = busId;
-    setDraggingBusId(busId);
-    hasDraggedRef.current = false;
-    dragOffsetRef.current = {
-      x: mouseWorld.x - busPos.x,
-      y: mouseWorld.y - busPos.y,
+    pointerDownInfoRef.current = {
+      type: 'bus',
+      busId,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      worldOffsetX: mouseWorld.x - busPos.x,
+      worldOffsetY: mouseWorld.y - busPos.y,
+      panStartX: 0,
+      panStartY: 0,
+      isDraggingNow: false,
     };
   };
 
+  // Canvas Background Pointer Down
   const handleCanvasPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
-    if (draggingBusIdRef.current !== null) return;
 
-    setIsPanning(true);
-    panStartRef.current = {
-      x: e.clientX - panRef.current.x,
-      y: e.clientY - panRef.current.y,
+    pointerDownInfoRef.current = {
+      type: 'canvas',
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      worldOffsetX: 0,
+      worldOffsetY: 0,
+      panStartX: e.clientX - panRef.current.x,
+      panStartY: e.clientY - panRef.current.y,
+      isDraggingNow: false,
     };
-    try {
-      (e.currentTarget as Element).setPointerCapture(e.pointerId);
-    } catch {}
   };
 
   const handleCanvasPointerMove = (e: React.PointerEvent) => {
-    const activeBusId = draggingBusIdRef.current;
-    if (activeBusId !== null) {
-      hasDraggedRef.current = true;
+    const info = pointerDownInfoRef.current;
+    if (!info) return;
+
+    const moveDist = Math.hypot(e.clientX - info.startX, e.clientY - info.startY);
+
+    // Only enter drag/pan mode once pointer moves past 5px threshold
+    if (!info.isDraggingNow) {
+      if (moveDist < 5) return;
+      info.isDraggingNow = true;
+      try {
+        containerRef.current?.setPointerCapture(info.pointerId);
+      } catch {}
+
+      if (info.type === 'bus' && info.busId !== undefined) {
+        setDraggingBusId(info.busId);
+      } else {
+        setIsPanning(true);
+      }
+    }
+
+    if (info.type === 'bus' && info.busId !== undefined) {
+      const busId = info.busId;
       const mouseWorld = screenToWorld(e.clientX, e.clientY);
       const newPos = {
-        x: mouseWorld.x - dragOffsetRef.current.x,
-        y: mouseWorld.y - dragOffsetRef.current.y,
+        x: Math.round(mouseWorld.x - info.worldOffsetX),
+        y: Math.round(mouseWorld.y - info.worldOffsetY),
       };
 
       setBusPositions((prev) => {
-        const next = { ...prev, [activeBusId]: newPos };
+        const next = { ...prev, [busId]: newPos };
         busPositionsRef.current = next;
         return next;
       });
-      return;
-    }
-
-    if (isPanning) {
+    } else if (info.type === 'canvas') {
       const nextPan = {
-        x: e.clientX - panStartRef.current.x,
-        y: e.clientY - panStartRef.current.y,
+        x: e.clientX - info.panStartX,
+        y: e.clientY - info.panStartY,
       };
       setPan(nextPan);
       panRef.current = nextPan;
@@ -658,27 +775,28 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   };
 
   const handleCanvasPointerUp = (e: React.PointerEvent) => {
-    if (draggingBusIdRef.current !== null) {
-      const finishedBusId = draggingBusIdRef.current;
-      draggingBusIdRef.current = null;
-      setDraggingBusId(null);
+    const info = pointerDownInfoRef.current;
+    if (!info) return;
+    pointerDownInfoRef.current = null;
 
+    if (info.isDraggingNow) {
       try {
-        containerRef.current?.releasePointerCapture(e.pointerId);
+        containerRef.current?.releasePointerCapture(info.pointerId);
       } catch {}
 
-      if (typeof window !== 'undefined' && finishedBusId !== null) {
+      if (info.type === 'bus' && typeof window !== 'undefined') {
         try {
           localStorage.setItem(layoutVersionKey, JSON.stringify(busPositionsRef.current));
         } catch {}
       }
-    }
-
-    if (isPanning) {
+      setDraggingBusId(null);
       setIsPanning(false);
-      try {
-        (e.currentTarget as Element).releasePointerCapture(e.pointerId);
-      } catch {}
+    } else {
+      // It was a clean tap (< 5px movement)!
+      if (info.type === 'bus' && info.busId !== undefined) {
+        const tappedBus = buses.find((b) => b.id === info.busId) || null;
+        handleSelectBus(tappedBus);
+      }
     }
   };
 
@@ -686,7 +804,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     if (typeof window !== 'undefined') {
       localStorage.removeItem(layoutVersionKey);
     }
-    const fresh = computeStacPlanarLayout(buses, lines);
+    const fresh = solveCleanGridLayout(buses, lines);
     setBusPositions(fresh);
     busPositionsRef.current = fresh;
     if (typeof window !== 'undefined') {
@@ -712,7 +830,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       scaleRef.current = targetScale;
       panRef.current = nextPan;
       const b = buses.find((item) => item.id === busId);
-      if (b) setSelectedBus(b);
+      if (b) handleSelectBus(b);
     }
   };
 
@@ -782,8 +900,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  // Group parallel lines between identical bus pairs (STAC MultiLineEdge)
-  // Separates parallel lines by 20px perpendicular offset and staggers breaker boxes so they never overlap
+  // Group parallel lines between identical bus pairs
   const multiLineMeta = useMemo(() => {
     const corridorMap = new Map<string, number[]>();
     lines.forEach((l) => {
@@ -797,8 +914,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
       const count = lineIds.length;
       lineIds.forEach((id, idx) => {
         const offset = (idx - (count - 1) / 2) * 20;
-        // Stagger breaker box position along parallel lines so boxes never collide
-        const tPos = count === 1 ? 0.5 : 0.41 + (idx / Math.max(1, count - 1)) * 0.18;
+        const tPos = count === 1 ? 0.5 : 0.38 + (idx / Math.max(1, count - 1)) * 0.24;
         metaMap.set(id, { offset, tPos, count });
       });
     });
@@ -809,10 +925,15 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     <div className="space-y-3 max-w-7xl mx-auto py-1">
       {/* Top Controls Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 border-b border-slate-200 gap-3">
-        <div>
-          <p className="text-xs text-slate-600 font-bold">
+        <div className="flex items-center gap-3">
+          <p className="text-xs text-slate-700 font-bold">
             {buses.length} Substations • {lines.length} Corridors
           </p>
+          {trippedLines.length > 0 && (
+            <span className="px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[11px] font-bold">
+              {trippedLines.length} Line(s) Shut Down (N-1)
+            </span>
+          )}
         </div>
 
         {/* Action Controls Toolbar */}
@@ -942,6 +1063,10 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             draggingBusId !== null ? 'cursor-grabbing' : isPanning ? 'cursor-grabbing' : 'cursor-grab'
           }`}
         >
+          <div className="absolute bottom-3 left-4 z-10 pointer-events-none text-[11px] font-mono text-slate-500 bg-white/85 px-2.5 py-1 rounded-md border border-slate-200">
+            Tap any Busbar to inspect voltage &amp; corridors • Tap any Line or Breaker Box to Shut Down / Restore
+          </div>
+
           {/* Vector SVG Canvas */}
           <svg ref={svgRef} className="w-full h-full" style={{ width: '100%', height: '100%' }}>
             <defs>
@@ -972,14 +1097,13 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
 
             <g transform={`translate(${pan.x}, ${pan.y}) scale(${scale})`}>
               {/* ========================================================================= */}
-              {/* 1. TRANSMISSION LINES (Continuous Docking & Fixed Length on Open/Close)   */}
+              {/* 1. TRANSMISSION LINES & INTERACTIVE CIRCUIT BREAKERS                      */}
               {/* ========================================================================= */}
               {lines.map((line) => {
                 const rawPosA = busPositions[line.from_bus];
                 const rawPosB = busPositions[line.to_bus];
                 if (!rawPosA || !rawPosB) return null;
 
-                // Canonical orientation for parallel offset so lane direction never flips
                 const canonicalFlip = line.from_bus > line.to_bus ? -1 : 1;
                 const meta = multiLineMeta.get(line.id) || { offset: 0, tPos: 0.5, count: 1 };
                 const signedOffset = meta.offset * canonicalFlip;
@@ -988,16 +1112,22 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 const posB = getContinuousBusDockPoint(rawPosB, rawPosA, -signedOffset);
 
                 const isTripped = trippedLines.includes(line.id);
+                const isSelectedLine = selectedLineId === line.id;
                 const loadingPercent = line.loading_percent ?? 0;
                 const isOverload = loadingPercent > 100;
-                const lineColor = isTripped ? '#dc2626' : isOverload ? '#ea580c' : '#0f172a';
+                const lineColor = isTripped
+                  ? '#dc2626'
+                  : isSelectedLine
+                  ? '#500b50'
+                  : isOverload
+                  ? '#ea580c'
+                  : '#0f172a';
                 const flow = line.flow_mw ?? line.p_mw ?? 0;
 
                 const dx = posB.x - posA.x;
                 const dy = posB.y - posA.y;
                 const lineDist = Math.hypot(dx, dy);
 
-                // Staggered position along the segment so parallel breaker boxes never overlap
                 const tBox = meta.tPos;
                 const boxX = posA.x + dx * tBox;
                 const boxY = posA.y + dy * tBox;
@@ -1013,19 +1143,24 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                   pathData = `M ${posA.x} ${posA.y} L ${posB.x} ${posB.y}`;
                 }
 
-                const showBreakerBox = lineDist >= 42;
+                const showBreakerBox = lineDist >= 38;
 
                 return (
                   <g
                     key={`line-${line.id}`}
-                    className="cursor-pointer"
+                    className="cursor-pointer group"
+                    onPointerDown={(e) => {
+                      // Stop canvas pan capture so clicking a line always fires cleanly
+                      e.stopPropagation();
+                    }}
                     onClick={(e) => {
                       e.stopPropagation();
+                      setSelectedLineId(line.id);
                       toggleLine(line.id);
                     }}
                   >
-                    {/* Wide transparent hit area for easy clicking */}
-                    <path d={pathData} fill="none" stroke="transparent" strokeWidth="16" />
+                    {/* Wide 18px transparent click target along the entire corridor */}
+                    <path d={pathData} fill="none" stroke="transparent" strokeWidth="18" />
 
                     {/* Constant-width background underlay when tripped so visual length never changes */}
                     {isTripped && (
@@ -1033,22 +1168,22 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                         d={pathData}
                         fill="none"
                         stroke="#fecaca"
-                        strokeWidth="2.5"
+                        strokeWidth="2.6"
                         strokeLinecap="butt"
                       />
                     )}
 
-                    {/* Primary Transmission Line Stroke (Exact same strokeWidth & endpoints whether open or closed) */}
+                    {/* Primary Transmission Line Stroke */}
                     <path
                       d={pathData}
                       fill="none"
                       stroke={lineColor}
-                      strokeWidth="2.5"
+                      strokeWidth={isSelectedLine ? '3.4' : '2.5'}
                       strokeLinecap="butt"
                       strokeDasharray={isTripped ? '7 5' : undefined}
                     />
 
-                    {/* Solid terminal anchor dots at both busbar dock points so ends never look detached */}
+                    {/* Terminal anchor dots at both busbar dock points */}
                     <circle cx={posA.x} cy={posA.y} r="2.2" fill={lineColor} />
                     <circle cx={posB.x} cy={posB.y} r="2.2" fill={lineColor} />
 
@@ -1062,12 +1197,12 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                         })`}
                       >
                         <rect
-                          x="-20"
-                          y="-8"
-                          width="40"
-                          height="16"
-                          rx="2.5"
-                          fill={isTripped ? '#fef2f2' : '#ffffff'}
+                          x="-21"
+                          y="-8.5"
+                          width="42"
+                          height="17"
+                          rx="3"
+                          fill={isTripped ? '#dc2626' : '#ffffff'}
                           stroke={lineColor}
                           strokeWidth="1.6"
                         />
@@ -1078,7 +1213,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                           fontSize="8.5"
                           fontFamily="monospace"
                           fontWeight="900"
-                          fill={isTripped ? '#dc2626' : isOverload ? '#c2410c' : '#0f172a'}
+                          fill={isTripped ? '#ffffff' : isOverload ? '#c2410c' : '#0f172a'}
                           transform={
                             viewStyle !== 'orthogonal' && textFlipped ? 'rotate(180)' : undefined
                           }
@@ -1098,7 +1233,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 const pos = busPositions[bus.id];
                 if (!pos) return null;
 
-                const isSelected = selectedBus?.id === bus.id;
+                const isSelected = activeSelectedBus?.id === bus.id;
                 const isDragging = draggingBusId === bus.id;
                 const vVal = bus.v_pu ?? 1.0;
                 const isUnder = vVal < 0.95;
@@ -1122,14 +1257,17 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                     key={`bus-${bus.id}`}
                     transform={`translate(${pos.x}, ${pos.y})`}
                     onPointerDown={(e) => handleBusPointerDown(e, bus.id)}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (!hasDraggedRef.current) {
-                        setSelectedBus(bus);
-                      }
-                    }}
-                    className="cursor-grab active:cursor-grabbing"
+                    className="cursor-pointer"
                   >
+                    {/* Invisible enlarged hit box so tapping a busbar is effortless */}
+                    <rect
+                      x={-BUS_HALF_W - 8}
+                      y={-BUS_HALF_H - 12}
+                      width={(BUS_HALF_W + 8) * 2}
+                      height={(BUS_HALF_H + 12) * 2}
+                      fill="transparent"
+                    />
+
                     {/* Selection Highlight Halo */}
                     {isSelected && (
                       <rect
@@ -1139,21 +1277,17 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                         height="24"
                         rx="5"
                         fill="#500b50"
-                        fillOpacity="0.12"
+                        fillOpacity="0.16"
                         stroke="#500b50"
-                        strokeWidth="2"
+                        strokeWidth="2.2"
                         strokeDasharray="4 2"
                       />
                     )}
 
-                    {/* =============================================================== */}
-                    {/* STAC TOP DECORATOR: Generator (~) ALWAYS Pointing Straight UP   */}
-                    {/* =============================================================== */}
+                    {/* STAC TOP DECORATOR: Generator (~) ALWAYS Pointing Straight UP */}
                     {isGen && (
                       <g pointerEvents="none">
-                        {/* Vertical stem from top of flat busbar (y = -4.5) to circle bottom (y = -17) */}
                         <line x1="0" y1="-4.5" x2="0" y2="-17" stroke="#0f172a" strokeWidth="2" />
-                        {/* Generator Circle centered at (0, -28) */}
                         <circle
                           cx="0"
                           cy="-28"
@@ -1162,14 +1296,12 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                           stroke="#0f172a"
                           strokeWidth="2"
                         />
-                        {/* Upright AC Sine Wave (~) inside circle */}
                         <path
                           d="M -5.5 -28 Q -2.75 -33 0 -28 T 5.5 -28"
                           fill="none"
                           stroke="#0f172a"
                           strokeWidth="2"
                         />
-                        {/* Generator Active Power MW above circle */}
                         <text
                           x="0"
                           y="-43"
@@ -1184,12 +1316,9 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       </g>
                     )}
 
-                    {/* =============================================================== */}
                     {/* STAC BOTTOM DECORATOR: Load Arrow ALWAYS Pointing Straight DOWN */}
-                    {/* =============================================================== */}
                     {hasLoad && (
                       <g pointerEvents="none">
-                        {/* Vertical load feeder stem from bottom of voltage label (y = 20) to arrow tip (y = 38) */}
                         <line
                           x1="0"
                           y1="20"
@@ -1199,7 +1328,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                           strokeWidth="2"
                           markerEnd="url(#loadArrow)"
                         />
-                        {/* Load Demand MW below arrow tip */}
                         <text
                           x="0"
                           y="49"
@@ -1214,9 +1342,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       </g>
                     )}
 
-                    {/* =============================================================== */}
-                    {/* SHARP FLAT RECTANGULAR BUSBAR (76px x 9px)                      */}
-                    {/* =============================================================== */}
+                    {/* SHARP FLAT RECTANGULAR BUSBAR (76px x 9px) */}
                     <rect
                       x={-BUS_HALF_W}
                       y={-BUS_HALF_H}
@@ -1224,11 +1350,11 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       height={BUS_HALF_H * 2}
                       rx="2"
                       fill={busBarFill}
-                      stroke="#000000"
-                      strokeWidth={isDragging ? '2.2' : '1.4'}
+                      stroke={isSelected ? '#500b50' : '#000000'}
+                      strokeWidth={isDragging || isSelected ? '2.2' : '1.4'}
                     />
 
-                    {/* Substation Name Label (Placed above generator if gen exists, or directly above busbar) */}
+                    {/* Substation Name Label */}
                     <text
                       x="0"
                       y={isGen ? -54 : -10}
@@ -1243,7 +1369,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                       {bus.name}
                     </text>
 
-                    {/* Bus Voltage Magnitude Reading (Directly below busbar at y = 16) */}
+                    {/* Bus Voltage Magnitude Reading */}
                     <text
                       x="0"
                       y="16"
@@ -1262,18 +1388,109 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
             </g>
           </svg>
 
-          {/* STAC Technical Property Inspector */}
-          {selectedBus && (
-            <div className="absolute top-4 right-4 z-20 w-80 rounded-2xl border border-slate-300 bg-white/95 backdrop-blur-md shadow-2xl p-4 text-xs font-sans">
+          {/* ========================================================================= */}
+          {/* 3. SELECTED LINE BREAKER QUICK CONTROL CARD                               */}
+          {/* ========================================================================= */}
+          {activeSelectedLine && !activeSelectedBus && (
+            <div
+              onPointerDown={(e) => e.stopPropagation()}
+              className="absolute top-4 right-4 z-20 w-80 rounded-2xl border border-slate-300 bg-white/95 backdrop-blur-md shadow-2xl p-4 text-xs font-sans"
+            >
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Power
+                    className={`h-4 w-4 shrink-0 ${
+                      trippedLines.includes(activeSelectedLine.id)
+                        ? 'text-rose-600'
+                        : 'text-emerald-600'
+                    }`}
+                  />
+                  <span className="font-black text-slate-900 text-sm truncate">
+                    {activeSelectedLine.name || `Line #${activeSelectedLine.id}`}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setSelectedLineId(null)}
+                  className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mt-3 space-y-2 text-[11px]">
+                <div className="flex justify-between">
+                  <span className="text-slate-500 font-semibold">Circuit Status:</span>
+                  <span
+                    className={`font-bold px-2 py-0.5 rounded text-[10px] ${
+                      trippedLines.includes(activeSelectedLine.id)
+                        ? 'bg-rose-100 text-rose-800'
+                        : 'bg-emerald-100 text-emerald-800'
+                    }`}
+                  >
+                    {trippedLines.includes(activeSelectedLine.id)
+                      ? 'SHUT DOWN (BREAKER OPEN)'
+                      : 'IN SERVICE (CLOSED)'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500 font-semibold">Interconnection:</span>
+                  <span className="font-mono font-bold text-slate-800">
+                    Bus #{activeSelectedLine.from_bus} → Bus #{activeSelectedLine.to_bus}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500 font-semibold">Active Power Flow:</span>
+                  <span className="font-mono font-bold text-slate-900">
+                    {trippedLines.includes(activeSelectedLine.id)
+                      ? '0.0 MW'
+                      : `${(activeSelectedLine.flow_mw ?? activeSelectedLine.p_mw ?? 0).toFixed(1)} MW`}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500 font-semibold">Thermal Loading:</span>
+                  <span className="font-mono font-bold text-[#500b50]">
+                    {trippedLines.includes(activeSelectedLine.id)
+                      ? '0.0%'
+                      : `${(activeSelectedLine.loading_percent ?? 0).toFixed(1)}%`}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                onClick={() => toggleLine(activeSelectedLine.id)}
+                className={`mt-4 w-full py-2.5 rounded-xl font-bold text-xs text-white transition flex items-center justify-center gap-2 shadow-xs ${
+                  trippedLines.includes(activeSelectedLine.id)
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : 'bg-rose-600 hover:bg-rose-700'
+                }`}
+              >
+                <Power className="h-4 w-4" />
+                <span>
+                  {trippedLines.includes(activeSelectedLine.id)
+                    ? 'Close Breaker (Restore Line)'
+                    : 'Shut Down Line (Trip Breaker)'}
+                </span>
+              </button>
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* 4. SUBSTATION BUS TECHNICAL PROPERTY INSPECTOR & LINE BREAKER DRAWER      */}
+          {/* ========================================================================= */}
+          {activeSelectedBus && (
+            <div
+              onPointerDown={(e) => e.stopPropagation()}
+              className="absolute top-4 right-4 z-20 w-80 rounded-2xl border border-slate-300 bg-white/95 backdrop-blur-md shadow-2xl p-4 text-xs font-sans"
+            >
               <div className="flex items-center justify-between pb-2 border-b border-slate-200">
                 <div className="flex items-center gap-2">
                   <div className="h-3 w-3 rounded-full bg-[#500b50]" />
                   <span className="font-black text-slate-900 text-sm">
-                    Bus {selectedBus.id} ({selectedBus.name})
+                    Bus #{activeSelectedBus.id} ({activeSelectedBus.name})
                   </span>
                 </div>
                 <button
-                  onClick={() => setSelectedBus(null)}
+                  onClick={() => handleSelectBus(null)}
                   className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100"
                 >
                   <X className="h-4 w-4" />
@@ -1292,65 +1509,68 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                   <tbody className="divide-y divide-slate-100 text-slate-800">
                     <tr className="bg-slate-50/70 font-bold text-slate-500 text-[10px]">
                       <td colSpan={3} className="py-1 px-2.5 uppercase tracking-wider">
-                        Static Topology
+                        Substation Topology
                       </td>
                     </tr>
                     <tr>
-                      <td className="py-1 px-2.5 font-bold">Id</td>
-                      <td className="py-1 px-2.5 font-mono font-bold">{selectedBus.id}</td>
+                      <td className="py-1 px-2.5 font-bold">Bus ID</td>
+                      <td className="py-1 px-2.5 font-mono font-bold">#{activeSelectedBus.id}</td>
                       <td className="py-1 px-2.5 text-slate-400">-</td>
                     </tr>
                     <tr>
-                      <td className="py-1 px-2.5 font-bold">Zone</td>
-                      <td className="py-1 px-2.5 font-semibold">{selectedBus.zone || 'Bulk Grid'}</td>
+                      <td className="py-1 px-2.5 font-bold">Grid Zone</td>
+                      <td className="py-1 px-2.5 font-semibold">
+                        {activeSelectedBus.zone || 'Bulk Transmission'}
+                      </td>
                       <td className="py-1 px-2.5 text-slate-400">-</td>
                     </tr>
                     <tr>
-                      <td className="py-1 px-2.5 font-bold">Base KV</td>
-                      <td className="py-1 px-2.5 font-mono font-bold">{selectedBus.vn_kv || 330.0}</td>
+                      <td className="py-1 px-2.5 font-bold">Nominal kV</td>
+                      <td className="py-1 px-2.5 font-mono font-bold">
+                        {activeSelectedBus.vn_kv || 330.0}
+                      </td>
                       <td className="py-1 px-2.5 text-slate-500 font-mono">kV</td>
-                    </tr>
-                    <tr>
-                      <td className="py-1 px-2.5 font-bold">V Max</td>
-                      <td className="py-1 px-2.5 font-mono font-bold text-amber-700">1.05000</td>
-                      <td className="py-1 px-2.5 text-slate-500 font-mono">Volts p.u.</td>
-                    </tr>
-                    <tr>
-                      <td className="py-1 px-2.5 font-bold">V Min</td>
-                      <td className="py-1 px-2.5 font-mono font-bold text-rose-700">0.95000</td>
-                      <td className="py-1 px-2.5 text-slate-500 font-mono">Volts p.u.</td>
                     </tr>
 
                     <tr className="bg-slate-50/70 font-bold text-slate-500 text-[10px]">
                       <td colSpan={3} className="py-1 px-2.5 uppercase tracking-wider">
-                        Power Flow Result
+                        Steady-State Telemetry
                       </td>
                     </tr>
                     <tr>
-                      <td className="py-1 px-2.5 font-bold">Voltage</td>
+                      <td className="py-1 px-2.5 font-bold">Voltage (|V|)</td>
                       <td className="py-1 px-2.5 font-mono font-black text-[#500b50]">
-                        {(selectedBus.v_pu ?? 1.0).toFixed(5)}
+                        {(activeSelectedBus.v_pu ?? 1.0).toFixed(4)}
                       </td>
-                      <td className="py-1 px-2.5 text-slate-500 font-mono">Volts p.u.</td>
+                      <td className="py-1 px-2.5 text-slate-500 font-mono">p.u.</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1 px-2.5 font-bold">Line-to-Line</td>
+                      <td className="py-1 px-2.5 font-mono font-bold">
+                        {(
+                          (activeSelectedBus.v_pu ?? 1.0) * (activeSelectedBus.vn_kv || 330.0)
+                        ).toFixed(1)}
+                      </td>
+                      <td className="py-1 px-2.5 text-slate-500 font-mono">kV</td>
                     </tr>
                     <tr>
                       <td className="py-1 px-2.5 font-bold">Phase Angle</td>
                       <td className="py-1 px-2.5 font-mono font-bold">
-                        {(selectedBus.va_deg ?? 0.0).toFixed(5)}
+                        {(activeSelectedBus.va_deg ?? 0.0).toFixed(2)}°
                       </td>
-                      <td className="py-1 px-2.5 text-slate-500 font-mono">Degrees</td>
+                      <td className="py-1 px-2.5 text-slate-500 font-mono">deg</td>
                     </tr>
                     <tr>
                       <td className="py-1 px-2.5 font-bold">Active Power</td>
                       <td className="py-1 px-2.5 font-mono font-black">
-                        {(selectedBus.p_mw ?? 0).toFixed(2)}
+                        {(activeSelectedBus.p_mw ?? 0).toFixed(2)}
                       </td>
                       <td className="py-1 px-2.5 text-slate-500 font-mono">MW</td>
                     </tr>
                     <tr>
                       <td className="py-1 px-2.5 font-bold">Reactive Power</td>
                       <td className="py-1 px-2.5 font-mono font-bold">
-                        {(selectedBus.q_mvar ?? 0).toFixed(2)}
+                        {(activeSelectedBus.q_mvar ?? 0).toFixed(2)}
                       </td>
                       <td className="py-1 px-2.5 text-slate-500 font-mono">MVAR</td>
                     </tr>
@@ -1358,37 +1578,45 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 </table>
               </div>
 
-              {/* Connected Branch Corridors */}
+              {/* Connected Branch Corridors with Direct Shut Down / Close Buttons */}
               <div className="mt-3">
                 <span className="text-[10px] uppercase font-black text-slate-500 block tracking-wider mb-1.5">
-                  Connected Branch Corridors
+                  Connected Transmission Lines (Shut Down / Restore)
                 </span>
-                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
                   {lines
-                    .filter((l) => l.from_bus === selectedBus.id || l.to_bus === selectedBus.id)
+                    .filter(
+                      (l) =>
+                        l.from_bus === activeSelectedBus.id || l.to_bus === activeSelectedBus.id
+                    )
                     .map((l) => {
                       const isTripped = trippedLines.includes(l.id);
                       return (
                         <div
                           key={l.id}
-                          className="flex items-center justify-between p-1.5 rounded-lg border border-slate-200 bg-slate-50 text-[10px]"
+                          className="flex items-center justify-between p-2 rounded-lg border border-slate-200 bg-slate-50 text-[10px]"
                         >
                           <div className="truncate pr-2">
-                            <span className="font-bold text-slate-900 block truncate">{l.name}</span>
+                            <span className="font-bold text-slate-900 block truncate">
+                              {l.name || `Line #${l.id}`}
+                            </span>
                             <span className="font-mono text-slate-500 text-[9px] font-semibold">
-                              {(l.flow_mw ?? l.p_mw ?? 0).toFixed(1)} MW •{' '}
-                              {(l.loading_percent ?? 0).toFixed(0)}% load
+                              {isTripped
+                                ? 'OPEN (0.0 MW)'
+                                : `${(l.flow_mw ?? l.p_mw ?? 0).toFixed(1)} MW • ${(
+                                    l.loading_percent ?? 0
+                                  ).toFixed(0)}% load`}
                             </span>
                           </div>
                           <button
                             onClick={() => toggleLine(l.id)}
-                            className={`px-2 py-0.5 rounded font-black transition shrink-0 ${
+                            className={`px-2.5 py-1 rounded font-bold transition shrink-0 ${
                               isTripped
                                 ? 'bg-emerald-600 text-white hover:bg-emerald-700'
                                 : 'bg-rose-600 text-white hover:bg-rose-700'
                             }`}
                           >
-                            {isTripped ? 'Reclose' : 'Trip Breaker'}
+                            {isTripped ? 'Close Line' : 'Shut Down'}
                           </button>
                         </div>
                       );
