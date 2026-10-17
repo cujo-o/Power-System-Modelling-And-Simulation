@@ -9,7 +9,6 @@ import {
   Image as ImageIcon,
   FileSpreadsheet,
   Search,
-  Zap,
   Layers,
   X,
   Compass,
@@ -97,41 +96,50 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
   const [scale, setScale] = useState<number>(0.85);
   const [pan, setPan] = useState<Point>({ x: 80, y: 60 });
   const [isPanning, setIsPanning] = useState<boolean>(false);
-  const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
+  const panStartRef = useRef<Point>({ x: 0, y: 0 });
 
   // Persistent Draggable Busbar Coordinates
   const [busPositions, setBusPositions] = useState<Record<number, Point>>({});
   const busPositionsRef = useRef<Record<number, Point>>({});
   busPositionsRef.current = busPositions;
 
+  // Refs for buses & lines so layout solver never triggers re-runs on breaker toggle
+  const busesRef = useRef<BusData[]>(buses);
+  busesRef.current = buses;
+  const linesRef = useRef<LineData[]>(lines);
+  linesRef.current = lines;
+
   const [draggingBusId, setDraggingBusId] = useState<number | null>(null);
-  const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
-  const [hasDragged, setHasDragged] = useState<boolean>(false);
+  const draggingBusIdRef = useRef<number | null>(null);
+  const dragOffsetRef = useRef<Point>({ x: 0, y: 0 });
+  const hasDraggedRef = useRef<boolean>(false);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const currentModelRef = useRef<string>('');
 
-  // Keep state refs updated for native non-passive wheel events
+  // Keep state refs updated for native non-passive wheel events and smooth dragging
   const scaleRef = useRef<number>(scale);
   scaleRef.current = scale;
   const panRef = useRef<Point>(pan);
   panRef.current = pan;
 
   // =========================================================================
-  // Condensed Topological Untangler (Compact Links + Anti-Crossing Colliders)
+  // Condensed Topological Untangler (Your Original Layout Algorithm)
   // =========================================================================
   const solveUntangledLayout = useCallback((): Record<number, Point> => {
-    const N = buses.length;
+    const currentBuses = busesRef.current;
+    const currentLines = linesRef.current;
+    const N = currentBuses.length;
     if (N === 0) return {};
 
     const idToIndex = new Map<number, number>();
-    buses.forEach((b, i) => idToIndex.set(b.id, i));
+    currentBuses.forEach((b, i) => idToIndex.set(b.id, i));
 
     // Adjacency graph
     const adj: number[][] = Array.from({ length: N }, () => []);
     const edgePairs: [number, number][] = [];
-    lines.forEach((l) => {
+    currentLines.forEach((l) => {
       const u = idToIndex.get(l.from_bus);
       const v = idToIndex.get(l.to_bus);
       if (u !== undefined && v !== undefined && u !== v) {
@@ -183,8 +191,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     const iterations = N > 30 ? 140 : 90;
     const dt = temp / iterations;
 
-    const MIN_NODE_DIST = 105; // Tight busbar clearance
-    const MIN_EDGE_DIST = 55;  // Clearance from lines
+    const MIN_EDGE_DIST = 55; // Clearance from lines
 
     for (let it = 0; it < iterations; it++) {
       const disp: Point[] = Array.from({ length: N }, () => ({ x: 0, y: 0 }));
@@ -324,7 +331,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     }
 
     const finalPositions: Record<number, Point> = {};
-    buses.forEach((b, i) => {
+    currentBuses.forEach((b, i) => {
       finalPositions[b.id] = {
         x: Math.round(posArr[i].x),
         y: Math.round(posArr[i].y),
@@ -332,7 +339,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     });
 
     return finalPositions;
-  }, [buses, lines]);
+  }, []);
 
   const handleAutoFit = useCallback(() => {
     const positions = Object.values(busPositionsRef.current);
@@ -351,7 +358,6 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     const containerW = containerRef.current?.clientWidth || 1200;
     const containerH = containerRef.current?.clientHeight || 850;
 
-    // Normal, comfortable scale range for condensed diagrams
     const fitScale = Math.min(containerW / w, containerH / h, 1.25);
     const newScale = Math.max(0.40, fitScale);
     const newPan = {
@@ -365,7 +371,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     panRef.current = newPan;
   }, []);
 
-  // Compute Layout on Model Load & Persist during Breaker Toggles
+  // Compute Layout ONLY on Model Load or Bus Count Change — NEVER when opening/closing a line!
   useEffect(() => {
     if (!buses || buses.length === 0) return;
 
@@ -373,11 +379,15 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     currentModelRef.current = modelName;
     const storageKey = `nesi_sld_pos_${modelName || 'default'}`;
 
-    if (!isNewModel && Object.keys(busPositionsRef.current).length >= buses.length) {
+    if (
+      !isNewModel &&
+      Object.keys(busPositionsRef.current).length >= buses.length &&
+      buses.every((b) => busPositionsRef.current[b.id] !== undefined)
+    ) {
       return;
     }
 
-    if (typeof window !== 'undefined' && !isNewModel) {
+    if (typeof window !== 'undefined') {
       const saved = localStorage.getItem(storageKey);
       if (saved) {
         try {
@@ -385,6 +395,9 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
           if (buses.every((b) => parsed[b.id] !== undefined)) {
             setBusPositions(parsed);
             busPositionsRef.current = parsed;
+            if (isNewModel) {
+              setTimeout(handleAutoFit, 60);
+            }
             return;
           }
         } catch (_) {}
@@ -407,14 +420,13 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
 
   // =========================================================================
   // Non-Passive Native Wheel Listener: Smooth, Dynamic Touchpad/Mouse Zoom
-  // Traps pinch gestures to the container to prevent webpage zoom
   // =========================================================================
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const handleNativeWheel = (e: WheelEvent) => {
-      e.preventDefault(); // Prevents whole-page browser zoom
+      e.preventDefault();
       e.stopPropagation();
 
       const rect = container.getBoundingClientRect();
@@ -423,23 +435,19 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
 
       let zoomFactor: number;
       if (e.ctrlKey) {
-        // Trackpad pinch gesture: smooth, granular continuous scaling
         const clampedDelta = Math.max(-30, Math.min(30, e.deltaY));
         zoomFactor = Math.exp(-clampedDelta * 0.005);
       } else {
-        // Standard mouse wheel notch: gentle 5% step per notch
         const clampedDelta = Math.max(-80, Math.min(80, e.deltaY));
         zoomFactor = Math.exp(-clampedDelta * 0.0018);
       }
 
-      // Smooth step clamp: changes smoothly by 2%-5% per event (no sudden 74% -> 14% plunge)
       zoomFactor = Math.min(1.05, Math.max(0.95, zoomFactor));
 
       const currScale = scaleRef.current;
       const currPan = panRef.current;
       const nextScale = Math.min(3.5, Math.max(0.25, currScale * zoomFactor));
 
-      // Zoom accurately centered around the cursor position
       const mouseWorldX = (mouseX - currPan.x) / currScale;
       const mouseWorldY = (mouseY - currPan.y) / currScale;
 
@@ -460,24 +468,75 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     };
   }, []);
 
-  // Convert Client Coordinates to SVG Coordinates
-  const getSvgCoordinates = useCallback(
-    (clientX: number, clientY: number): Point => {
-      if (!svgRef.current) return { x: 0, y: 0 };
-      const rect = svgRef.current.getBoundingClientRect();
-      return {
-        x: (clientX - rect.left - pan.x) / scale,
-        y: (clientY - rect.top - pan.y) / scale,
-      };
-    },
-    [pan, scale]
-  );
+  // Convert Client Coordinates to SVG Coordinates using live refs (zero state lag)
+  const getSvgCoordinates = useCallback((clientX: number, clientY: number): Point => {
+    if (!svgRef.current) return { x: 0, y: 0 };
+    const rect = svgRef.current.getBoundingClientRect();
+    return {
+      x: (clientX - rect.left - panRef.current.x) / scaleRef.current,
+      y: (clientY - rect.top - panRef.current.y) / scaleRef.current,
+    };
+  }, []);
 
-  // Mouse pan and bus drag events
+  // =========================================================================
+  // Smooth Window-Level Dragging & Panning (Never slips out when moving fast)
+  // =========================================================================
+  useEffect(() => {
+    const handleWindowMouseMove = (e: MouseEvent) => {
+      const activeBusId = draggingBusIdRef.current;
+      if (activeBusId !== null) {
+        hasDraggedRef.current = true;
+        const mouseWorld = getSvgCoordinates(e.clientX, e.clientY);
+        const newPos = {
+          x: mouseWorld.x - dragOffsetRef.current.x,
+          y: mouseWorld.y - dragOffsetRef.current.y,
+        };
+
+        setBusPositions((prev) => {
+          const next = { ...prev, [activeBusId]: newPos };
+          busPositionsRef.current = next;
+          return next;
+        });
+      } else if (isPanning) {
+        const nextPan = {
+          x: e.clientX - panStartRef.current.x,
+          y: e.clientY - panStartRef.current.y,
+        };
+        setPan(nextPan);
+        panRef.current = nextPan;
+      }
+    };
+
+    const handleWindowMouseUp = () => {
+      if (isPanning) {
+        setIsPanning(false);
+      }
+      if (draggingBusIdRef.current !== null) {
+        draggingBusIdRef.current = null;
+        setDraggingBusId(null);
+        if (typeof window !== 'undefined' && modelName) {
+          try {
+            localStorage.setItem(
+              `nesi_sld_pos_${modelName}`,
+              JSON.stringify(busPositionsRef.current)
+            );
+          } catch (_) {}
+        }
+      }
+    };
+
+    window.addEventListener('mousemove', handleWindowMouseMove);
+    window.addEventListener('mouseup', handleWindowMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleWindowMouseMove);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
+    };
+  }, [isPanning, modelName, getSvgCoordinates]);
+
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
     setIsPanning(true);
-    setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+    panStartRef.current = { x: e.clientX - panRef.current.x, y: e.clientY - panRef.current.y };
   };
 
   const handleBusMouseDown = (e: React.MouseEvent, busId: number) => {
@@ -485,50 +544,15 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     if (e.button !== 0) return;
 
     const mouseWorld = getSvgCoordinates(e.clientX, e.clientY);
-    const busPos = busPositions[busId] || { x: 200, y: 200 };
+    const busPos = busPositionsRef.current[busId] || { x: 200, y: 200 };
 
+    draggingBusIdRef.current = busId;
     setDraggingBusId(busId);
-    setHasDragged(false);
-    setDragOffset({
+    hasDraggedRef.current = false;
+    dragOffsetRef.current = {
       x: mouseWorld.x - busPos.x,
       y: mouseWorld.y - busPos.y,
-    });
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (draggingBusId !== null) {
-      setHasDragged(true);
-      const mouseWorld = getSvgCoordinates(e.clientX, e.clientY);
-      const newPos = {
-        x: Math.round(mouseWorld.x - dragOffset.x),
-        y: Math.round(mouseWorld.y - dragOffset.y),
-      };
-
-      setBusPositions((prev) => {
-        const next = { ...prev, [draggingBusId]: newPos };
-        busPositionsRef.current = next;
-        return next;
-      });
-    } else if (isPanning) {
-      const nextPan = {
-        x: e.clientX - panStart.x,
-        y: e.clientY - panStart.y,
-      };
-      setPan(nextPan);
-      panRef.current = nextPan;
-    }
-  };
-
-  const handleMouseUp = () => {
-    setIsPanning(false);
-    if (draggingBusId !== null) {
-      setDraggingBusId(null);
-      if (typeof window !== 'undefined' && modelName) {
-        try {
-          localStorage.setItem(`nesi_sld_pos_${modelName}`, JSON.stringify(busPositionsRef.current));
-        } catch (_) {}
-      }
-    }
+    };
   };
 
   const handleResetLayout = () => {
@@ -660,7 +684,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
     corridorMap.forEach((lineIds) => {
       const count = lineIds.length;
       lineIds.forEach((id, idx) => {
-        const offset = (idx - (count - 1) / 2) * 18; // 18px compact parallel lane separation
+        const offset = (idx - (count - 1) / 2) * 18;
         offsetMap.set(id, offset);
       });
     });
@@ -793,20 +817,10 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
         <div
           ref={containerRef}
           onMouseDown={handleCanvasMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
           className={`h-[850px] w-full rounded-2xl border border-slate-300 bg-white relative overflow-hidden shadow-sm select-none ${
             isPanning ? 'cursor-grabbing' : draggingBusId !== null ? 'cursor-move' : 'cursor-grab'
           }`}
         >
-          {/* Engineering CAD Header Tag */}
-          <div className="absolute top-4 left-4 z-10 flex items-center gap-2 pointer-events-none opacity-60">
-            
-          </div>
-
-
-
           {/* Vector SVG Canvas */}
           <svg ref={svgRef} className="w-full h-full" style={{ width: '100%', height: '100%' }}>
             <defs>
@@ -840,8 +854,9 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                 const rawPosB = busPositions[line.to_bus];
                 if (!rawPosA || !rawPosB) return null;
 
-                // Normal vector lane offset for parallel circuits
-                const laneOffset = multiLineOffsets.get(line.id) || 0;
+                // Canonical orientation for parallel offset so lane direction never flips
+                const canonicalFlip = line.from_bus > line.to_bus ? -1 : 1;
+                const laneOffset = (multiLineOffsets.get(line.id) || 0) * canonicalFlip;
                 const cdx = rawPosB.x - rawPosA.x;
                 const cdy = rawPosB.y - rawPosA.y;
                 const cLen = Math.hypot(cdx, cdy) || 1;
@@ -886,20 +901,24 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                   <g
                     key={`line-${line.id}`}
                     className="cursor-pointer group"
-                    onClick={() => toggleLine(line.id)}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleLine(line.id);
+                    }}
                   >
                     {/* Hover Buffer */}
                     <path d={pathData} fill="none" stroke="transparent" strokeWidth="18" />
 
-                    {/* Bold Transmission Line Path */}
+                    {/* Bold Transmission Line Path (No transition-all so dasharray never morphs line length) */}
                     <path
                       d={pathData}
                       fill="none"
                       stroke={lineColor}
-                      strokeWidth={isTripped ? 2 : 2.75}
+                      strokeWidth="2.75"
                       strokeDasharray={isTripped ? '6 4' : undefined}
-                      strokeOpacity={isTripped ? 0.35 : 0.95}
-                      className="transition-all duration-150 group-hover:stroke-[#500b50] group-hover:stroke-width-3"
+                      strokeOpacity={isTripped ? 0.45 : 0.95}
+                      className="group-hover:stroke-[#500b50]"
                     />
 
                     {/* Compact STAC In-line Breaker Indicator */}
@@ -983,7 +1002,7 @@ export const SingleLineDiagram: React.FC<SingleLineDiagramProps> = ({
                     onMouseDown={(e) => handleBusMouseDown(e, bus.id)}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (!hasDragged) {
+                      if (!hasDraggedRef.current) {
                         setSelectedBus(bus);
                       }
                     }}
