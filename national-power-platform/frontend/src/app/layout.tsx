@@ -4,14 +4,19 @@ import { GridProvider } from '@/context/GridContext';
 import { AppShell } from '@/components/layout/AppShell';
 
 export const metadata: Metadata = {
-  title: 'National Power System Simulation | ML4PS',
-  description: 'Bulk electrical transmission simulation platform for NESI 330kV and sub-transmission networks.',
+  title: 'National Power System Simulation Platform | ML4PS FUT Minna',
+  description:
+    'Power system modelling, stability analysis, and electricity market simulation for the Nigerian National Grid.',
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
   return (
     <html lang="en">
-      <body className="antialiased overflow-hidden">
+      <body className="antialiased bg-slate-50 text-slate-900">
         <GridProvider>
           <AppShell>{children}</AppShell>
         </GridProvider>

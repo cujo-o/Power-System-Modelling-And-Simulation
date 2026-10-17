@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { LogOut, Globe } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import { PlatformUser } from './AppShell';
 
 interface HeaderProps {
@@ -42,10 +42,9 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="flex items-center gap-2.5">
         <button
           onClick={onOpenCompanyPortal}
-          className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-bold transition"
+          className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-bold transition"
         >
-          <Globe className="h-3.5 w-3.5 text-[#500b50]" />
-          <span>Learning &amp; Company Portal</span>
+          Platform Overview &amp; Learning
         </button>
 
         <button
