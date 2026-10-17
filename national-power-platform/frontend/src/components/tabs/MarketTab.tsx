@@ -7,8 +7,14 @@ import {
   Activity,
   Building2,
   Zap,
-  RefreshCw,
 } from 'lucide-react';
+import { BusData, LineData } from '@/types/grid';
+
+interface MarketTabProps {
+  buses?: BusData[];
+  lines?: LineData[];
+  modelName?: string;
+}
 
 interface GenCoAgent {
   id: string;
@@ -47,14 +53,17 @@ const DISCO_SHARES = [
   { name: 'Yola Electricity (YEDC)', sharePct: 3.5 },
 ];
 
-export const MarketTab: React.FC = () => {
+export const MarketTab: React.FC<MarketTabProps> = ({
+  buses = [],
+  lines = [],
+  modelName = '',
+}) => {
   const [targetDemandMw, setTargetDemandMw] = useState<number>(4200);
   const [gasPriceUsd, setGasPriceUsd] = useState<number>(2.42);
   const [clearingRule, setClearingRule] = useState<'SMP' | 'PAY_AS_BID'>('SMP');
   const [agentBehavior, setAgentBehavior] = useState<'COMPETITIVE' | 'STRATEGIC_RL'>('STRATEGIC_RL');
   const [priceCapNaira, setPriceCapNaira] = useState<number>(85000);
 
-  // ASSUME Market Clearing Engine Calculation
   const marketSolution = useMemo(() => {
     const gasMultiplier = gasPriceUsd / 2.42;
 
@@ -143,6 +152,7 @@ export const MarketTab: React.FC = () => {
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
             Agent-based wholesale market clearing for Nigerian GenCos, NBET/TCN dispatch, and DisCo MYTO settlement.
+            {modelName && ` Active Grid Model: ${modelName} (${buses.length} Substations, ${lines.length} Corridors).`}
           </p>
         </div>
       </div>
@@ -331,10 +341,10 @@ export const MarketTab: React.FC = () => {
           <table className="w-full text-left text-xs min-w-[600px]">
             <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-bold uppercase text-[10px]">
               <tr>
-                <th className="py-2 px-3">Distribution Company (DisCo)</th>
-                <th className="py-2 px-3">MYTO Vesting Share</th>
-                <th className="py-2 px-3">Allocated Power (MW)</th>
-                <th className="py-2 px-3 text-right">Hourly Market Obligation</th>
+                <th className="py-2.5 px-3">Distribution Company (DisCo)</th>
+                <th className="py-2.5 px-3">MYTO Vesting Share</th>
+                <th className="py-2.5 px-3">Allocated Power (MW)</th>
+                <th className="py-2.5 px-3 text-right">Hourly Market Obligation</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-mono">

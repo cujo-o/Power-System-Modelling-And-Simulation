@@ -1,8 +1,8 @@
 'use client';
 
 import React from 'react';
-import { useGrid } from '@/context/GridContext';
 import { MarketTab } from '@/components/tabs/MarketTab';
+import { useGrid } from '@/context/GridContext';
 
 export default function MarketPage() {
   const { buses, lines, activeModel } = useGrid();
