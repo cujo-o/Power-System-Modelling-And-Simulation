@@ -1,343 +1,340 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Users,
-  ShieldCheck,
+  fetchAllPlatformAccessRequests,
+  persistPlatformAccessRequest,
+} from '../modals/AuthModal';
+import {
   Check,
   X,
-  Copy,
+  UserCheck,
   RefreshCw,
-  Key,
+  Clock,
 } from 'lucide-react';
 
-export interface TeamMember {
+interface AccessRequestItem {
   id: string;
-  name: string;
-  role: string;
-  department: string;
-  institution: string;
-  image: string;
-}
-
-export interface UserRecord {
-  id: string;
-  name: string;
+  full_name: string;
   email: string;
   institution: string;
-  department: string;
   reason: string;
-  role: string;
-  is_approved: boolean;
-  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  password?: string;
+  role: 'admin' | 'user';
+  status: 'pending' | 'approved' | 'rejected';
+  created_at: string;
 }
 
-interface AdminTabProps {
-  apiBaseUrl?: string;
+interface TeamMember {
+  name: string;
+  title: string;
+  photo: string;
 }
 
-const WORKFORCE_ROSTER: TeamMember[] = [
+// 1 - 2 - 3 Triangle Hierarchy
+const TRIANGLE_ROW_1: TeamMember[] = [
   {
-    id: 'sadiq-lead',
-    name: 'Engr. Dr. A. S. Ahmed',
-    role: 'Lead Principal Investigator',
-    department: 'Department of Electrical & Electronics Engineering',
-    institution: 'Federal University of Technology, Minna',
-    image: '/team/sadiq.jpg',
-  },
-  {
-    id: 'adamu-lead',
-    name: 'Engr. Prof. S. S. Adamu',
-    role: 'Principal Operations Specialist & NISO Liaison',
-    department: 'NESI Transmission & System Operations (NCC)',
-    institution: 'Federal University of Technology, Minna',
-    image: '/team/adamu.jpg',
-  },
-  {
-    id: 'buhari-copi',
-    name: 'Engr. Dr. M. Buhari',
-    role: 'Co-Principal Investigator (Grid Stability)',
-    department: 'Department of Electrical & Electronics Engineering',
-    institution: 'Federal University of Technology, Minna',
-    image: '/team/buhari.png',
-  },
-  {
-    id: 'okoro-senior',
-    name: 'Engr. Prof. I. Okoro',
-    role: 'Senior Research Fellow (Machine Learning)',
-    department: 'Department of Electrical & Electronics Engineering',
-    institution: 'Federal University of Technology, Minna',
-    image: '/team/okoro.jpg',
-  },
-  {
-    id: 'ambafi-senior',
-    name: 'Engr. Dr. J. G. Ambafi',
-    role: 'Senior Simulation & Architecture Fellow',
-    department: 'Department of Electrical & Electronics Engineering',
-    institution: 'Federal University of Technology, Minna',
-    image: '/team/ambafi.jpg',
-  },
-  {
-    id: 'hameedat-copi',
-    name: 'Engr. Hameedat',
-    role: 'Research Mentee & Simulation Analyst',
-    department: 'School of Infrastructure, Process Engineering & Technology',
-    institution: 'Federal University of Technology, Minna',
-    image: '/team/hameedat.jpeg',
+    name: 'Prof. Buhari',
+    title: 'Lead Researcher',
+    photo: '/team/buhari.png',
   },
 ];
 
-const ResilientPortrait: React.FC<{ src: string; alt: string }> = ({ src, alt }) => {
-  const [currentSrc, setCurrentSrc] = useState(src.trim());
-  const [attempt, setAttempt] = useState(0);
+const TRIANGLE_ROW_2: TeamMember[] = [
+  {
+    name: 'Prof. Sadiq',
+    title: 'Senior Researcher',
+    photo: '/team/sadiq.jpg',
+  },
+  {
+    name: 'Prof. Ambafi',
+    title: 'Senior Researcher',
+    photo: '/team/ambafi.jpg',
+  },
+];
 
-  const cleanBase = src.trim().replace(/\.(png|jpe?g|webp)$/i, '');
-  const candidateExtensions = ['.jpg', '.png', '.jpeg', '.webp'];
+const TRIANGLE_ROW_3: TeamMember[] = [
+  {
+    name: 'Prof. Okoro',
+    title: 'Researcher',
+    photo: '/team/okoro.jpg',
+  },
+  {
+    name: 'Dr. Adamu',
+    title: 'Researcher',
+    photo: '/team/adamu.jpg',
+  },
+  {
+    name: 'Engr. Hameedat',
+    title: 'Researcher',
+    photo: '/team/hameedat.jpeg',
+  },
+];
 
-  const handleError = () => {
-    if (attempt < candidateExtensions.length) {
-      setCurrentSrc(`${cleanBase}${candidateExtensions[attempt]}`);
-      setAttempt((prev) => prev + 1);
-    }
-  };
-
-  const initials = alt
-    .replace(/^Engr\.\s*|Prof\.\s*|Dr\.\s*/gi, '')
-    .trim()
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join('');
-
-  return (
-    <div className="relative w-full aspect-square bg-slate-100 overflow-hidden rounded-xl border border-slate-200">
+const MemberCard: React.FC<{ member: TeamMember }> = ({ member }) => (
+  <div className="w-48 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs flex flex-col items-center text-center">
+    <div className="h-24 w-24 rounded-full overflow-hidden border-2 border-[#500b50]/20 bg-slate-100 mb-3 shrink-0">
       <img
-        src={currentSrc}
-        alt={alt}
-        onError={handleError}
-        className="w-full h-full object-cover object-top"
+        src={member.photo}
+        alt={member.name}
+        className="h-full w-full object-cover object-top"
       />
-      <div className="absolute inset-0 -z-10 flex items-center justify-center font-mono text-sm font-bold text-slate-400">
-        {initials}
-      </div>
     </div>
-  );
-};
+    <h4 className="font-bold text-xs text-slate-900 leading-snug">{member.name}</h4>
+    <p className="text-[11px] text-slate-500 mt-0.5">{member.title}</p>
+  </div>
+);
 
-export default function AdminTab({
-  apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://national-power-backend.onrender.com',
-}: AdminTabProps) {
-  const [activeView, setActiveView] = useState<'team' | 'requests'>('team');
-  const [users, setUsers] = useState<UserRecord[]>([]);
+export const AdminTab: React.FC = () => {
+  const [requests, setRequests] = useState<AccessRequestItem[]>([]);
   const [loading, setLoading] = useState(false);
-  const [processingId, setProcessingId] = useState<string | null>(null);
-  const [issuedCredential, setIssuedCredential] = useState<{ name: string; pass: string } | null>(null);
+  const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+  const [isAdminUser, setIsAdminUser] = useState(false);
 
-  const fetchUsers = async () => {
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('ml4ps_user') || localStorage.getItem('nesi_user');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          setIsAdminUser(parsed.role === 'admin' || Boolean(parsed.isAdmin));
+        }
+      } catch {}
+    }
+  }, []);
+
+  const fetchRequests = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${apiBaseUrl}/api/auth/users`);
-      if (res.ok) {
-        const data = await res.json();
-        setUsers(data);
-      }
-    } catch {
-      // API error handled silently
+      const list = await fetchAllPlatformAccessRequests();
+      const normalized: AccessRequestItem[] = list.map((r: any) => ({
+        id: String(r.id || 'req-' + Math.random().toString(36).slice(2, 7)),
+        full_name: r.full_name || r.name || 'User',
+        email: r.email || '',
+        institution: r.institution || 'Independent',
+        reason: r.reason || '',
+        password: r.password || '',
+        role: r.role === 'admin' ? 'admin' : 'user',
+        status: r.status || 'pending',
+        created_at: r.created_at || new Date().toISOString(),
+      }));
+      setRequests(normalized);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchUsers();
-  }, [apiBaseUrl]);
+    fetchRequests();
+  }, [fetchRequests]);
 
-  const handleApprove = async (userId: string, targetName: string) => {
-    setProcessingId(userId);
-    try {
-      const res = await fetch(`${apiBaseUrl}/api/auth/approve/${userId}`, { method: 'POST' });
-      const data = await res.json();
-      if (res.ok) {
-        setIssuedCredential({
-          name: data.user_name || targetName,
-          pass: data.temp_password || 'AuthKey#2026',
-        });
-        await fetchUsers();
-      } else {
-        alert(data.detail || 'Approval failed.');
-      }
-    } catch {
-      alert('Error approving user.');
-    } finally {
-      setProcessingId(null);
-    }
+  const updateRequestState = async (
+    email: string,
+    updates: Partial<AccessRequestItem>
+  ) => {
+    const target = requests.find((r) => r.email.toLowerCase() === email.toLowerCase());
+    if (!target) return;
+
+    const updatedRecord = { ...target, ...updates };
+    const updatedList = requests.map((r) =>
+      r.email.toLowerCase() === email.toLowerCase() ? updatedRecord : r
+    );
+    setRequests(updatedList);
+    await persistPlatformAccessRequest(updatedRecord, updatedList);
   };
 
-  const handleReject = async (userId: string) => {
-    if (!confirm('Reject this request?')) return;
-    setProcessingId(userId);
-    try {
-      const res = await fetch(`${apiBaseUrl}/api/auth/reject/${userId}`, { method: 'POST' });
-      if (res.ok) {
-        await fetchUsers();
-      }
-    } catch {
-      alert('Error rejecting user.');
-    } finally {
-      setProcessingId(null);
-    }
-  };
-
-  const pendingUsers = users.filter((u) => !u.is_approved && u.status !== 'REJECTED');
+  const filtered = requests.filter((r) => (filter === 'all' ? true : r.status === filter));
+  const pendingCount = requests.filter((r) => r.status === 'pending').length;
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6 py-2">
-      {/* Top Header & Navigation Toggle */}
-      <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900">Project Workforce</h2>
-          <p className="text-xs text-slate-500">Research team .</p>
+    <div className="max-w-6xl mx-auto space-y-10 py-2 text-slate-800">
+      {/* ===================================================================== */}
+      {/* 1. WORKFORCE TRIANGLE (1 - 2 - 3 Pyramid Layout)                      */}
+      {/* ===================================================================== */}
+      <section className="space-y-6">
+        <div className="pb-3 border-b border-slate-200 text-center">
+          <h2 className="text-xl font-black text-slate-900 tracking-tight">Workforce</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Machine Learning 4 Power Systems (ML4PS) • FUT Minna
+          </p>
         </div>
 
-        <div className="flex rounded-lg border border-slate-200 bg-white p-1 text-xs font-semibold shadow-xs">
-          <button
-            onClick={() => setActiveView('team')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition ${
-              activeView === 'team' ? 'bg-[#500b50] text-white' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Users className="w-3.5 h-3.5" />
-            <span>Team ({WORKFORCE_ROSTER.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveView('requests')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition ${
-              activeView === 'requests' ? 'bg-[#500b50] text-white' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Admin Requests</span>
-            {pendingUsers.length > 0 && (
-              <span className="ml-1 px-1.5 py-0.2 rounded-full bg-rose-600 text-white text-[10px] font-bold">
-                {pendingUsers.length}
-              </span>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* Generated Credential Banner */}
-      {issuedCredential && (
-        <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50 flex items-center justify-between text-xs text-emerald-950">
-          <div className="flex items-center gap-2">
-            <Key className="w-4 h-4 text-emerald-700 shrink-0" />
-            <span>
-              Approved <strong>{issuedCredential.name}</strong>. Generated password:
-            </span>
-            <code className="bg-white px-2 py-0.5 rounded border border-emerald-300 font-mono font-bold text-slate-900">
-              {issuedCredential.pass}
-            </code>
-            <button
-              onClick={() => {
-                navigator.clipboard.writeText(issuedCredential.pass);
-                alert('Copied.');
-              }}
-              className="p-1 hover:text-slate-900 text-slate-500"
-              title="Copy"
-            >
-              <Copy className="w-3.5 h-3.5" />
-            </button>
+        <div className="flex flex-col items-center space-y-6 py-2">
+          {/* Top Apex (1) */}
+          <div className="flex justify-center">
+            {TRIANGLE_ROW_1.map((m) => (
+              <MemberCard key={m.name} member={m} />
+            ))}
           </div>
-          <button
-            onClick={() => setIssuedCredential(null)}
-            className="text-xs font-semibold text-emerald-800 hover:underline"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
 
-      {/* VIEW 1: Team Cards */}
-      {activeView === 'team' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-5">
-          {WORKFORCE_ROSTER.map((member) => (
-            <div
-              key={member.id}
-              className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-3"
-            >
-              <ResilientPortrait src={member.image} alt={member.name} />
-              <div>
-                <h3 className="font-bold text-sm text-slate-900 leading-snug">{member.name}</h3>
-                <p className="text-xs font-medium text-[#500b50] mt-0.5">{member.role}</p>
-                <p className="text-[11px] text-slate-500 mt-1">{member.department}</p>
-                <p className="text-[11px] text-slate-400">{member.institution}</p>
+          {/* Middle Row (2) */}
+          <div className="flex flex-wrap justify-center gap-6 sm:gap-10">
+            {TRIANGLE_ROW_2.map((m) => (
+              <MemberCard key={m.name} member={m} />
+            ))}
+          </div>
+
+          {/* Base Row (3) */}
+          <div className="flex flex-wrap justify-center gap-6 sm:gap-10">
+            {TRIANGLE_ROW_3.map((m) => (
+              <MemberCard key={m.name} member={m} />
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ===================================================================== */}
+      {/* 2. ACCOUNT ACCEPTANCE & REJECTION (Admin Management)                  */}
+      {/* ===================================================================== */}
+      {isAdminUser && (
+        <section className="space-y-4 pt-4 border-t border-slate-200">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-black text-slate-900 tracking-tight">
+                Account Requests (Acceptance &amp; Rejection)
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Accept or reject user signup requests and manage administrator roles.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="flex rounded-xl border border-slate-200 bg-white p-1 text-xs font-bold gap-1">
+                {(['all', 'pending', 'approved', 'rejected'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setFilter(tab)}
+                    className={`px-3 py-1 rounded-lg capitalize transition ${
+                      filter === tab
+                        ? 'bg-[#500b50] text-white'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {tab}
+                    {tab === 'pending' && pendingCount > 0 && (
+                      <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 text-[10px]">
+                        {pendingCount}
+                      </span>
+                    )}
+                  </button>
+                ))}
               </div>
-            </div>
-          ))}
-        </div>
-      )}
 
-      {/* VIEW 2: Admin Access Requests */}
-      {activeView === 'requests' && (
-        <div className="rounded-xl border border-slate-200 bg-white shadow-xs overflow-hidden">
-          <div className="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs font-bold text-slate-700">
-            <span>Pending Approvals ({pendingUsers.length})</span>
-            <button
-              onClick={fetchUsers}
-              disabled={loading}
-              className="flex items-center gap-1 font-normal text-slate-500 hover:text-slate-800"
-            >
-              <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
-              <span>Refresh</span>
-            </button>
+              <button
+                onClick={fetchRequests}
+                disabled={loading}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 hover:bg-slate-50"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+                <span>Refresh</span>
+              </button>
+            </div>
           </div>
 
-          {pendingUsers.length === 0 ? (
-            <div className="p-8 text-center text-xs text-slate-400">No pending requests.</div>
-          ) : (
-            <div className="divide-y divide-slate-100">
-              {pendingUsers.map((u) => (
-                <div
-                  key={u.id}
-                  className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
-                >
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-900">{u.name}</span>
-                      <span className="text-slate-400">({u.email})</span>
-                    </div>
-                    <p className="text-slate-500">
-                      {u.institution} {u.department ? `• ${u.department}` : ''}
-                    </p>
-                    {u.reason && <p className="text-slate-400 italic text-[11px]">&ldquo;{u.reason}&rdquo;</p>}
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={() => handleApprove(u.id, u.name)}
-                      disabled={processingId === u.id}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold flex items-center gap-1 transition disabled:opacity-50"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                      <span>Accept</span>
-                    </button>
-                    <button
-                      onClick={() => handleReject(u.id)}
-                      disabled={processingId === u.id}
-                      className="px-3 py-1.5 rounded-lg border border-rose-300 text-rose-600 hover:bg-rose-50 font-semibold flex items-center gap-1 transition disabled:opacity-50"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                      <span>Reject</span>
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+          <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-xs">
+            {filtered.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-500">
+                No account requests in this view.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs min-w-[700px]">
+                  <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-bold uppercase text-[10px]">
+                    <tr>
+                      <th className="py-2.5 px-4">Name &amp; Email</th>
+                      <th className="py-2.5 px-4">Institution</th>
+                      <th className="py-2.5 px-4">Reason</th>
+                      <th className="py-2.5 px-4">Role</th>
+                      <th className="py-2.5 px-4">Status</th>
+                      <th className="py-2.5 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filtered.map((item) => (
+                      <tr key={item.id} className="hover:bg-slate-50">
+                        <td className="py-3 px-4">
+                          <p className="font-bold text-slate-900">{item.full_name}</p>
+                          <p className="text-[11px] font-mono text-slate-500">{item.email}</p>
+                        </td>
+                        <td className="py-3 px-4 text-slate-700">{item.institution}</td>
+                        <td className="py-3 px-4 text-slate-600 max-w-xs">{item.reason}</td>
+                        <td className="py-3 px-4">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                              item.role === 'admin'
+                                ? 'bg-purple-100 text-[#500b50]'
+                                : 'bg-slate-100 text-slate-700'
+                            }`}
+                          >
+                            {item.role}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4">
+                          {item.status === 'pending' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
+                              <Clock className="h-3 w-3" />
+                              <span>Pending</span>
+                            </span>
+                          )}
+                          {item.status === 'approved' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                              <Check className="h-3 w-3" />
+                              <span>Accepted</span>
+                            </span>
+                          )}
+                          {item.status === 'rejected' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-100 text-rose-800 text-[10px] font-bold">
+                              <X className="h-3 w-3" />
+                              <span>Rejected</span>
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-right space-x-1.5">
+                          {item.status !== 'approved' && (
+                            <button
+                              onClick={() =>
+                                updateRequestState(item.email, { status: 'approved' })
+                              }
+                              className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px]"
+                            >
+                              Accept
+                            </button>
+                          )}
+                          {item.status !== 'rejected' && (
+                            <button
+                              onClick={() =>
+                                updateRequestState(item.email, { status: 'rejected' })
+                              }
+                              className="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-700 text-white font-bold text-[11px]"
+                            >
+                              Reject
+                            </button>
+                          )}
+                          {item.status === 'approved' && (
+                            <button
+                              onClick={() =>
+                                updateRequestState(item.email, {
+                                  role: item.role === 'admin' ? 'user' : 'admin',
+                                })
+                              }
+                              className="px-2.5 py-1 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-bold text-[11px] inline-flex items-center gap-1"
+                            >
+                              <UserCheck className="h-3 w-3 text-[#500b50]" />
+                              <span>
+                                {item.role === 'admin' ? 'Revoke Admin' : 'Make Admin'}
+                              </span>
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
       )}
     </div>
   );
-}
+};

@@ -7,6 +7,7 @@ export interface BusData {
   p_mw: number;
   q_mvar?: number;
   zone?: string;
+  status?: string;
 }
 
 export interface LineData {
@@ -21,8 +22,10 @@ export interface LineData {
   p_mw?: number;
   q_mvar?: number;
   flow_mw?: number;
+  losses_mw?: number;
   loading_percent: number;
   in_service?: boolean;
+  status?: string;
 }
 
 export interface GridModelMeta {
@@ -38,6 +41,65 @@ export interface GridModelMeta {
   is_active: boolean;
   converged?: boolean;
   is_default?: boolean;
+}
+
+export interface SimResult {
+  converged: boolean;
+  frequency: number;
+  total_gen_mw: number;
+  total_load_mw: number;
+  total_losses_mw: number;
+  buses: BusData[];
+  lines: LineData[];
+  message?: string | null;
+}
+
+export interface MarketResult {
+  smp_naira_per_mwh?: number;
+  system_marginal_price?: number;
+  total_cleared_mw?: number;
+  total_cost_naira?: number;
+  unserved_mw?: number;
+  schedule?: any[];
+  disco_allocations?: any[];
+  [key: string]: any;
+}
+
+export interface UserAccount {
+  id: string;
+  username?: string;
+  name?: string;
+  full_name?: string;
+  email: string;
+  role: 'admin' | 'user' | string;
+  institution?: string;
+  status?: 'pending' | 'approved' | 'rejected' | string;
+  is_admin?: boolean;
+  created_at?: string;
+}
+
+export interface MultiMachineResult {
+  time: number[];
+  fault_bus_id?: number;
+  fault_start_s?: number;
+  fault_clear_s?: number;
+  lowest_cct_ms?: number;
+  system_status?: 'STABLE' | 'POLE_SLIP' | string;
+  trajectories: {
+    id: number | string;
+    name: string;
+    angles: number[];
+  }[];
+  machines: {
+    id: number | string;
+    name: string;
+    bus_node: string | number;
+    inertia_h: number | string;
+    max_excursion: string | number;
+    cct_ms: number;
+    cct_margin_ms: number;
+    status: string;
+  }[];
 }
 
 export interface NewBusElement {
@@ -90,17 +152,13 @@ export interface GeneratorOverride {
   ratedMw?: number;
   activeMw?: number;
   vmPu?: number;
-  // Hydro dynamic parameters
   waterIntakeM3s?: number;
   netHeadM?: number;
   turbineEfficiency?: number;
-  // Gas thermal dynamic parameters
   gasPressureBar?: number;
   ambientTempC?: number;
-  // Distributed / Renewable parameters
   irradianceWm2?: number;
   cloudCoverPct?: number;
-  // Machine dynamics
   inertiaH?: number;
   droopPercent?: number;
   inService?: boolean;
