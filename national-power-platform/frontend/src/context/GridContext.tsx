@@ -16,6 +16,11 @@ import {
   GridModelMeta,
   PowerFlowVariables,
   CascadeResult,
+  BusOverride,
+  LineOverride,
+  GeneratorOverride,
+  LoadOverride,
+  WideAreaScenario,
 } from '@/types/grid';
 
 const supabaseUrl =
@@ -58,6 +63,13 @@ interface PowerFlowSummary {
 
 export interface ExtendedPowerFlowVariables extends PowerFlowVariables {
   disabledBuses?: number[];
+  disabledGenerators?: number[];
+  disabledLoads?: number[];
+  busOverrides?: Record<number, BusOverride>;
+  lineOverrides?: Record<number, LineOverride>;
+  generatorOverrides?: Record<number, GeneratorOverride>;
+  loadOverrides?: Record<number, LoadOverride>;
+  wideAreaScenario?: WideAreaScenario;
 }
 
 interface GridContextType {
@@ -96,7 +108,7 @@ interface HydrateResult {
   reason?: string;
 }
 
-const DEFAULT_VARIABLES: ExtendedPowerFlowVariables = {
+export const DEFAULT_VARIABLES: ExtendedPowerFlowVariables = {
   loadMultiplier: 1.0,
   targetPowerFactor: 0.9,
   slackVoltagePu: 1.05,
@@ -106,6 +118,17 @@ const DEFAULT_VARIABLES: ExtendedPowerFlowVariables = {
   newLines: [],
   newGenerators: [],
   disabledBuses: [],
+  disabledGenerators: [],
+  disabledLoads: [],
+  busOverrides: {},
+  lineOverrides: {},
+  generatorOverrides: {},
+  loadOverrides: {},
+  wideAreaScenario: {
+    activeEvent: 'NONE',
+    severityPercent: 30,
+    autoRecoveryEnabled: true,
+  },
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -165,7 +188,9 @@ function normalizeRawModel(m: any): GridModelMeta {
   };
 }
 
-function mergeVars(saved: Partial<ExtendedPowerFlowVariables> | undefined | null): ExtendedPowerFlowVariables {
+function mergeVars(
+  saved: Partial<ExtendedPowerFlowVariables> | undefined | null
+): ExtendedPowerFlowVariables {
   if (!saved || typeof saved !== 'object') return DEFAULT_VARIABLES;
   return {
     ...DEFAULT_VARIABLES,
@@ -174,6 +199,13 @@ function mergeVars(saved: Partial<ExtendedPowerFlowVariables> | undefined | null
     newLines: Array.isArray(saved.newLines) ? saved.newLines : [],
     newGenerators: Array.isArray(saved.newGenerators) ? saved.newGenerators : [],
     disabledBuses: Array.isArray(saved.disabledBuses) ? saved.disabledBuses : [],
+    disabledGenerators: Array.isArray(saved.disabledGenerators) ? saved.disabledGenerators : [],
+    disabledLoads: Array.isArray(saved.disabledLoads) ? saved.disabledLoads : [],
+    busOverrides: saved.busOverrides || {},
+    lineOverrides: saved.lineOverrides || {},
+    generatorOverrides: saved.generatorOverrides || {},
+    loadOverrides: saved.loadOverrides || {},
+    wideAreaScenario: saved.wideAreaScenario || DEFAULT_VARIABLES.wideAreaScenario,
   };
 }
 
@@ -191,7 +223,11 @@ function getStoredModelModifications(
   return null;
 }
 
-function saveModelModifications(modelKey: string, vars: ExtendedPowerFlowVariables, trips: number[]) {
+function saveModelModifications(
+  modelKey: string,
+  vars: ExtendedPowerFlowVariables,
+  trips: number[]
+) {
   if (typeof window === 'undefined') return;
   const userKey = getCurrentUserKey();
   try {
@@ -268,6 +304,205 @@ function describeNetworkError(err: any): string {
     return 'The solver took too long to respond (backend waking up). Click Solve to retry.';
   }
   return 'Cannot reach the solver backend. Check your connection and click Solve to retry.';
+}
+
+/**
+ * Applies per-element Static & Dynamic Overrides (Hydro water intake, Gas pressure,
+ * Solar irradiance, Bus voltage/shunt overrides, Load priority, and Wide-Area Disruptive Events)
+ * to the solved telemetry so every property edit is reflected immediately across all views.
+ */
+function applyElementOverridesToTelemetry(
+  rawBuses: BusData[],
+  rawLines: LineData[],
+  vars: ExtendedPowerFlowVariables,
+  trippedLines: number[]
+): { buses: BusData[]; lines: LineData[]; frequencyDeltaHz: number } {
+  const busOverrides = vars.busOverrides || {};
+  const lineOverrides = vars.lineOverrides || {};
+  const genOverrides = vars.generatorOverrides || {};
+  const loadOverrides = vars.loadOverrides || {};
+  const disabledBuses = new Set(vars.disabledBuses || []);
+  const disabledGens = new Set(vars.disabledGenerators || []);
+  const disabledLoads = new Set(vars.disabledLoads || []);
+  const scenario = vars.wideAreaScenario || {
+    activeEvent: 'NONE',
+    severityPercent: 0,
+    autoRecoveryEnabled: true,
+  };
+
+  let netGenDeltaMw = 0;
+
+  const updatedBuses = rawBuses.map((b) => {
+    let name = b.name;
+    let vn_kv = b.vn_kv ?? 330;
+    let zone = b.zone || 'Grid Zone';
+    let v_pu = b.v_pu ?? 1.0;
+    let p_mw = b.p_mw ?? 0;
+    let q_mvar = b.q_mvar ?? 0;
+
+    const bOvr = busOverrides[b.id];
+    if (bOvr) {
+      if (bOvr.name) name = bOvr.name;
+      if (bOvr.vn_kv) vn_kv = bOvr.vn_kv;
+      if (bOvr.zone) zone = bOvr.zone;
+      if (bOvr.v_pu_setpoint !== undefined) v_pu = bOvr.v_pu_setpoint;
+      if (bOvr.shunt_mvar !== undefined) {
+        q_mvar -= bOvr.shunt_mvar;
+        v_pu = Math.min(1.12, Math.max(0.82, v_pu + bOvr.shunt_mvar * 0.00025));
+      }
+    }
+
+    // Generator overrides (Hydro Water Intake / Gas Pressure / Solar Irradiance)
+    const gOvr = genOverrides[b.id];
+    if (disabledGens.has(b.id) || (gOvr && gOvr.inService === false)) {
+      if (p_mw < 0) {
+        netGenDeltaMw -= Math.abs(p_mw);
+        p_mw = 0;
+      }
+    } else if (gOvr) {
+      if (gOvr.name) name = gOvr.name;
+      if (gOvr.vmPu !== undefined) v_pu = gOvr.vmPu;
+
+      let computedGenMw = gOvr.activeMw ?? Math.abs(p_mw);
+      if (
+        gOvr.primeMover === 'Hydro' &&
+        gOvr.waterIntakeM3s !== undefined &&
+        gOvr.netHeadM !== undefined
+      ) {
+        const eff = (gOvr.turbineEfficiency ?? 90) / 100;
+        // P_MW = (eta * 1000 * 9.81 * H * Q) / 1e6
+        computedGenMw = Number(
+          ((eff * 9.81 * gOvr.netHeadM * gOvr.waterIntakeM3s) / 1000).toFixed(1)
+        );
+      } else if (
+        gOvr.primeMover === 'Thermal (Gas)' &&
+        gOvr.gasPressureBar !== undefined
+      ) {
+        const baseCap = gOvr.ratedMw || Math.max(100, Math.abs(p_mw) * 1.25);
+        const pressureRatio = Math.min(1.15, Math.max(0, gOvr.gasPressureBar / 45.0));
+        const tempDerate =
+          gOvr.ambientTempC && gOvr.ambientTempC > 30
+            ? Math.max(0.75, 1 - (gOvr.ambientTempC - 30) * 0.004)
+            : 1.0;
+        computedGenMw = Number((baseCap * 0.85 * pressureRatio * tempDerate).toFixed(1));
+      } else if (
+        gOvr.primeMover === 'Solar / Distributed' &&
+        gOvr.irradianceWm2 !== undefined
+      ) {
+        const baseCap = gOvr.ratedMw || Math.max(50, Math.abs(p_mw));
+        const irrFactor = Math.max(0, gOvr.irradianceWm2 / 1000);
+        const cloudFactor = 1 - Math.min(95, Math.max(0, gOvr.cloudCoverPct ?? 0)) / 100;
+        computedGenMw = Number((baseCap * irrFactor * cloudFactor).toFixed(1));
+      }
+
+      const prevGenMw = p_mw < 0 ? Math.abs(p_mw) : 0;
+      netGenDeltaMw += computedGenMw - prevGenMw;
+      p_mw = -computedGenMw;
+    }
+
+    // Load overrides
+    const lOvr = loadOverrides[b.id];
+    if (disabledLoads.has(b.id) || (lOvr && lOvr.inService === false)) {
+      if (p_mw > 0) {
+        netGenDeltaMw += p_mw;
+        p_mw = 0;
+        q_mvar = 0;
+      }
+    } else if (lOvr) {
+      if (lOvr.name) name = lOvr.name;
+      if (lOvr.pMw !== undefined && p_mw >= 0) {
+        netGenDeltaMw -= lOvr.pMw - p_mw;
+        p_mw = lOvr.pMw;
+      }
+      if (lOvr.qMvar !== undefined) {
+        q_mvar = lOvr.qMvar;
+      }
+    }
+
+    // Wide-Area Disruptive Event effects
+    if (scenario.activeEvent !== 'NONE') {
+      const sev = (scenario.severityPercent || 30) / 100;
+      const isHydroBus = /kainji|jebba|shiroro|zungeru|hydro/i.test(name);
+      const isGasBus = p_mw < -15 && !isHydroBus;
+
+      if (scenario.activeEvent === 'GAS_PIPELINE_RUPTURE' && isGasBus) {
+        const loss = Math.abs(p_mw) * sev * 0.65;
+        p_mw += loss; // reduces negative generation injection
+        netGenDeltaMw -= loss;
+        v_pu = Math.max(0.86, v_pu - sev * 0.04);
+      } else if (scenario.activeEvent === 'HYDRO_FLOOD_SURGE' && isHydroBus) {
+        // Excess spillway turbulence / tailwater rise derates net head
+        const loss = Math.abs(p_mw) * sev * 0.4;
+        p_mw += loss;
+        netGenDeltaMw -= loss;
+      } else if (scenario.activeEvent === 'CYBER_SCADA_ATTACK') {
+        v_pu = Math.max(0.85, v_pu - sev * 0.05);
+      } else if (scenario.activeEvent === 'DISTRIBUTED_CLOUD_TRANSIENT') {
+        v_pu = Math.max(0.88, v_pu - sev * 0.03);
+      }
+
+      // If Auto-Recovery is enabled, protect critical infrastructure & boost voltage via emergency Var support
+      if (scenario.autoRecoveryEnabled) {
+        v_pu = Math.min(1.05, v_pu + 0.025);
+      }
+    }
+
+    if (disabledBuses.has(b.id)) {
+      p_mw = 0;
+      q_mvar = 0;
+    }
+
+    return {
+      ...b,
+      name,
+      vn_kv,
+      zone,
+      v_pu: Number(v_pu.toFixed(4)),
+      p_mw: Number(p_mw.toFixed(2)),
+      q_mvar: Number(q_mvar.toFixed(2)),
+    };
+  });
+
+  const trippedSet = new Set(trippedLines);
+  const updatedLines = rawLines.map((l) => {
+    const lOvr = lineOverrides[l.id];
+    const isTripped = trippedSet.has(l.id) || lOvr?.in_service === false;
+    let name = lOvr?.name || l.name;
+    let length_km = lOvr?.length_km ?? l.length_km;
+    let r_ohm_per_km = lOvr?.r_ohm_per_km ?? l.r_ohm_per_km;
+    let x_ohm_per_km = lOvr?.x_ohm_per_km ?? l.x_ohm_per_km;
+    let flow_mw = isTripped ? 0 : l.flow_mw ?? l.p_mw ?? 0;
+    let loading_percent = isTripped ? 0 : l.loading_percent ?? 0;
+
+    if (!isTripped && lOvr?.x_ohm_per_km && l.x_ohm_per_km) {
+      const ratio = l.x_ohm_per_km / Math.max(0.01, lOvr.x_ohm_per_km);
+      flow_mw = Number((flow_mw * ratio).toFixed(1));
+      loading_percent = Number((loading_percent * ratio).toFixed(1));
+    }
+
+    if (!isTripped && lOvr?.thermal_rating_mw && lOvr.thermal_rating_mw > 0) {
+      loading_percent = Number(
+        ((Math.abs(flow_mw) / lOvr.thermal_rating_mw) * 100).toFixed(1)
+      );
+    }
+
+    return {
+      ...l,
+      name,
+      length_km,
+      r_ohm_per_km,
+      x_ohm_per_km,
+      flow_mw,
+      p_mw: flow_mw,
+      loading_percent,
+      in_service: !isTripped,
+    };
+  });
+
+  // System stiffness ~ 2500 MW/Hz
+  const frequencyDeltaHz = Number((netGenDeltaMw / 2500).toFixed(3));
+
+  return { buses: updatedBuses, lines: updatedLines, frequencyDeltaHz };
 }
 
 async function downloadModelFile(
@@ -358,7 +593,8 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [buses, setBuses] = useState<BusData[]>([]);
   const [lines, setLines] = useState<LineData[]>([]);
   const [trippedLines, setTrippedLines] = useState<number[]>([]);
-  const [pfVariables, setPfVariablesState] = useState<ExtendedPowerFlowVariables>(DEFAULT_VARIABLES);
+  const [pfVariables, setPfVariablesState] =
+    useState<ExtendedPowerFlowVariables>(DEFAULT_VARIABLES);
   const [loading, setLoading] = useState<boolean>(false);
   const [modelsLoading, setModelsLoading] = useState<boolean>(false);
   const [divergedNotice, setDivergedNotice] = useState<string | null>(null);
@@ -372,6 +608,8 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const pfVariablesRef = useRef<ExtendedPowerFlowVariables>(DEFAULT_VARIABLES);
   const trippedRef = useRef<number[]>([]);
+  const rawBusesRef = useRef<BusData[]>([]);
+  const rawLinesRef = useRef<LineData[]>([]);
   const linesRef = useRef<LineData[]>([]);
   const activeModelRef = useRef<GridModelMeta | null>(null);
   const modelsRef = useRef<GridModelMeta[]>([]);
@@ -398,6 +636,18 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         pfVariablesRef.current = next;
         setPfVariablesState(next);
         persistModifications();
+
+        // Immediately reflect element overrides on existing raw buses & lines for instant UI feedback
+        if (rawBusesRef.current.length > 0) {
+          const applied = applyElementOverridesToTelemetry(
+            rawBusesRef.current,
+            rawLinesRef.current,
+            next,
+            trippedRef.current
+          );
+          setBuses(applied.buses);
+          setLines(applied.lines);
+        }
       },
       [persistModifications]
     );
@@ -411,24 +661,20 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     [persistModifications]
   );
 
-  // Hydrate model into backend memory:
-  // 1) POST /api/models/activate/{name}
-  // 2) POST /api/models/load-payload using network_payload stored in Supabase grid_models table
-  // 3) Download .m file from Supabase Storage and POST /api/models/upload
   const hydrateBackend = useCallback(async (model: GridModelMeta): Promise<HydrateResult> => {
     const names = uniq([model.name, model.id, model.name.replace(/\.m$/i, '')]);
     let reachedBackend = false;
 
-    // 1. Check if backend already has it in memory
     for (const n of names) {
       try {
-        const r = await callApi(`/api/models/activate/${encodeURIComponent(n)}`, { method: 'POST' });
+        const r = await callApi(`/api/models/activate/${encodeURIComponent(n)}`, {
+          method: 'POST',
+        });
         reachedBackend = true;
         if (r.ok) return { ok: true };
       } catch {}
     }
 
-    // 2. Check Supabase grid_models row for network_payload (JSON topology)
     let rawRow = rawRowsRef.current.get(model.id) || rawRowsRef.current.get(model.name);
     if (!rawRow && supabase) {
       try {
@@ -475,7 +721,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       } catch {}
     }
 
-    // 3. Fallback: Download raw .m file from Supabase Storage bucket & upload to solver
     const { blob } = await downloadModelFile(model, rawRow);
     if (blob) {
       const fileName = /\.[a-z0-9]+$/i.test(model.name) ? model.name : `${model.name}.m`;
@@ -484,7 +729,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         fd.append('file', blob, fileName);
         const up = await callApi('/api/models/upload', { method: 'POST', body: fd });
         if (up.ok) {
-          // Cache network_payload back into Supabase grid_models row so future loads are instant
           if (up.body?.network_payload && supabase) {
             try {
               await supabase
@@ -500,7 +744,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
     }
 
-    // 4. Check if backend has any default/fallback model loaded so the solver can still run
     try {
       const listRes = await callApi('/api/models', { method: 'GET' });
       if (listRes.ok && Array.isArray(listRes.body) && listRes.body.length > 0) {
@@ -548,7 +791,13 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       try {
         const { data, error } = await supabase.from('grid_models').select('*');
         if (!error && Array.isArray(data) && data.length > 0) {
-          retrieved = data.map((row) => {
+          // Exclude internal system rows like __ml4ps_access_requests__
+          const validRows = data.filter(
+            (row: any) =>
+              row?.name !== '__ml4ps_access_requests__' &&
+              row?.id !== '__ml4ps_access_requests__'
+          );
+          retrieved = validRows.map((row) => {
             const m = normalizeRawModel(row);
             rawMap.set(m.id, row);
             rawMap.set(m.name, row);
@@ -634,6 +883,14 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           tripsToRun = Array.from(new Set([...tripsToRun, ...incidentLines]));
         }
 
+        // Include lines disabled via lineOverrides
+        if (varsToRun?.lineOverrides) {
+          const ovrTrips = Object.entries(varsToRun.lineOverrides)
+            .filter(([, ovr]) => ovr?.in_service === false)
+            .map(([idStr]) => Number(idStr));
+          tripsToRun = Array.from(new Set([...tripsToRun, ...ovrTrips]));
+        }
+
         const finite = (v: any, fallback: number) =>
           Number.isFinite(Number(v)) ? Number(v) : fallback;
 
@@ -680,12 +937,31 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         const data = result.body;
 
-        if (Array.isArray(data.buses) && data.buses.length > 0) setBuses(data.buses);
-        if (Array.isArray(data.lines) && data.lines.length > 0) setLines(data.lines);
+        if (Array.isArray(data.buses) && data.buses.length > 0) {
+          rawBusesRef.current = data.buses;
+        }
+        if (Array.isArray(data.lines) && data.lines.length > 0) {
+          rawLinesRef.current = data.lines;
+        }
+
+        const applied = applyElementOverridesToTelemetry(
+          rawBusesRef.current,
+          rawLinesRef.current,
+          varsToRun,
+          tripsToRun
+        );
+
+        setBuses(applied.buses);
+        setLines(applied.lines);
+
+        const baseFreq = data.frequency ?? 50.0;
+        const settledFreq = Number(
+          Math.max(47.5, Math.min(51.5, baseFreq + applied.frequencyDeltaHz)).toFixed(3)
+        );
 
         setSummary({
           converged: data.converged ?? true,
-          frequency: data.frequency ?? 50.0,
+          frequency: settledFreq,
           total_gen_mw: data.total_gen_mw ?? 0.0,
           total_load_mw: data.total_load_mw ?? 0.0,
           total_losses_mw: data.total_losses_mw ?? 0.0,
@@ -734,6 +1010,8 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (switchingModel) {
         setBuses([]);
         setLines([]);
+        rawBusesRef.current = [];
+        rawLinesRef.current = [];
         linesRef.current = [];
       }
 

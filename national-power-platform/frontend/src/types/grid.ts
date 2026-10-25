@@ -1,16 +1,12 @@
 export interface BusData {
   id: number;
   name: string;
-  zone: string;
   vn_kv?: number;
-  x?: number;
-  y?: number;
   v_pu: number;
-  va_deg: number;
+  va_deg?: number;
   p_mw: number;
-  q_mvar: number;
-  is_gen?: boolean;
-  is_load?: boolean;
+  q_mvar?: number;
+  zone?: string;
 }
 
 export interface LineData {
@@ -18,54 +14,30 @@ export interface LineData {
   name: string;
   from_bus: number;
   to_bus: number;
-  in_service: boolean;
+  length_km?: number;
+  r_ohm_per_km?: number;
+  x_ohm_per_km?: number;
+  max_i_ka?: number;
+  p_mw?: number;
+  q_mvar?: number;
+  flow_mw?: number;
   loading_percent: number;
-  flow_mw: number;
-  p_mw: number;
-  losses_mw: number;
+  in_service?: boolean;
 }
 
-export interface SimResult {
-  converged: boolean;
-  model_name?: string;
-  frequency: number;
-  total_gen_mw: number;
-  total_load_mw: number;
-  total_losses_mw: number;
-  buses: BusData[];
-  lines: LineData[];
-  message?: string;
-}
-
-export interface CascadeStep {
-  step: number;
-  event_type: string;
-  description: string;
-  tripped_in_this_step: number[];
-  total_tripped_so_far: number[];
-  converged: boolean;
-  max_loading_percent: number;
-  total_losses_mw: number;
-  frequency_hz: number;
-}
-
-export interface IslandDetail {
-  island_id: number;
-  bus_count: number;
-  generation_mw: number;
-  demand_mw: number;
-  status: 'SYNCHRONOUS_ONLINE' | 'BLACKOUT_ISLAND' | 'DEFICIT_COLLAPSE';
-  sample_buses: string[];
-}
-
-export interface CascadeResult {
-  status: 'STABILIZED_POST_CONTINGENCY' | 'PARTIAL_SYSTEM_COLLAPSE' | 'TOTAL_BLACKOUT' | 'NO_MODEL';
-  total_steps: number;
-  timeline: CascadeStep[];
-  islands: IslandDetail[];
-  all_tripped_lines: number[];
-  final_sol: SimResult;
-  converged: boolean;
+export interface GridModelMeta {
+  id: string;
+  name: string;
+  voltage_level: string;
+  platform: string;
+  buses: number;
+  branches: number;
+  total_installed_mw: number;
+  total_demand_mw: number;
+  domain: string;
+  is_active: boolean;
+  converged?: boolean;
+  is_default?: boolean;
 }
 
 export interface NewBusElement {
@@ -93,6 +65,74 @@ export interface NewGenElement {
   p_max_mw: number;
 }
 
+export interface BusOverride {
+  name?: string;
+  vn_kv?: number;
+  zone?: string;
+  v_pu_setpoint?: number;
+  shunt_mvar?: number;
+  in_service?: boolean;
+}
+
+export interface LineOverride {
+  name?: string;
+  length_km?: number;
+  r_ohm_per_km?: number;
+  x_ohm_per_km?: number;
+  thermal_rating_mw?: number;
+  in_service?: boolean;
+}
+
+export interface GeneratorOverride {
+  busId: number;
+  name?: string;
+  primeMover: 'Hydro' | 'Thermal (Gas)' | 'Solar / Distributed' | 'Synchronous';
+  ratedMw?: number;
+  activeMw?: number;
+  vmPu?: number;
+  // Hydro dynamic parameters
+  waterIntakeM3s?: number;
+  netHeadM?: number;
+  turbineEfficiency?: number;
+  // Gas thermal dynamic parameters
+  gasPressureBar?: number;
+  ambientTempC?: number;
+  // Distributed / Renewable parameters
+  irradianceWm2?: number;
+  cloudCoverPct?: number;
+  // Machine dynamics
+  inertiaH?: number;
+  droopPercent?: number;
+  inService?: boolean;
+}
+
+export interface LoadOverride {
+  busId: number;
+  name?: string;
+  pMw?: number;
+  qMvar?: number;
+  powerFactor?: number;
+  criticalInfrastructure?:
+    | 'Standard Bulk Load'
+    | 'Water Treatment & Pumping'
+    | 'Regional Hospital Cluster'
+    | 'Telecom & SCADA Hub'
+    | 'Industrial Corridor';
+  uflsProtected?: boolean;
+  inService?: boolean;
+}
+
+export interface WideAreaScenario {
+  activeEvent:
+    | 'NONE'
+    | 'HYDRO_FLOOD_SURGE'
+    | 'GAS_PIPELINE_RUPTURE'
+    | 'CYBER_SCADA_ATTACK'
+    | 'DISTRIBUTED_CLOUD_TRANSIENT';
+  severityPercent: number;
+  autoRecoveryEnabled: boolean;
+}
+
 export interface PowerFlowVariables {
   loadMultiplier: number;
   targetPowerFactor: number;
@@ -104,106 +144,28 @@ export interface PowerFlowVariables {
   newGenerators: NewGenElement[];
 }
 
-export interface UserAccount {
-  id: string;
-  name: string;
-  email: string;
-  institution: string;
-  department?: string;
-  role: string;
-  reason?: string;
-  referee?: string;
-  research_tags?: string;
-  status: 'PENDING' | 'APPROVED' | 'REJECTED';
-  password?: string;
-  temp_password?: string;
-  registered_at?: string;
-}
-
-export interface GeneratorDispatch {
-  id: number;
-  name: string;
-  type: string;
-  marginal_cost: number;
-  dispatched_mw: number;
-  max_mw: number;
-  capacity_utilization: number;
-  hourly_cost_ngn: number;
-}
-
-export interface MarketResult {
+export interface CascadeStep {
+  step: number;
+  tripped_in_this_step: number[];
+  max_loading_percent: number;
   converged: boolean;
-  market_clearing_price_ngn: number;
-  total_dispatched_mw: number;
-  total_hourly_cost_ngn: number;
-  hydro_share_percent: number;
-  thermal_share_percent: number;
-  merit_order: GeneratorDispatch[];
+  description: string;
 }
 
-export interface GridModelMeta {
-  id: string;
-  name: string;
-  voltage_level: string;
-  domain: string;
-  platform: string;
-  buses: number;
-  branches: number;
-  total_installed_mw: number;
-  total_demand_mw: number;
-  converged: boolean;
-  is_default: boolean;
-  is_active: boolean;
+export interface CascadeResult {
+  status: string;
+  total_steps: number;
+  all_tripped_lines: number[];
+  timeline: CascadeStep[];
+  final_buses?: BusData[];
+  final_lines?: LineData[];
 }
 
-export interface GeneratorRotorResult {
-  id: string;
-  name: string;
-  bus_id: number;
-  color: string;
-  is_slack: boolean;
-  H: number;
-  rotor_angle_deg: number[];
-  relative_angle_deg: number[];
-  max_angle_deg: number;
-  min_angle_deg: number;
-}
-
-export interface MultiMachineResult {
-  status: 'STABLE' | 'UNSTABLE_POLE_SLIP' | 'NO_MODEL';
-  fault_bus_id: number;
-  fault_bus_name: string;
-  fault_duration_ms: number;
-  cct_ms: number;
-  cct_cycles: number;
-  is_transiently_stable: boolean;
-  unstable_generator?: string;
-  time: number[];
-  generators: GeneratorRotorResult[];
-  statutory_protection_limit_ms: number;
-}
-export interface UFLSEvent {
+export interface UflsEvent {
   stage: number;
-  name?: string;
-  timestamp: number;
-  timestamp_s?: number;
   threshold_hz: number;
-  frequency_at_trip?: number;
   shed_mw: number;
-  mw_shed?: number;
-  cumulative_shed_mw?: number;
-}
-
-export interface DynamicMetrics {
-  nadir: number;
-  nadir_hz?: number;
-  rocof: number;
-  initial_rocof?: number;
-  settling_hz?: number;
-  total_shed_mw?: number;
-  stages_tripped?: number;
-  cct_ms?: number;
-  [key: string]: any;
+  timestamp: number;
 }
 
 export interface DynamicSimResult {
@@ -219,9 +181,14 @@ export interface DynamicSimResult {
   settling_hz?: number;
   total_shed_mw?: number;
   stages_tripped?: number;
-  ufls_events?: UFLSEvent[];
-  cct_ms?: number;
-  status?: string;
-  metrics: DynamicMetrics;
-  [key: string]: any;
+  ufls_events?: UflsEvent[];
+  metrics?: {
+    nadir?: number;
+    nadir_hz?: number;
+    rocof?: number;
+    initial_rocof?: number;
+    settling_hz?: number;
+    total_shed_mw?: number;
+    stages_tripped?: number;
+  };
 }

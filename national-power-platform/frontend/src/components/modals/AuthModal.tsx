@@ -15,8 +15,154 @@ interface AuthModalProps {
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL || 'https://national-power-backend.onrender.com';
 
-// Built-in default admin credentials so the current admin is never locked out
-const ROOT_ADMIN_EMAILS = ['admin@ml4ps.org', 'ibrahim@futminna.edu.ng', 'admin@futminna.edu.ng'];
+const ROOT_ADMIN_EMAILS = [
+  'admin@ml4ps.org',
+  'ibrahim@futminna.edu.ng',
+  'admin@futminna.edu.ng',
+];
+
+const SYSTEM_REQ_ROW_NAME = '__ml4ps_access_requests__';
+
+/**
+ * Reads all access requests from Supabase (`access_requests` table OR `grid_models` fallback row)
+ * and backend so requests work across all devices even without manual SQL setup.
+ */
+export async function fetchAllPlatformAccessRequests(): Promise<any[]> {
+  const mapByEmail = new Map<string, any>();
+
+  // 1. Try Supabase access_requests table
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('access_requests')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!error && Array.isArray(data)) {
+        data.forEach((r) => {
+          if (r?.email) mapByEmail.set(r.email.toLowerCase(), r);
+        });
+      }
+    } catch {}
+
+    // 2. Fallback: Read from existing `grid_models` table system row `__ml4ps_access_requests__`
+    try {
+      const { data: sysRow } = await supabase
+        .from('grid_models')
+        .select('*')
+        .eq('name', SYSTEM_REQ_ROW_NAME)
+        .maybeSingle();
+
+      const rawPayload = sysRow?.network_payload || sysRow?.payload || sysRow?.domain;
+      if (rawPayload) {
+        const parsed = typeof rawPayload === 'string' ? JSON.parse(rawPayload) : rawPayload;
+        if (Array.isArray(parsed)) {
+          parsed.forEach((r: any) => {
+            if (r?.email && !mapByEmail.has(r.email.toLowerCase())) {
+              mapByEmail.set(r.email.toLowerCase(), r);
+            }
+          });
+        }
+      }
+    } catch {}
+  }
+
+  // 3. Try FastAPI Backend
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/requests`);
+    if (res.ok) {
+      const list = await res.json();
+      if (Array.isArray(list)) {
+        list.forEach((r: any) => {
+          if (r?.email && !mapByEmail.has(r.email.toLowerCase())) {
+            mapByEmail.set(r.email.toLowerCase(), r);
+          }
+        });
+      }
+    }
+  } catch {}
+
+  // 4. Merge browser localStorage cache
+  if (typeof window !== 'undefined') {
+    try {
+      const local = JSON.parse(localStorage.getItem('ml4ps_access_requests') || '[]');
+      if (Array.isArray(local)) {
+        local.forEach((r: any) => {
+          if (r?.email && !mapByEmail.has(r.email.toLowerCase())) {
+            mapByEmail.set(r.email.toLowerCase(), r);
+          }
+        });
+      }
+    } catch {}
+  }
+
+  return Array.from(mapByEmail.values());
+}
+
+/**
+ * Saves the updated access request list across Supabase, Backend, and localStorage.
+ */
+export async function persistPlatformAccessRequest(
+  record: any,
+  allRecords?: any[]
+): Promise<void> {
+  const existing = allRecords || (await fetchAllPlatformAccessRequests());
+  const merged = [
+    record,
+    ...existing.filter((r) => r.email?.toLowerCase() !== record.email?.toLowerCase()),
+  ];
+
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem('ml4ps_access_requests', JSON.stringify(merged));
+    } catch {}
+  }
+
+  if (supabase) {
+    // A. Try dedicated access_requests table
+    try {
+      await supabase.from('access_requests').upsert([record], { onConflict: 'email' });
+    } catch {}
+
+    // B. Also persist in existing `grid_models` system row so it works even if `access_requests` table wasn't created
+    try {
+      const { data: existingSys } = await supabase
+        .from('grid_models')
+        .select('id')
+        .eq('name', SYSTEM_REQ_ROW_NAME)
+        .maybeSingle();
+
+      const serialized = JSON.stringify(merged);
+      if (existingSys?.id) {
+        await supabase
+          .from('grid_models')
+          .update({ network_payload: serialized })
+          .eq('id', existingSys.id);
+      } else {
+        await supabase.from('grid_models').insert([
+          {
+            id: SYSTEM_REQ_ROW_NAME,
+            name: SYSTEM_REQ_ROW_NAME,
+            voltage_level: 'SYS',
+            platform: 'SYSTEM',
+            buses: 0,
+            branches: 0,
+            is_active: false,
+            network_payload: serialized,
+          },
+        ]);
+      }
+    } catch {}
+  }
+
+  // C. Send to FastAPI Backend
+  try {
+    await fetch(`${API_BASE}/api/auth/request-access`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(record),
+    });
+  } catch {}
+}
 
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
@@ -65,74 +211,41 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         return;
       }
 
-      // 2. Check Supabase access_requests / users table for approved accounts
-      if (supabase) {
-        const { data: reqRow } = await supabase
-          .from('access_requests')
-          .select('*')
-          .eq('email', cleanEmail)
-          .maybeSingle();
+      // 2. Check unified cross-device access requests registry
+      const allReqs = await fetchAllPlatformAccessRequests();
+      const found = allReqs.find((r: any) => r.email?.toLowerCase() === cleanEmail);
 
-        if (reqRow) {
-          if (reqRow.status === 'pending') {
-            setError(
-              'Your access request is still pending administrator approval. Please check back once approved.'
-            );
+      if (found) {
+        if (found.status === 'pending') {
+          setError(
+            'Your access request is still pending administrator approval. Please check back once approved.'
+          );
+          setLoading(false);
+          return;
+        }
+        if (found.status === 'rejected') {
+          setError('Your access request was declined by the administrator.');
+          setLoading(false);
+          return;
+        }
+        if (found.status === 'approved') {
+          if (found.password && found.password !== password) {
+            setError('Invalid password for this account.');
             setLoading(false);
             return;
           }
-          if (reqRow.status === 'rejected') {
-            setError('Your access request was declined by the administrator.');
-            setLoading(false);
-            return;
-          }
-          if (reqRow.status === 'approved') {
-            if (reqRow.password && reqRow.password !== password) {
-              setError('Invalid password for this account.');
-              setLoading(false);
-              return;
-            }
-            onLoginSuccess({
-              id: String(reqRow.id),
-              name: reqRow.full_name || reqRow.name || cleanEmail,
-              email: cleanEmail,
-              role: reqRow.role === 'admin' ? 'admin' : 'user',
-              institution: reqRow.institution || 'NESI Researcher',
-            });
-            return;
-          }
+          onLoginSuccess({
+            id: String(found.id || 'usr-' + Date.now()),
+            name: found.full_name || found.name || cleanEmail,
+            email: cleanEmail,
+            role: found.role === 'admin' ? 'admin' : 'user',
+            institution: found.institution || 'NESI Researcher',
+          });
+          return;
         }
       }
 
-      // 3. Check local browser approved registry (fallback when offline / before SQL table creation)
-      if (typeof window !== 'undefined') {
-        const localReqs = JSON.parse(localStorage.getItem('ml4ps_access_requests') || '[]');
-        const found = localReqs.find((r: any) => r.email?.toLowerCase() === cleanEmail);
-        if (found) {
-          if (found.status === 'pending') {
-            setError('Your account request is pending administrator approval.');
-            setLoading(false);
-            return;
-          }
-          if (found.status === 'rejected') {
-            setError('Your account request was declined by the administrator.');
-            setLoading(false);
-            return;
-          }
-          if (found.status === 'approved' && found.password === password) {
-            onLoginSuccess({
-              id: found.id,
-              name: found.full_name,
-              email: found.email,
-              role: found.role === 'admin' ? 'admin' : 'user',
-              institution: found.institution,
-            });
-            return;
-          }
-        }
-      }
-
-      // 4. Fallback to backend /api/auth/login
+      // 3. Fallback to backend /api/auth/login
       const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -185,30 +298,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     };
 
     try {
-      // 1. Save to Supabase access_requests table
-      if (supabase) {
-        await supabase.from('access_requests').insert([newRequest]);
-      }
-
-      // 2. Also send to Backend API
-      try {
-        await fetch(`${API_BASE}/api/auth/request-access`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newRequest),
-        });
-      } catch {}
-
-      // 3. Mirror in localStorage so the Admin on the same browser sees it immediately even before SQL setup
-      if (typeof window !== 'undefined') {
-        const existing = JSON.parse(localStorage.getItem('ml4ps_access_requests') || '[]');
-        const filtered = existing.filter((r: any) => r.email !== newRequest.email);
-        localStorage.setItem(
-          'ml4ps_access_requests',
-          JSON.stringify([newRequest, ...filtered])
-        );
-      }
-
+      await persistPlatformAccessRequest(newRequest);
       setRequestSubmitted(true);
     } catch (err: any) {
       setError(err?.message || 'Could not submit access request.');
@@ -240,7 +330,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </div>
 
         <div className="p-6">
-          {/* Mode Switcher */}
           <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1 text-xs font-bold mb-5">
             <button
               type="button"
@@ -315,7 +404,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <CheckCircle2 className="h-10 w-10 text-emerald-600 mx-auto" />
               <h4 className="font-bold text-sm text-slate-900">Access Request Submitted</h4>
               <p className="text-xs text-slate-600 leading-relaxed">
-                Your request for <strong>{email}</strong> has been sent to the platform administrator. Once approved, you can sign in with the password you selected.
+                Your request for <strong>{email}</strong> has been transmitted to the platform administrators. Once approved, you can sign in with the password you selected.
               </p>
               <button
                 type="button"
