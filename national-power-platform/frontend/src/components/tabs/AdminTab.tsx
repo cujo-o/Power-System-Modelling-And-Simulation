@@ -34,21 +34,22 @@ interface TeamMember {
 
 // 1 - 2 - 3 Triangle Hierarchy
 const TRIANGLE_ROW_1: TeamMember[] = [
+ 
   {
-    name: 'Prof. Buhari',
-    title: 'Lead Researcher',
-    photo: '/team/buhari.png',
-  },
+    name: 'Engr. Dr. A. S. Ahmed',
+    title: 'Principal Investigator',
+    photo: '/team/sadiq.jpg',
+  }
 ];
 
 const TRIANGLE_ROW_2: TeamMember[] = [
-  {
-    name: 'Prof. Sadiq',
-    title: 'Senior Researcher',
-    photo: '/team/sadiq.jpg',
+   {
+    name: 'Engr. Dr. M. Buhari',
+    title: 'Lead Researcher',
+    photo: '/team/buhari.png',
   },
   {
-    name: 'Prof. Ambafi',
+    name: 'Engr. Dr. J. G. Ambafi',
     title: 'Senior Researcher',
     photo: '/team/ambafi.jpg',
   },
@@ -56,18 +57,18 @@ const TRIANGLE_ROW_2: TeamMember[] = [
 
 const TRIANGLE_ROW_3: TeamMember[] = [
   {
-    name: 'Prof. Okoro',
+    name: 'Engr. Prof. I. Okoro',
     title: 'Researcher',
     photo: '/team/okoro.jpg',
   },
   {
-    name: 'Dr. Adamu',
+    name: 'Engr. Prof. S. S. Adamu',
     title: 'Researcher',
     photo: '/team/adamu.jpg',
   },
   {
     name: 'Engr. Hameedat',
-    title: 'Researcher',
+    title: 'Research Assistant',
     photo: '/team/hameedat.jpeg',
   },
 ];

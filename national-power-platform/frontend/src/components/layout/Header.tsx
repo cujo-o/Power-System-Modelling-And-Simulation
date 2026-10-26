@@ -28,7 +28,7 @@ export const Header: React.FC<HeaderProps> = ({ onLogout }) => {
         />
         <div className="truncate">
           <h1 className="text-sm sm:text-base font-black text-slate-900 tracking-tight truncate">
-            National Power System Simulation
+            National Power System Modelling and Simulation Platform (Nigeria)
           </h1>
           <p className="text-[11px] text-slate-500 truncate">
             Machine Learning 4 Power Systems (ML4PS) • FUT Minna
