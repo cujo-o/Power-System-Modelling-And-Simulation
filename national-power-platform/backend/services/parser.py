@@ -1,146 +1,164 @@
-import io
 import re
-import math
-import uuid
-import tempfile
-import os
-import numpy as np
-import pandas as pd
+import json
 import pandapower as pp
-from services.power_flow import solve_power_flow
-from services.grid_builder import build_case330, build_nig_10_bus, parse_matpower_standalone
-
-try:
-    from pandapower.converter.pypower.from_ppc import from_ppc
-except ImportError:
-    from pandapower.converter.pypower import from_ppc
 
 
-def parse_excel_case(raw_bytes: bytes) -> pp.pandapowerNet:
-    xls = pd.ExcelFile(io.BytesIO(raw_bytes))
+def parse_matpower_m_file(content: str, filename: str):
     net = pp.create_empty_network(f_hz=50.0, sn_mva=100.0)
 
-    if "buses" not in xls.sheet_names:
-        raise ValueError("Excel file must contain a 'buses' sheet.")
+    # Extract bus_name cell array if present
+    bus_names = []
+    name_match = re.search(r"mpc\.bus_name\s*=\s*\{([\s\S]*?)\};", content)
+    if name_match:
+        raw_names = re.findall(r"['\"]([^'\"]+)['\"]", name_match.group(1))
+        bus_names = [n.strip() for n in raw_names]
 
-    df_bus = pd.read_excel(xls, "buses")
+    # Parse mpc.bus
+    bus_match = re.search(r"mpc\.bus\s*=\s*\[([\s\S]*?)\];", content)
+    if not bus_match:
+        raise ValueError("No mpc.bus matrix found in MATPOWER file.")
+
     bus_map = {}
-    for _, row in df_bus.iterrows():
-        b_id = pp.create_bus(
-            net,
-            vn_kv=float(row.get("vn_kv", 330.0)),
-            name=str(row.get("name", f"Bus {row.get('id', '')}")),
-            zone=str(row.get("zone", "Transmission")),
-            geodata=(float(row.get("x", 200.0)), float(row.get("y", 200.0))),
+    bus_rows = bus_match.group(1).strip().splitlines()
+    row_idx = 0
+
+    for line in bus_rows:
+        raw_line = line.strip()
+        if not raw_line or raw_line.startswith("%"):
+            continue
+
+        # Extract inline quoted name or trailing comment name if present
+        inline_name = None
+        q_match = re.search(r"['\"]([^'\"]+)['\"]", raw_line)
+        if q_match:
+            inline_name = q_match.group(1).strip()
+
+        comment_name = None
+        if "%" in raw_line:
+            comment_name = raw_line.split("%", 1)[1].strip()
+
+        clean_part = raw_line.split("%")[0]
+        clean_part = re.sub(r"['\"][^'\"]+['\"]", "", clean_part).replace(";", "").strip()
+        tokens = [t for t in clean_part.split() if t]
+
+        nums = []
+        for t in tokens:
+            try:
+                nums.append(float(t))
+            except ValueError:
+                pass
+
+        if len(nums) < 10:
+            continue
+
+        mat_bus_id = int(nums[0])
+        bus_type = int(nums[1])
+        pd_mw = nums[2]
+        qd_mvar = nums[3]
+        vm_pu = nums[7] if nums[7] > 0 else 1.0
+        base_kv = nums[9] if nums[9] > 0 else 330.0
+
+        resolved_name = (
+            inline_name
+            or (bus_names[row_idx] if row_idx < len(bus_names) else None)
+            or comment_name
+            or f"Substation {mat_bus_id}"
         )
-        original_id = row.get("id", b_id)
-        bus_map[original_id] = b_id
 
-    if "lines" in xls.sheet_names:
-        df_lines = pd.read_excel(xls, "lines")
-        for _, row in df_lines.iterrows():
-            fb = bus_map.get(row["from_bus"], int(row["from_bus"]))
-            tb = bus_map.get(row["to_bus"], int(row["to_bus"]))
-            pp.create_line_from_parameters(
-                net,
-                from_bus=fb,
-                to_bus=tb,
-                length_km=float(row.get("length_km", 50.0)),
-                r_ohm_per_km=float(row.get("r_ohm_per_km", 0.035)),
-                x_ohm_per_km=float(row.get("x_ohm_per_km", 0.320)),
-                c_nf_per_km=float(row.get("c_nf_per_km", 11.2)),
-                max_i_ka=float(row.get("max_i_ka", 1.25)),
-                name=str(row.get("name", f"Line {fb}-{tb}")),
-            )
+        pp_bus = pp.create_bus(net, vn_kv=base_kv, name=resolved_name, index=mat_bus_id)
+        bus_map[mat_bus_id] = (pp_bus, bus_type, vm_pu)
 
-    if "generators" in xls.sheet_names:
-        df_gen = pd.read_excel(xls, "generators")
-        for idx, row in df_gen.iterrows():
-            b_target = bus_map.get(row["bus"], int(row["bus"]))
-            if idx == 0 and "slack" in str(row.get("type", "")).lower():
-                pp.create_ext_grid(net, bus=b_target, vm_pu=float(row.get("vm_pu", 1.05)), name=str(row.get("name", "Slack Gen")))
-            else:
-                pp.create_gen(net, bus=b_target, p_mw=float(row.get("p_mw", 100.0)), vm_pu=float(row.get("vm_pu", 1.0)), name=str(row.get("name", f"Gen {idx}")))
+        if abs(pd_mw) > 1e-4 or abs(qd_mvar) > 1e-4:
+            pp.create_load(net, bus=pp_bus, p_mw=pd_mw, q_mvar=qd_mvar, name=f"Load {resolved_name}")
 
-    if "loads" in xls.sheet_names:
-        df_loads = pd.read_excel(xls, "loads")
-        for _, row in df_loads.iterrows():
-            b_target = bus_map.get(row["bus"], int(row["bus"]))
-            pp.create_load(net, bus=b_target, p_mw=float(row.get("p_mw", 50.0)), q_mvar=float(row.get("q_mvar", 15.0)), name=str(row.get("name", "Load")))
+        row_idx += 1
+
+    # Parse mpc.gen
+    gen_match = re.search(r"mpc\.gen\s*=\s*\[([\s\S]*?)\];", content)
+    has_slack = False
+    if gen_match:
+        for line in gen_match.group(1).strip().splitlines():
+            clean = line.split("%")[0].replace(";", "").strip()
+            if not clean:
+                continue
+            nums = []
+            for t in clean.split():
+                try:
+                    nums.append(float(t))
+                except ValueError:
+                    pass
+            if len(nums) < 6:
+                continue
+
+            g_bus = int(nums[0])
+            pg_mw = nums[1]
+            vg_pu = nums[5] if nums[5] > 0 else 1.02
+            pmax_mw = nums[8] if len(nums) > 8 and nums[8] > 0 else max(100.0, abs(pg_mw) * 1.5)
+
+            if g_bus in bus_map:
+                pp_bus, b_type, _ = bus_map[g_bus]
+                if b_type == 3 and not has_slack:
+                    pp.create_ext_grid(net, bus=pp_bus, vm_pu=vg_pu, name=f"Slack Bus {g_bus}")
+                    has_slack = True
+                else:
+                    pp.create_gen(
+                        net,
+                        bus=pp_bus,
+                        p_mw=max(0.0, pg_mw),
+                        vm_pu=vg_pu,
+                        max_p_mw=pmax_mw,
+                        min_p_mw=0.0,
+                        name=f"Gen Bus {g_bus}",
+                    )
+
+    if not has_slack and len(bus_map) > 0:
+        first_bus = next(iter(bus_map.values()))[0]
+        pp.create_ext_grid(net, bus=first_bus, vm_pu=1.04, name="Reference Grid")
+
+    # Parse mpc.branch
+    branch_match = re.search(r"mpc\.branch\s*=\s*\[([\s\S]*?)\];", content)
+    if branch_match:
+        line_idx = 1
+        for line in branch_match.group(1).strip().splitlines():
+            clean = line.split("%")[0].replace(";", "").strip()
+            if not clean:
+                continue
+            nums = []
+            for t in clean.split():
+                try:
+                    nums.append(float(t))
+                except ValueError:
+                    pass
+            if len(nums) < 5:
+                continue
+
+            f_bus = int(nums[0])
+            t_bus = int(nums[1])
+            r_pu = max(1e-5, nums[2])
+            x_pu = max(1e-4, nums[3])
+            rate_a = nums[5] if len(nums) > 5 and nums[5] > 0 else 500.0
+
+            if f_bus in bus_map and t_bus in bus_map:
+                vn_kv = float(net.bus.at[f_bus, "vn_kv"]) if f_bus in net.bus.index else 330.0
+                z_base = (vn_kv ** 2) / 100.0
+                r_ohm = r_pu * z_base
+                x_ohm = x_pu * z_base
+                max_i_ka = max(0.2, rate_a / (1.732 * vn_kv))
+                f_name = net.bus.at[f_bus, "name"]
+                t_name = net.bus.at[t_bus, "name"]
+
+                pp.create_line_from_parameters(
+                    net,
+                    from_bus=f_bus,
+                    to_bus=t_bus,
+                    length_km=1.0,
+                    r_ohm_per_km=r_ohm,
+                    x_ohm_per_km=x_ohm,
+                    c_nf_per_km=10.0,
+                    max_i_ka=max_i_ka,
+                    name=f"{f_name} - {t_name}",
+                    index=line_idx,
+                )
+                line_idx += 1
 
     return net
-
-
-def parse_and_register_file(filename: str, raw_bytes: bytes) -> dict:
-    ext = filename.split(".")[-1].lower() if "." in filename else ""
-    net = None
-    platform = "MATPOWER"
-    content = ""
-
-    if ext in ["m", "raw", "json", "aux"]:
-        content = raw_bytes.decode("utf-8", errors="ignore")
-
-    if ext == "m":
-        ppc_dict = parse_matpower_standalone(content)
-        net = from_ppc(ppc_dict, f_hz=50.0)
-        if ppc_dict.get("bus_names") and len(ppc_dict["bus_names"]) == len(net.bus):
-            net.bus["name"] = ppc_dict["bus_names"]
-        platform = "PSAT" if ("Bus.con" in content or "Line.con" in content) else "MATPOWER"
-
-    elif ext == "json":
-        net = pp.from_json_string(content)
-        platform = "Pandapower JSON"
-
-    elif ext in ["xlsx", "xls"]:
-        net = parse_excel_case(raw_bytes)
-        platform = "ETAP / Excel"
-
-    elif ext == "raw":
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".raw") as tmp:
-            tmp.write(raw_bytes)
-            tmp_path = tmp.name
-        try:
-            net = pp.converter.from_raw(tmp_path)
-            platform = "DIgSILENT / PSS/E"
-        finally:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-    else:
-        raise ValueError(f"Unsupported format '.{ext}'. Use .m, .json, .xlsx, or .raw")
-
-    if not hasattr(net, "bus_geodata") or net.bus_geodata is None or net.bus_geodata.empty:
-        net.bus_geodata = pd.DataFrame(columns=["x", "y"], index=net.bus.index)
-        n = len(net.bus)
-        cols = max(4, int(math.ceil(math.sqrt(n * 1.5))))
-        for i, b_idx in enumerate(net.bus.index):
-            row = i // cols
-            col = i % cols
-            net.bus_geodata.loc[b_idx, "x"] = float(150 + col * 180 + (row % 2) * 40)
-            net.bus_geodata.loc[b_idx, "y"] = float(100 + row * 140)
-
-    voltage_level = "330kV"
-    if "vn_kv" in net.bus.columns:
-        mean_kv = float(net.bus["vn_kv"].mean())
-        voltage_level = "132kV" if mean_kv < 220.0 else "330kV"
-
-    sol = solve_power_flow(net, load_multiplier=1.0)
-    model_id = str(uuid.uuid4())[:8]
-    installed_mw = float(net.gen.p_mw.sum()) if len(net.gen) > 0 else 0.0
-    if len(net.ext_grid) > 0:
-        installed_mw += 1000.0
-    demand_mw = float(net.load.p_mw.sum()) if len(net.load) > 0 else 0.0
-
-    return {
-        "id": model_id,
-        "name": filename,
-        "voltage_level": voltage_level,
-        "domain": "Static & Dynamic",
-        "platform": platform,
-        "net": net,
-        "buses": len(net.bus),
-        "branches": len(net.line),
-        "total_installed_mw": round(installed_mw, 1),
-        "total_demand_mw": round(demand_mw, 1),
-        "converged": sol["converged"],
-        "is_default": False,
-    }

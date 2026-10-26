@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   BusData,
   LineData,
@@ -106,6 +107,7 @@ export const GridStabilityTab: React.FC<Props> = ({
   onRefreshModels,
   modelsLoading = false,
 }) => {
+  const router = useRouter();
   const activeModel = models.find((m) => m.is_active);
 
   const [viewMode, setViewModeState] = useState<'select_model' | 'workspace'>(() => {
@@ -166,7 +168,7 @@ export const GridStabilityTab: React.FC<Props> = ({
   const [loadSharingResult, setLoadSharingResult] = useState<any>(null);
   const [loadSharingError, setLoadSharingError] = useState<string | null>(null);
 
-  // Regional Planning State
+  // Regional Planning State: 1. Substation + Tie
   const [newSubName, setNewSubName] = useState('');
   const [newSubKv, setNewSubKv] = useState(330);
   const [newSubZone, setNewSubZone] = useState('North-Central');
@@ -175,17 +177,20 @@ export const GridStabilityTab: React.FC<Props> = ({
   const [tieLengthKm, setTieLengthKm] = useState(55);
   const [tieConductor, setTieConductor] = useState('Bison 330kV');
 
+  // Regional Planning State: 2. Standalone Branch
   const [newLineName, setNewLineName] = useState('');
   const [newLineFrom, setNewLineFrom] = useState<number>(1);
   const [newLineTo, setNewLineTo] = useState<number>(2);
   const [newLineLength, setNewLineLength] = useState(65);
   const [newLineConductor, setNewLineConductor] = useState('Bison 330kV');
 
+  // Regional Planning State: 3. Standalone Plant
   const [newGenName, setNewGenName] = useState('');
   const [newGenBus, setNewGenBus] = useState<number>(1);
   const [newGenP, setNewGenP] = useState(150);
   const [newGenVm, setNewGenVm] = useState(1.03);
 
+  // Regional Planning State: 4. Decommission Sandbox
   const [selectedDecommissionBus, setSelectedDecommissionBus] = useState<number>(1);
 
   // Modal Form Local States for `⋯` Property Editor
@@ -237,7 +242,6 @@ export const GridStabilityTab: React.FC<Props> = ({
     }, 350);
   };
 
-  // Populate modal fields when user clicks `⋯` on any element
   const openPropertyEditor = (target: EditingTarget) => {
     if (!target) return;
     setEditingTarget(target);
@@ -272,7 +276,6 @@ export const GridStabilityTab: React.FC<Props> = ({
       setEditVmSetpoint(ovr?.vmPu ?? b.v_pu ?? 1.03);
       setEditNetHead(ovr?.netHeadM ?? 92);
       setEditTurbineEff(ovr?.turbineEfficiency ?? 90);
-      // Estimate initial water flow Q from P = eta * g * H * Q / 1000
       const defaultQ = Math.round((baseP * 1000) / (0.9 * 9.81 * 92));
       setEditWaterIntake(ovr?.waterIntakeM3s ?? defaultQ);
       setEditGasPressure(ovr?.gasPressureBar ?? 45);
@@ -292,7 +295,6 @@ export const GridStabilityTab: React.FC<Props> = ({
     }
   };
 
-  // Live preview of Hydro MW from Water Intake Q and Net Head H inside the modal
   const computedModalHydroMw = useMemo(() => {
     const eff = editTurbineEff / 100;
     return Number(((eff * 9.81 * editNetHead * editWaterIntake) / 1000).toFixed(1));
@@ -374,7 +376,7 @@ export const GridStabilityTab: React.FC<Props> = ({
   };
 
   useEffect(() => {
-    if (lines.length > 0 && (!initialTripLine || !lines.some((l) => l.id === initialTripLine))) {
+    if (lines.length > 0 && !lines.some((l) => l.id === initialTripLine)) {
       setInitialTripLine(lines[0].id);
     }
   }, [lines, initialTripLine]);
@@ -449,7 +451,6 @@ export const GridStabilityTab: React.FC<Props> = ({
     });
   }, [models, domainFilter, voltageFilter, platformFilter, modelSearchQuery]);
 
-  // Separate Generators and Loads from buses
   const generatorBuses = useMemo(() => {
     const gList = buses.filter((b) => {
       const n = (b.name || '').toLowerCase();
@@ -575,6 +576,30 @@ export const GridStabilityTab: React.FC<Props> = ({
       return { ...prev, disabledLoads: next };
     });
     setTimeout(() => runSimulation(), 60);
+  };
+
+  // Applies all tripped lines from the cascade result and navigates immediately to /sld
+  const handleViewCascadeOnSld = () => {
+    if (!cascadeResult) return;
+    const collected = new Set<number>();
+    if (Array.isArray(cascadeResult.all_tripped_lines)) {
+      cascadeResult.all_tripped_lines.forEach((id) => collected.add(Number(id)));
+    }
+    if (Array.isArray(cascadeResult.timeline)) {
+      cascadeResult.timeline.forEach((step) => {
+        if (Array.isArray(step.tripped_in_this_step)) {
+          step.tripped_in_this_step.forEach((id) => collected.add(Number(id)));
+        }
+      });
+    }
+    if (collected.size === 0 && initialTripLine !== undefined) {
+      collected.add(Number(initialTripLine));
+    }
+
+    const tripArray = Array.from(collected).filter((n) => Number.isFinite(n));
+    onApplyCascadeTrips(tripArray);
+    onNavigateTab('Single-Line Diagram');
+    router.push('/sld');
   };
 
   const currentDisplayName = activeModel?.name || modelName || 'Active Grid Model';
@@ -884,11 +909,10 @@ export const GridStabilityTab: React.FC<Props> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* WORKSPACE SUBTAB 1: OPERATIONAL DECK (Switches, Filters & `⋯` Editor)     */}
+      {/* WORKSPACE SUBTAB 1: OPERATIONAL DECK                                      */}
       {/* ========================================================================= */}
       {workspaceTab === 'deck' && (
         <div className="space-y-4">
-          {/* Global Parameters Strip */}
           <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
             <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-1.5">
               <div className="flex items-center justify-between text-xs font-bold text-slate-700">
@@ -914,6 +938,17 @@ export const GridStabilityTab: React.FC<Props> = ({
                 />
                 <span className="text-slate-400 text-xs font-mono font-bold">%</span>
               </div>
+              <div className="flex gap-1 pt-1">
+                {[80, 100, 120, 150].map((pct) => (
+                  <button
+                    key={pct}
+                    onClick={() => handleLiveParamChange('loadMultiplier', pct / 100)}
+                    className="flex-1 py-0.5 text-[10px] font-mono font-bold rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
+                  >
+                    {pct}%
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-1.5">
@@ -937,6 +972,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                 }
                 className="w-full font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded px-2.5 py-1 text-xs focus:border-[#500b50] focus:outline-none"
               />
+              <span className="text-[10px] text-slate-400 font-mono block">Range: 0.75 – 1.00</span>
             </div>
 
             <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-1.5">
@@ -960,6 +996,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                 }
                 className="w-full font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded px-2.5 py-1 text-xs focus:border-[#500b50] focus:outline-none"
               />
+              <span className="text-[10px] text-slate-400 font-mono block">Nominal: 1.000 pu</span>
             </div>
 
             <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-1.5">
@@ -981,6 +1018,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                 }
                 className="w-full font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded px-2.5 py-1 text-xs focus:border-[#500b50] focus:outline-none"
               />
+              <span className="text-[10px] text-slate-400 font-mono block">+Capacitor / -Reactor</span>
             </div>
 
             <div className="p-3 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-1.5">
@@ -1004,6 +1042,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                 }
                 className="w-full font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded px-2.5 py-1 text-xs focus:border-[#500b50] focus:outline-none"
               />
+              <span className="text-[10px] text-slate-400 font-mono block">Ambient Temperature</span>
             </div>
           </div>
 
@@ -1104,7 +1143,7 @@ export const GridStabilityTab: React.FC<Props> = ({
               </div>
             </div>
 
-            {/* WIDE-AREA DISRUPTIVE EVENTS & INFRASTRUCTURE INTERDEPENDENCY PANEL */}
+            {/* WIDE-AREA DISRUPTIVE EVENTS PANEL */}
             {deckCategory === 'disruptions' && (
               <div className="p-5 space-y-4 bg-white">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
@@ -1195,43 +1234,10 @@ export const GridStabilityTab: React.FC<Props> = ({
                     );
                   })}
                 </div>
-
-                {currentScenario.activeEvent !== 'NONE' && (
-                  <div className="p-3.5 rounded-xl border border-amber-200 bg-amber-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                    <div>
-                      <span className="font-bold text-amber-900">
-                        Event Severity &amp; Infrastructure Impact Scale (%):
-                      </span>
-                      <p className="text-[11px] text-amber-800">
-                        Adjusts the magnitude of the disruptive event across coupled generators and substations.
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {[15, 30, 50, 75].map((sev) => (
-                        <button
-                          key={sev}
-                          onClick={() =>
-                            handleLiveParamChange('wideAreaScenario', {
-                              ...currentScenario,
-                              severityPercent: sev,
-                            })
-                          }
-                          className={`px-3 py-1 rounded font-mono font-bold transition ${
-                            currentScenario.severityPercent === sev
-                              ? 'bg-amber-800 text-white'
-                              : 'bg-white border border-amber-300 text-amber-900'
-                          }`}
-                        >
-                          {sev}% Severity
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             )}
 
-            {/* SUBSTATIONS / BUSES TABLE (With Switch + `⋯` Edit Button) */}
+            {/* SUBSTATIONS / BUSES TABLE */}
             {(deckCategory === 'all' || deckCategory === 'buses') && (
               <div className="overflow-x-auto max-h-[340px] border-b border-slate-200">
                 <div className="px-3 py-2 bg-slate-100/80 text-[11px] font-bold uppercase tracking-wider text-slate-600">
@@ -1247,7 +1253,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                       <th className="py-2 px-3">Net P (MW)</th>
                       <th className="py-2 px-3">Net Q (MVAR)</th>
                       <th className="py-2 px-3">Switch (In-Service)</th>
-                      <th className="py-2 px-3 text-right">Edit</th>
+                      <th className="py-2 px-3 text-right">Edit (⋯)</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-mono">
@@ -1332,7 +1338,7 @@ export const GridStabilityTab: React.FC<Props> = ({
               </div>
             )}
 
-            {/* GENERATING UNITS (STATIC & DYNAMIC WATER INTAKE / GAS PRESSURE) TABLE */}
+            {/* GENERATING UNITS TABLE */}
             {(deckCategory === 'all' || deckCategory === 'generators') && (
               <div className="overflow-x-auto max-h-[340px] border-b border-slate-200">
                 <div className="px-3 py-2 bg-purple-50/70 text-[11px] font-bold uppercase tracking-wider text-[#500b50]">
@@ -1444,7 +1450,7 @@ export const GridStabilityTab: React.FC<Props> = ({
               </div>
             )}
 
-            {/* TRANSMISSION LINES TABLE (With Switch + `⋯` Edit Button) */}
+            {/* TRANSMISSION LINES TABLE */}
             {(deckCategory === 'all' || deckCategory === 'lines') && (
               <div className="overflow-x-auto max-h-[340px] border-b border-slate-200">
                 <div className="px-3 py-2 bg-slate-100/80 text-[11px] font-bold uppercase tracking-wider text-slate-600">
@@ -1629,7 +1635,7 @@ export const GridStabilityTab: React.FC<Props> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* `⋯` THREE-DOTS PROPERTY EDITOR MODAL (Static & Dynamic Parameters)        */}
+      {/* `⋯` THREE-DOTS PROPERTY EDITOR MODAL                                      */}
       {/* ========================================================================= */}
       {editingTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
@@ -1657,7 +1663,6 @@ export const GridStabilityTab: React.FC<Props> = ({
             </div>
 
             <div className="p-5 space-y-4 text-xs max-h-[75vh] overflow-y-auto">
-              {/* BUS EDITOR */}
               {editingTarget.kind === 'bus' && (
                 <div className="space-y-3">
                   <div>
@@ -1722,7 +1727,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </div>
               )}
 
-              {/* LINE EDITOR */}
               {editingTarget.kind === 'line' && (
                 <div className="space-y-3">
                   <div>
@@ -1789,7 +1793,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </div>
               )}
 
-              {/* GENERATOR EDITOR (Hydro Water Intake, Gas Pressure, Solar & Dynamics) */}
               {editingTarget.kind === 'generator' && (
                 <div className="space-y-3">
                   <div className="grid grid-cols-2 gap-3">
@@ -1819,7 +1822,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                     </div>
                   </div>
 
-                  {/* HYDRO WATER INTAKE CONTROLS */}
                   {editPrimeMover === 'Hydro' && (
                     <div className="p-3.5 rounded-xl border border-blue-200 bg-blue-50/60 space-y-3">
                       <div className="flex items-center justify-between">
@@ -1879,7 +1881,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                     </div>
                   )}
 
-                  {/* THERMAL GAS PIPELINE CONTROLS */}
                   {editPrimeMover === 'Thermal (Gas)' && (
                     <div className="p-3.5 rounded-xl border border-orange-200 bg-orange-50/60 space-y-3">
                       <span className="font-bold text-orange-950 flex items-center gap-1.5">
@@ -1931,7 +1932,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                     </div>
                   )}
 
-                  {/* DISTRIBUTED SOLAR / RENEWABLE CONTROLS */}
                   {editPrimeMover === 'Solar / Distributed' && (
                     <div className="p-3.5 rounded-xl border border-amber-200 bg-amber-50/60 space-y-3">
                       <span className="font-bold text-amber-950 flex items-center gap-1.5">
@@ -1983,7 +1983,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                     </div>
                   )}
 
-                  {/* DYNAMIC INERTIA, DROOP & VOLTAGE SETPOINT */}
                   <div className="grid grid-cols-3 gap-3">
                     <div>
                       <label className="block font-bold text-slate-700 mb-1">
@@ -2031,7 +2030,6 @@ export const GridStabilityTab: React.FC<Props> = ({
                 </div>
               )}
 
-              {/* LOAD & CRITICAL INFRASTRUCTURE EDITOR */}
               {editingTarget.kind === 'load' && (
                 <div className="space-y-3">
                   <div>
@@ -2125,7 +2123,9 @@ export const GridStabilityTab: React.FC<Props> = ({
         </div>
       )}
 
-      {/* WORKSPACE SUBTAB 2: LOAD SHARING */}
+      {/* ========================================================================= */}
+      {/* WORKSPACE SUBTAB 2: LOAD SHARING                                          */}
+      {/* ========================================================================= */}
       {workspaceTab === 'load_sharing' && (
         <div className="space-y-4">
           {loadSharingError && (
@@ -2218,7 +2218,9 @@ export const GridStabilityTab: React.FC<Props> = ({
         </div>
       )}
 
-      {/* WORKSPACE SUBTAB 3: CASCADING FAILURE */}
+      {/* ========================================================================= */}
+      {/* WORKSPACE SUBTAB 3: CASCADING FAILURE (With SLD Navigation & Timeline)    */}
+      {/* ========================================================================= */}
       {workspaceTab === 'cascade' && (
         <div className="space-y-4">
           <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-3">
@@ -2235,7 +2237,8 @@ export const GridStabilityTab: React.FC<Props> = ({
                 >
                   {lines.map((l) => (
                     <option key={l.id} value={l.id}>
-                      #{l.id}: {l.name} ({(l.loading_percent ?? 0).toFixed(0)}% load)
+                      #{l.id}: {l.name || `Bus #${l.from_bus} → Bus #${l.to_bus}`} (
+                      {(l.loading_percent ?? 0).toFixed(0)}% load)
                     </option>
                   ))}
                 </select>
@@ -2246,15 +2249,29 @@ export const GridStabilityTab: React.FC<Props> = ({
                   Overcurrent Relay Threshold (%)
                   <TooltipBadge content="Percentage of rated continuous line current before thermal protection trips the circuit breaker open." />
                 </label>
-                <input
-                  type="number"
-                  min="80"
-                  max="160"
-                  step="5"
-                  value={cascadeThreshold}
-                  onChange={(e) => setCascadeThreshold(Number(e.target.value))}
-                  className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono font-bold bg-white"
-                />
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min="80"
+                    max="160"
+                    step="5"
+                    value={cascadeThreshold}
+                    onChange={(e) => setCascadeThreshold(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono font-bold bg-white"
+                  />
+                  <span className="font-mono text-xs font-bold text-slate-500">%</span>
+                </div>
+                <div className="flex gap-1 pt-1">
+                  {[95, 100, 115, 130].map((val) => (
+                    <button
+                      key={val}
+                      onClick={() => setCascadeThreshold(val)}
+                      className="flex-1 py-0.5 text-[10px] font-mono font-bold rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
+                    >
+                      {val}%
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="flex items-end">
@@ -2303,30 +2320,75 @@ export const GridStabilityTab: React.FC<Props> = ({
                   </span>
                 </div>
                 <button
-                  onClick={() => onApplyCascadeTrips(cascadeResult.all_tripped_lines || [])}
-                  className="px-3 py-1 rounded bg-[#500b50] text-white font-bold text-xs"
+                  onClick={handleViewCascadeOnSld}
+                  className="px-3.5 py-1.5 rounded-lg bg-[#500b50] hover:bg-[#680f68] text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs transition"
                 >
-                  Apply Outages to SLD
+                  <span>Apply Outages &amp; View on SLD</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
                 </button>
               </div>
-              <p className="text-slate-700">
-                Initiating outage on circuit #{initialTripLine} isolated{' '}
-                <strong>{cascadeResult.all_tripped_lines?.length || 0} corridors</strong> across{' '}
-                <strong>{cascadeResult.total_steps} stages</strong>.
+
+              <p className="text-slate-700 leading-relaxed">
+                <strong>Forensic Sequence Summary:</strong> Initiating outage on circuit #
+                {initialTripLine} triggered immediate flow redistribution. In total,{' '}
+                <strong className="text-rose-700 font-mono font-bold">
+                  {cascadeResult.all_tripped_lines?.length || 0} transmission circuits
+                </strong>{' '}
+                exceeded the {cascadeThreshold}% threshold and were isolated across{' '}
+                <strong>{cascadeResult.total_steps} chronological stages</strong>.
               </p>
+
+              {cascadeResult.timeline && cascadeResult.timeline.length > 0 && (
+                <div className="rounded-lg border border-rose-200 bg-white overflow-hidden">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-bold uppercase text-[10px]">
+                      <tr>
+                        <th className="py-2 px-3">Stage</th>
+                        <th className="py-2 px-3">Diagnostic Event</th>
+                        <th className="py-2 px-3">Isolated Branches</th>
+                        <th className="py-2 px-3 text-right">Max Thermal Loading</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-mono">
+                      {cascadeResult.timeline.map((stepItem: any, sIdx: number) => (
+                        <tr key={sIdx} className="hover:bg-slate-50">
+                          <td className="py-1.5 px-3 font-bold text-slate-400">
+                            Step {stepItem.step}
+                          </td>
+                          <td className="py-1.5 px-3 font-sans text-slate-800">
+                            {stepItem.description}
+                          </td>
+                          <td className="py-1.5 px-3 text-rose-700">
+                            {stepItem.tripped_in_this_step?.length > 0
+                              ? stepItem.tripped_in_this_step
+                                  .map((id: number) => `#${id}`)
+                                  .join(', ')
+                              : 'None (System Settled)'}
+                          </td>
+                          <td className="py-1.5 px-3 text-right font-bold">
+                            {(stepItem.max_loading_percent || 0).toFixed(1)}%
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
         </div>
       )}
 
-      {/* WORKSPACE SUBTAB 4: REGIONAL PLANNING */}
+      {/* ========================================================================= */}
+      {/* WORKSPACE SUBTAB 4: REGIONAL PLANNING (All 4 Complete Cards Restored)     */}
+      {/* ========================================================================= */}
       {workspaceTab === 'planning' && (
         <div className="space-y-4">
           <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Info className="h-4 w-4 text-blue-600 shrink-0" />
               <span>
-                <strong>In-Memory Sandbox Guarantee:</strong> Additions and isolations here test network expansion in memory without altering the master `.m` file.
+                <strong>In-Memory Sandbox Guarantee:</strong> All additions and isolations here test network expansion in memory. The original `.m` base file in Supabase is never altered.
               </span>
             </div>
             {totalSandboxModifications > 0 && (
@@ -2340,31 +2402,92 @@ export const GridStabilityTab: React.FC<Props> = ({
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* 1. Propose Substation WITH Required Interconnection */}
             <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
               <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-100">
                 <Plus className="h-4 w-4 text-[#500b50]" />
                 <span>1. Propose Substation &amp; Interconnection</span>
               </h4>
+
               <div className="grid grid-cols-2 gap-2 text-xs">
-                <input
-                  type="text"
-                  placeholder="Substation Name (e.g. KUBWA 330)"
-                  value={newSubName}
-                  onChange={(e) => setNewSubName(e.target.value)}
-                  className="w-full border border-slate-300 rounded px-2.5 py-1.5"
-                />
-                <select
-                  value={connectToExistingBus}
-                  onChange={(e) => setConnectToExistingBus(Number(e.target.value))}
-                  className="w-full border border-slate-300 rounded px-2.5 py-1.5 bg-white font-semibold"
-                >
-                  {buses.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      Connect from #{b.id}: {b.name}
-                    </option>
-                  ))}
-                </select>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    Substation Name
+                    <TooltipBadge content="Name of the new regional bulk transmission node." />
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. KUBWA 330"
+                    value={newSubName}
+                    onChange={(e) => setNewSubName(e.target.value)}
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    Connect From Node
+                    <TooltipBadge content="Select which existing substation this proposed node connects to." />
+                  </label>
+                  <select
+                    value={connectToExistingBus}
+                    onChange={(e) => setConnectToExistingBus(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 bg-white font-semibold"
+                  >
+                    {buses.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        #{b.id}: {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
+
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    Voltage
+                    <TooltipBadge content="Operating bus voltage class." />
+                  </label>
+                  <select
+                    value={newSubKv}
+                    onChange={(e) => setNewSubKv(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2 py-1.5 bg-white"
+                  >
+                    <option value={330}>330 kV Bulk</option>
+                    <option value={132}>132 kV Sub-T</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    Length (km)
+                    <TooltipBadge content="Overhead transmission line distance to the connection node." />
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={tieLengthKm}
+                    onChange={(e) => setTieLengthKm(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    Load (MW)
+                    <TooltipBadge content="Planned active demand withdrawal at this node." />
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={newSubDemand}
+                    onChange={(e) => setNewSubDemand(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono"
+                  />
+                </div>
+              </div>
+
               <button
                 onClick={handleAddProposedSubstation}
                 className="w-full py-2 rounded-lg bg-[#500b50] hover:bg-[#680f68] text-white font-bold text-xs transition"
@@ -2373,45 +2496,247 @@ export const GridStabilityTab: React.FC<Props> = ({
               </button>
             </div>
 
+            {/* 2. Connect Independent Line Corridor */}
             <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
               <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-100">
                 <Plus className="h-4 w-4 text-[#500b50]" />
-                <span>2. Propose Distributed or Bulk Generation Plant</span>
+                <span>2. Connect Independent Line Corridor</span>
               </h4>
-              <div className="grid grid-cols-3 gap-2 text-xs">
+
+              <div className="text-xs">
+                <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                  Corridor Name
+                  <TooltipBadge content="Identifier for the overhead transmission line." />
+                </label>
                 <input
                   type="text"
-                  placeholder="Plant Name (e.g. Kano Solar)"
+                  placeholder="e.g. MAKURDI - WUKARI"
+                  value={newLineName}
+                  onChange={(e) => setNewLineName(e.target.value)}
+                  className="w-full border border-slate-300 rounded px-2.5 py-1.5"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    From Bus
+                    <TooltipBadge content="Originating substation node." />
+                  </label>
+                  <select
+                    value={newLineFrom}
+                    onChange={(e) => setNewLineFrom(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 bg-white font-semibold"
+                  >
+                    {buses.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        #{b.id}: {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    To Bus
+                    <TooltipBadge content="Terminating substation node." />
+                  </label>
+                  <select
+                    value={newLineTo}
+                    onChange={(e) => setNewLineTo(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 bg-white font-semibold"
+                  >
+                    {buses.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        #{b.id}: {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    Length (km)
+                    <TooltipBadge content="Corridor distance in kilometers." />
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={newLineLength}
+                    onChange={(e) => setNewLineLength(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    Conductor
+                    <TooltipBadge content="Electrical conductor type determining reactance and rating." />
+                  </label>
+                  <select
+                    value={newLineConductor}
+                    onChange={(e) => setNewLineConductor(e.target.value)}
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 bg-white font-semibold"
+                  >
+                    <option value="Bison 330kV">Bison 330kV</option>
+                    <option value="Bear 330kV">Bear 330kV</option>
+                    <option value="Panther 132kV">Panther 132kV</option>
+                  </select>
+                </div>
+              </div>
+
+              <button
+                onClick={handleAddLine}
+                className="w-full py-2 rounded-lg bg-[#500b50] hover:bg-[#680f68] text-white font-bold text-xs transition"
+              >
+                + Connect Line Corridor
+              </button>
+            </div>
+
+            {/* 3. Propose Power Plant */}
+            <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
+              <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-100">
+                <Plus className="h-4 w-4 text-[#500b50]" />
+                <span>3. Propose Power Generation Plant</span>
+              </h4>
+
+              <div className="text-xs">
+                <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                  Plant Identifier
+                  <TooltipBadge content="Power station generation facility name." />
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Kano Solar IPP"
                   value={newGenName}
                   onChange={(e) => setNewGenName(e.target.value)}
                   className="w-full border border-slate-300 rounded px-2.5 py-1.5"
                 />
-                <select
-                  value={newGenBus}
-                  onChange={(e) => setNewGenBus(Number(e.target.value))}
-                  className="w-full border border-slate-300 rounded px-2 py-1.5 bg-white font-semibold"
-                >
-                  {buses.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      #{b.id}: {b.name}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="number"
-                  min="1"
-                  placeholder="MW"
-                  value={newGenP}
-                  onChange={(e) => setNewGenP(Number(e.target.value))}
-                  className="w-full border border-slate-300 rounded px-2 py-1.5 font-mono"
-                />
               </div>
+
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    Interconnection Node
+                    <TooltipBadge content="Substation busbar where power injects." />
+                  </label>
+                  <select
+                    value={newGenBus}
+                    onChange={(e) => setNewGenBus(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 bg-white font-semibold"
+                  >
+                    {buses.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        #{b.id}: {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    Output (MW)
+                    <TooltipBadge content="Active generating capability in MW." />
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={newGenP}
+                    onChange={(e) => setNewGenP(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center">
+                    Target (pu)
+                    <TooltipBadge content="Terminal generator excitation voltage target." />
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.95"
+                    max="1.10"
+                    value={newGenVm}
+                    onChange={(e) => setNewGenVm(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 font-mono"
+                  />
+                </div>
+              </div>
+
               <button
                 onClick={handleAddGen}
                 className="w-full py-2 rounded-lg bg-[#500b50] hover:bg-[#680f68] text-white font-bold text-xs transition"
               >
                 + Incorporate Generation Plant
               </button>
+            </div>
+
+            {/* 4. Sandbox Node Decommissioning */}
+            <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
+              <h4 className="font-bold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5 pb-2 border-b border-slate-100">
+                <Trash2 className="h-4 w-4 text-rose-600" />
+                <span>4. Decommission / Delete Node</span>
+              </h4>
+
+              <div className="text-xs space-y-2">
+                <label className="block text-[11px] font-bold text-slate-600 flex items-center">
+                  Select Substation to Isolate
+                  <TooltipBadge content="Temporarily isolate a node and its incident branches to test contingency survival." />
+                </label>
+                <div className="flex gap-2">
+                  <select
+                    value={selectedDecommissionBus}
+                    onChange={(e) => setSelectedDecommissionBus(Number(e.target.value))}
+                    className="flex-1 border border-slate-300 rounded px-2.5 py-1.5 bg-white font-semibold"
+                  >
+                    {buses.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        #{b.id}: {b.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() =>
+                      toggleBusService && toggleBusService(selectedDecommissionBus)
+                    }
+                    className="px-3 py-1.5 rounded bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shrink-0"
+                  >
+                    {pfVariables.disabledBuses?.includes(selectedDecommissionBus)
+                      ? 'Restore Node'
+                      : 'Isolate Node'}
+                  </button>
+                </div>
+              </div>
+
+              {pfVariables.disabledBuses && pfVariables.disabledBuses.length > 0 && (
+                <div className="pt-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                    Currently Decommissioned Nodes ({pfVariables.disabledBuses.length})
+                  </span>
+                  <div className="flex flex-wrap gap-1">
+                    {pfVariables.disabledBuses.map((bId) => {
+                      const busName = buses.find((b) => b.id === bId)?.name || `#${bId}`;
+                      return (
+                        <span
+                          key={bId}
+                          className="px-2 py-0.5 rounded bg-rose-50 border border-rose-200 text-rose-800 text-[10px] font-mono font-bold flex items-center gap-1"
+                        >
+                          <span>{busName}</span>
+                          <button
+                            onClick={() => toggleBusService && toggleBusService(bId)}
+                            className="text-rose-500 hover:text-rose-900"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
