@@ -45,7 +45,7 @@ const TRIANGLE_ROW_1: TeamMember[] = [
 const TRIANGLE_ROW_2: TeamMember[] = [
    {
     name: 'Engr. Dr. M. Buhari',
-    title: 'Lead Researcher',
+    title: 'Senior Researcher',
     photo: '/team/buhari.png',
   },
   {
@@ -58,17 +58,17 @@ const TRIANGLE_ROW_2: TeamMember[] = [
 const TRIANGLE_ROW_3: TeamMember[] = [
   {
     name: 'Engr. Prof. I. Okoro',
-    title: 'Researcher',
+    title: 'Senior Researcher',
     photo: '/team/okoro.jpg',
   },
   {
     name: 'Engr. Prof. S. S. Adamu',
-    title: 'Researcher',
+    title: 'Senior Researcher',
     photo: '/team/adamu.jpg',
   },
   {
     name: 'Engr. Hameedat',
-    title: 'Research Assistant',
+    title: 'Research Mentee',
     photo: '/team/hameedat.jpeg',
   },
 ];

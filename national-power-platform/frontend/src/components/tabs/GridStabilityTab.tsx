@@ -754,7 +754,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                               : 'bg-blue-50 text-blue-800'
                           }`}
                         >
-                          {isDynamicModel ? 'Dynamic & Static Ready' : 'Static + Dynamic Sandbox'}
+                          {isDynamicModel ? 'Static' : 'Dynamic'}
                         </span>
                       </div>
 
