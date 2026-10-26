@@ -5,13 +5,12 @@ import { usePathname, useRouter } from 'next/navigation';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import {
-  AuthModal,
   fetchAllPlatformAccessRequests,
   persistPlatformAccessRequest,
   isConfiguredAdminRole,
 } from '../modals/AuthModal';
-import { useGrid } from '@/context/GridContext';
-import { ArrowRight, Lock } from 'lucide-react';
+import { supabase, useGrid } from '@/context/GridContext';
+import { Lock, UserPlus, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export interface PlatformUser {
   id: string;
@@ -21,6 +20,16 @@ export interface PlatformUser {
   institution?: string;
 }
 
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL || 'https://national-power-backend.onrender.com';
+
+const ENV_ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || '')
+  .split(',')
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+
+const ENV_ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD || '';
+
 export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const pathname = usePathname();
   const router = useRouter();
@@ -28,18 +37,17 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
 
   const [user, setUser] = useState<PlatformUser | null>(null);
   const [authInitialized, setAuthInitialized] = useState(false);
-  const [showAuthModal, setShowAuthModal] = useState(false);
-  const [authModalMode, setAuthModalMode] = useState<'login' | 'request'>('login');
-  const [showPublicPortal, setShowPublicPortal] = useState(false);
-  const [publicSection, setPublicSection] = useState<
-    'overview' | 'products' | 'learning' | 'reading'
-  >('overview');
-  const [activeLesson, setActiveLesson] = useState<number>(0);
-  const [activeMotivationTab, setActiveMotivationTab] = useState<
-    'problem' | 'solution' | 'education'
-  >('problem');
-  const [previewVoltage, setPreviewVoltage] = useState<number>(1.02);
-  const [previewLoading, setPreviewLoading] = useState<number>(100);
+
+  // Direct Sign-In / Request Access State
+  const [mode, setMode] = useState<'login' | 'request'>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [institution, setInstitution] = useState('');
+  const [reason, setReason] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [requestSubmitted, setRequestSubmitted] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -50,11 +58,11 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          const email = (parsed.email || '').toLowerCase();
+          const userEmail = (parsed.email || '').toLowerCase();
           let resolvedRole: 'admin' | 'user' = isConfiguredAdminRole(
             parsed.role,
             parsed.isAdmin || parsed.is_admin,
-            email
+            userEmail
           )
             ? 'admin'
             : 'user';
@@ -62,7 +70,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
           const initialUser: PlatformUser = {
             id: parsed.id || 'usr-1',
             name: parsed.name || parsed.username || 'Engineer',
-            email,
+            email: userEmail,
             role: resolvedRole,
             institution: parsed.institution || 'FUT Minna',
           };
@@ -72,21 +80,20 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
             setAuthInitialized(true);
           }
 
-          // Sync live with Supabase access_requests registry & bootstrap first admin if none exists
           const allReqs = await fetchAllPlatformAccessRequests();
           const hasAnyAdmin = allReqs.some(
             (r: any) =>
               r.status === 'approved' && isConfiguredAdminRole(r.role, r.is_admin, r.email)
           );
-          const dbRecord = allReqs.find((r: any) => r.email?.toLowerCase() === email);
+          const dbRecord = allReqs.find((r: any) => r.email?.toLowerCase() === userEmail);
 
-          if (!hasAnyAdmin && email) {
+          if (!hasAnyAdmin && userEmail) {
             resolvedRole = 'admin';
             await persistPlatformAccessRequest(
               {
                 id: initialUser.id,
                 full_name: initialUser.name,
-                email,
+                email: userEmail,
                 institution: initialUser.institution || 'FUT Minna',
                 reason: 'Primary Platform Administrator',
                 password: '',
@@ -123,8 +130,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
 
   const handleLoginSuccess = (loggedInUser: PlatformUser) => {
     setUser(loggedInUser);
-    setShowPublicPortal(false);
-    setShowAuthModal(false);
     if (typeof window !== 'undefined') {
       localStorage.setItem('ml4ps_user', JSON.stringify(loggedInUser));
       localStorage.setItem('nesi_user', JSON.stringify(loggedInUser));
@@ -133,73 +138,186 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
 
   const handleLogout = () => {
     setUser(null);
-    setShowPublicPortal(true);
+    setAuthError(null);
+    setRequestSubmitted(false);
     if (typeof window !== 'undefined') {
       localStorage.removeItem('ml4ps_user');
       localStorage.removeItem('nesi_user');
     }
   };
 
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    setAuthError(null);
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    try {
+      if (
+        ENV_ADMIN_EMAILS.includes(cleanEmail) &&
+        (!ENV_ADMIN_PASSWORD || password === ENV_ADMIN_PASSWORD)
+      ) {
+        handleLoginSuccess({
+          id: 'env-admin',
+          name: cleanEmail.split('@')[0],
+          email: cleanEmail,
+          role: 'admin',
+        });
+        return;
+      }
+
+      if (supabase) {
+        try {
+          const { data: authData, error: sErr } = await supabase.auth.signInWithPassword({
+            email: cleanEmail,
+            password,
+          });
+          if (!sErr && authData?.user) {
+            const meta = authData.user.user_metadata || {};
+            const isAdm = isConfiguredAdminRole(meta.role, meta.is_admin, cleanEmail);
+            handleLoginSuccess({
+              id: authData.user.id,
+              name: meta.full_name || meta.name || cleanEmail.split('@')[0],
+              email: cleanEmail,
+              role: isAdm ? 'admin' : 'user',
+              institution: meta.institution || '',
+            });
+            return;
+          }
+        } catch {}
+      }
+
+      const allReqs = await fetchAllPlatformAccessRequests();
+      const hasAnyAdmin = allReqs.some(
+        (r: any) => r.status === 'approved' && isConfiguredAdminRole(r.role, r.is_admin, r.email)
+      );
+      const found = allReqs.find((r: any) => r.email?.toLowerCase() === cleanEmail);
+
+      if (found) {
+        if (found.status === 'pending') {
+          setAuthError('Your account request is pending administrator approval.');
+          setAuthLoading(false);
+          return;
+        }
+        if (found.status === 'rejected') {
+          setAuthError('Your account request was declined by the administrator.');
+          setAuthLoading(false);
+          return;
+        }
+        if (found.status === 'approved') {
+          if (found.password && found.password !== password) {
+            setAuthError('Incorrect password.');
+            setAuthLoading(false);
+            return;
+          }
+          const roleResolved =
+            !hasAnyAdmin || isConfiguredAdminRole(found.role, found.is_admin, cleanEmail)
+              ? 'admin'
+              : 'user';
+
+          handleLoginSuccess({
+            id: String(found.id || 'usr-' + Date.now()),
+            name: found.full_name || found.name || cleanEmail.split('@')[0],
+            email: cleanEmail,
+            role: roleResolved,
+            institution: found.institution || '',
+          });
+          return;
+        }
+      }
+
+      const res = await fetch(`${API_BASE}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail, username: cleanEmail, password }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const userObj = data.user || data;
+        const isAdm =
+          !hasAnyAdmin ||
+          isConfiguredAdminRole(userObj.role, userObj.is_admin || userObj.isAdmin, cleanEmail);
+
+        handleLoginSuccess({
+          id: String(userObj.id || 'usr-' + Date.now()),
+          name: userObj.name || userObj.full_name || userObj.username || cleanEmail.split('@')[0],
+          email: cleanEmail,
+          role: isAdm ? 'admin' : 'user',
+          institution: userObj.institution || '',
+        });
+        return;
+      }
+
+      setAuthError('Account not found or not yet approved. Use Request Access to apply.');
+    } catch {
+      setAuthError('Could not connect to server. Check your internet connection.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleRequestSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!fullName.trim() || !email.trim() || !password.trim()) {
+      setAuthError('Please fill in all required fields.');
+      return;
+    }
+
+    setAuthLoading(true);
+    setAuthError(null);
+
+    try {
+      const existingReqs = await fetchAllPlatformAccessRequests();
+      const hasApprovedAdmin = existingReqs.some(
+        (r: any) => r.status === 'approved' && isConfiguredAdminRole(r.role, r.is_admin, r.email)
+      );
+      const isFirstBootstrapAdmin = !hasApprovedAdmin && existingReqs.length === 0;
+
+      const newRequest = {
+        id: 'req-' + Date.now(),
+        full_name: fullName.trim(),
+        email: email.trim().toLowerCase(),
+        institution: institution.trim() || 'FUT Minna',
+        reason: reason.trim() || 'Power System Simulation',
+        password: password,
+        role: isFirstBootstrapAdmin ? 'admin' : 'user',
+        status: isFirstBootstrapAdmin ? 'approved' : 'pending',
+        created_at: new Date().toISOString(),
+      };
+
+      await persistPlatformAccessRequest(newRequest, existingReqs);
+
+      if (isFirstBootstrapAdmin) {
+        handleLoginSuccess({
+          id: newRequest.id,
+          name: newRequest.full_name,
+          email: newRequest.email,
+          role: 'admin',
+          institution: newRequest.institution,
+        });
+        return;
+      }
+
+      setRequestSubmitted(true);
+    } catch (err: any) {
+      setAuthError(err?.message || 'Could not submit request.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   if (!authInitialized) return null;
 
-  if (!user || showPublicPortal) {
-    const LESSONS = [
-      {
-        title: '1. Per-Unit (pu) System & Transmission Voltage Levels',
-        level: 'Undergraduate Foundation',
-        summary:
-          'Why bulk power grids normalize voltages (330 kV and 132 kV) and power (100 MVA base) into per-unit quantities.',
-        content:
-          'In the Nigerian National Grid, transmission corridors operate primarily at 330 kV (bulk backbone) and 132 kV (sub-transmission). Using per-unit (pu) values normalizes voltage magnitudes around 1.000 pu across transformer boundaries. Under the Nigerian Grid Code, normal steady-state voltage must remain between 0.950 pu and 1.050 pu (313.5 kV to 346.5 kV on the 330 kV network).',
-        formula: 'V_pu = V_actual (kV) / V_base (kV)',
-      },
-      {
-        title: '2. Steady-State AC Power Flow (Newton-Raphson)',
-        level: 'Power System Analysis',
-        summary:
-          'How active power (MW) relates to voltage phase angles and reactive power (MVAR) relates to voltage magnitude.',
-        content:
-          'High-voltage transmission lines have high inductive reactance compared to resistance (X >> R). Because of this physical property, active power (MW) flows primarily from buses with higher phase angles to lower phase angles, while reactive power (MVAR) injection supports local bus voltage magnitudes. Every simulation model requires a Slack (Reference) Bus to balance network losses.',
-        formula: 'P_ik = (|V_i||V_k| / X_ik) * sin(delta_i - delta_k)',
-      },
-      {
-        title: '3. Primary Frequency Control & Governor Droop (P-f)',
-        level: 'Grid Stability & Control',
-        summary:
-          'How synchronous generators automatically share sudden load changes without central communication.',
-        content:
-          'Nominal grid frequency in Nigeria is 50.0 Hz. When generation drops or demand surges, synchronous turbines slow down and system frequency falls. Each generator speed governor is configured with a droop setting R (typically 4% to 5%). A 4% droop means a 4% change in frequency (2.0 Hz) causes the unit to ramp output by 100% of its rated capacity.',
-        formula: 'Delta_P_i = - (P_rated,i / (R_i * f_0)) * Delta_f',
-      },
-      {
-        title: '4. N-1 Contingency & Cascading Overcurrent Tripping',
-        level: 'System Protection',
-        summary:
-          'Evaluating whether the grid can survive the unexpected loss of any single transmission circuit.',
-        content:
-          'An N-1 contingency occurs when a single transmission line or transformer breaker opens due to a fault. The power previously carried by that line immediately diverts onto parallel paths inversely proportional to their series reactance (P_1 / P_2 = X_2 / X_1). If adjacent lines exceed their thermal current rating, overcurrent relays trip them open, which can trigger a cascading blackout.',
-        formula: 'Loading (%) = (I_line / I_thermal_limit) * 100',
-      },
-      {
-        title: '5. Economic Dispatch & Wholesale Electricity Pricing',
-        level: 'Power Economics',
-        summary:
-          'How hydro and gas-fired thermal stations are dispatched in merit order to meet active grid demand.',
-        content:
-          'Generating stations have different marginal operating costs depending on whether they use water (hydro) or natural gas (thermal). In wholesale dispatch, generators are stacked from lowest to highest marginal offer (Naira/MWh) until total system demand is met. The offer of the last generator needed to meet demand sets the System Marginal Price (SMP).',
-        formula: 'SMP = Offer Price of Marginal Dispatched Unit (Naira/MWh)',
-      },
-    ];
-
-    const simulatedReceivingVoltage = Math.max(
-      0.82,
-      Number((previewVoltage - (previewLoading / 100) * 0.085).toFixed(3))
-    );
-
+  // =========================================================================
+  // LOGGED-OUT VIEW: Direct Sign In / Request Access + Short Instructions
+  // =========================================================================
+  if (!user) {
     return (
-      <div className="h-screen w-full overflow-y-auto bg-slate-50 text-slate-900 flex flex-col font-sans">
-        <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shrink-0">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+      <div className="min-h-screen w-full bg-slate-50 text-slate-900 flex flex-col justify-between font-sans">
+        <header className="bg-white border-b border-slate-200">
+          <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <img
                 src="/ml4ps-logo.png"
@@ -211,603 +329,255 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
               />
               <div>
                 <span className="font-black text-base text-slate-900 tracking-tight block leading-none">
-                  ML4PS
+                  National Power System Simulation
                 </span>
                 <span className="text-[11px] text-slate-500 font-medium">
-                  Machine Learning 4 Power Systems • FUT Minna
+                  Machine Learning 4 Power Systems (ML4PS) • FUT Minna
                 </span>
               </div>
-            </div>
-
-            <nav className="hidden md:flex items-center gap-6 text-xs font-bold text-slate-600">
-              <button
-                onClick={() => setPublicSection('overview')}
-                className={`py-1 transition ${
-                  publicSection === 'overview'
-                    ? 'text-[#500b50] border-b-2 border-[#500b50]'
-                    : 'hover:text-slate-900'
-                }`}
-              >
-                Purpose &amp; Overview
-              </button>
-              <button
-                onClick={() => setPublicSection('products')}
-                className={`py-1 transition ${
-                  publicSection === 'products'
-                    ? 'text-[#500b50] border-b-2 border-[#500b50]'
-                    : 'hover:text-slate-900'
-                }`}
-              >
-                Projects &amp; Modules
-              </button>
-              <button
-                onClick={() => setPublicSection('learning')}
-                className={`py-1 transition ${
-                  publicSection === 'learning'
-                    ? 'text-[#500b50] border-b-2 border-[#500b50]'
-                    : 'hover:text-slate-900'
-                }`}
-              >
-                Student Learning Hub
-              </button>
-              <button
-                onClick={() => setPublicSection('reading')}
-                className={`py-1 transition ${
-                  publicSection === 'reading'
-                    ? 'text-[#500b50] border-b-2 border-[#500b50]'
-                    : 'hover:text-slate-900'
-                }`}
-              >
-                Technical Reading
-              </button>
-            </nav>
-
-            <div className="flex items-center gap-2.5">
-              {user ? (
-                <button
-                  onClick={() => setShowPublicPortal(false)}
-                  className="px-4 py-2 rounded-lg bg-[#500b50] text-white text-xs font-bold hover:bg-[#680f68] transition flex items-center gap-1.5"
-                >
-                  <span>Open Simulation Workspace</span>
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </button>
-              ) : (
-                <>
-                  <button
-                    onClick={() => {
-                      setAuthModalMode('login');
-                      setShowAuthModal(true);
-                    }}
-                    className="px-3.5 py-2 rounded-lg border border-slate-300 bg-white text-slate-800 text-xs font-bold hover:bg-slate-50 transition"
-                  >
-                    Sign In
-                  </button>
-                  <button
-                    onClick={() => {
-                      setAuthModalMode('request');
-                      setShowAuthModal(true);
-                    }}
-                    className="px-4 py-2 rounded-lg bg-[#500b50] text-white text-xs font-bold hover:bg-[#680f68] transition"
-                  >
-                    Request Access
-                  </button>
-                </>
-              )}
             </div>
           </div>
         </header>
 
-        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8 space-y-10">
-          {publicSection === 'overview' && (
-            <div className="space-y-10">
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center bg-white border border-slate-200 rounded-2xl p-6 sm:p-10 shadow-xs">
-                <div className="lg:col-span-7 space-y-4">
-                  <span className="inline-block px-3 py-1 rounded-md bg-purple-50 border border-purple-200 text-[#500b50] text-xs font-bold">
-                    Department of Electrical &amp; Electronics Engineering • FUT Minna
-                  </span>
-                  <h1 className="text-2xl sm:text-4xl font-black text-slate-900 tracking-tight leading-tight">
-                    Bridging Power Engineering Theory and Nigerian Grid Operations.
-                  </h1>
-                  <p className="text-sm text-slate-600 leading-relaxed">
-                    The Nigerian National Grid faces recurring voltage stability challenges, transmission congestion, and cascading line trips. However, students and researchers across Nigerian universities rarely have access to simulation environments pre-configured with actual Nigerian 330 kV and 132 kV network data.
-                  </p>
-                  <p className="text-sm text-slate-600 leading-relaxed">
-                    Machine Learning 4 Power Systems (ML4PS) built this platform so engineers, lecturers, and students can load real MATPOWER and Pandapower network topologies, test line contingencies, inspect single-line diagrams, and study frequency stability directly in the browser.
-                  </p>
-                  <div className="pt-2 flex flex-wrap items-center gap-3">
-                    {!user && (
-                      <button
-                        onClick={() => {
-                          setAuthModalMode('login');
-                          setShowAuthModal(true);
-                        }}
-                        className="px-5 py-2.5 rounded-xl bg-[#500b50] text-white text-xs font-bold hover:bg-[#680f68] transition flex items-center gap-2"
-                      >
-                        <span>Sign In to Platform</span>
-                        <ArrowRight className="h-4 w-4" />
-                      </button>
-                    )}
-                    <button
-                      onClick={() => setPublicSection('learning')}
-                      className="px-4 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs font-bold hover:bg-slate-50 transition"
-                    >
-                      Explore Student Learning Hub
-                    </button>
-                  </div>
-                </div>
-
-                <div className="lg:col-span-5 rounded-xl border border-slate-200 bg-slate-900 text-white p-5 space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                    <div>
-                      <span className="text-[10px] font-mono uppercase tracking-wider text-amber-400 block font-bold">
-                        Interactive Live Preview
-                      </span>
-                      <h3 className="text-xs font-bold text-white mt-0.5">
-                        330 kV radial transmission voltage drop test
-                      </h3>
-                    </div>
-                    <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
-                        simulatedReceivingVoltage < 0.95
-                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                          : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                      }`}
-                    >
-                      {simulatedReceivingVoltage < 0.95 ? 'UNDER-VOLTAGE' : 'COMPLIANT'}
-                    </span>
-                  </div>
-
-                  <div className="bg-slate-950 rounded-lg p-3 border border-slate-800">
-                    <svg viewBox="0 0 380 105" className="w-full h-24">
-                      <rect x="24" y="22" width="8" height="55" fill="#10b981" rx="2" />
-                      <text x="28" y="15" textAnchor="middle" fill="#cbd5e1" fontSize="9" fontWeight="bold">
-                        SHIRORO 330
-                      </text>
-                      <text x="28" y="92" textAnchor="middle" fill="#34d399" fontSize="9" fontFamily="monospace">
-                        {previewVoltage.toFixed(2)} pu
-                      </text>
-
-                      <line
-                        x1="32"
-                        y1="50"
-                        x2="348"
-                        y2="50"
-                        stroke={simulatedReceivingVoltage < 0.95 ? '#f43f5e' : '#38bdf8'}
-                        strokeWidth="3"
-                        strokeDasharray="6 4"
-                      />
-                      <rect
-                        x="145"
-                        y="38"
-                        width="90"
-                        height="22"
-                        rx="4"
-                        fill="#0f172a"
-                        stroke="#475569"
-                        strokeWidth="1.2"
-                      />
-                      <text
-                        x="190"
-                        y="52"
-                        textAnchor="middle"
-                        fill="#f8fafc"
-                        fontSize="9"
-                        fontFamily="monospace"
-                        fontWeight="bold"
-                      >
-                        {Math.round(previewLoading * 2.4)} MW Flow
-                      </text>
-
-                      <rect
-                        x="348"
-                        y="22"
-                        width="8"
-                        height="55"
-                        fill={simulatedReceivingVoltage < 0.95 ? '#f43f5e' : '#10b981'}
-                        rx="2"
-                      />
-                      <text x="342" y="15" textAnchor="end" fill="#cbd5e1" fontSize="9" fontWeight="bold">
-                        KATAMPE 330
-                      </text>
-                      <text
-                        x="342"
-                        y="92"
-                        textAnchor="end"
-                        fill={simulatedReceivingVoltage < 0.95 ? '#fb7185' : '#34d399'}
-                        fontSize="9"
-                        fontFamily="monospace"
-                      >
-                        {simulatedReceivingVoltage.toFixed(3)} pu
-                      </text>
-                    </svg>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3 text-xs">
-                    <div className="bg-slate-800/70 p-2.5 rounded-lg border border-slate-700">
-                      <label className="text-[10px] text-slate-400 block mb-1">
-                        Sending Bus Setpoint (pu)
-                      </label>
-                      <div className="flex gap-1">
-                        {[1.0, 1.02, 1.05].map((v) => (
-                          <button
-                            key={v}
-                            onClick={() => setPreviewVoltage(v)}
-                            className={`flex-1 py-1 rounded font-mono text-[11px] font-bold transition ${
-                              previewVoltage === v
-                                ? 'bg-[#500b50] text-white'
-                                : 'bg-slate-900 text-slate-300 hover:bg-slate-700'
-                            }`}
-                          >
-                            {v.toFixed(2)}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-800/70 p-2.5 rounded-lg border border-slate-700">
-                      <label className="text-[10px] text-slate-400 block mb-1">
-                        Corridor Loading (%)
-                      </label>
-                      <div className="flex gap-1">
-                        {[70, 100, 140].map((ld) => (
-                          <button
-                            key={ld}
-                            onClick={() => setPreviewLoading(ld)}
-                            className={`flex-1 py-1 rounded font-mono text-[11px] font-bold transition ${
-                              previewLoading === ld
-                                ? 'bg-[#500b50] text-white'
-                                : 'bg-slate-900 text-slate-300 hover:bg-slate-700'
-                            }`}
-                          >
-                            {ld}%
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 space-y-6">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
-                  <div>
-                    <h2 className="text-lg font-black text-slate-900">
-                      Why We Built This Platform
-                    </h2>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Addressing practical engineering and educational gaps in the Nigerian power sector.
-                    </p>
-                  </div>
-
-                  <div className="flex rounded-xl border border-slate-200 bg-slate-50 p-1 text-xs font-bold gap-1">
-                    <button
-                      onClick={() => setActiveMotivationTab('problem')}
-                      className={`px-3 py-1.5 rounded-lg transition ${
-                        activeMotivationTab === 'problem'
-                          ? 'bg-[#500b50] text-white'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      The Grid Challenge
-                    </button>
-                    <button
-                      onClick={() => setActiveMotivationTab('solution')}
-                      className={`px-3 py-1.5 rounded-lg transition ${
-                        activeMotivationTab === 'solution'
-                          ? 'bg-[#500b50] text-white'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      Our Engineering Approach
-                    </button>
-                    <button
-                      onClick={() => setActiveMotivationTab('education')}
-                      className={`px-3 py-1.5 rounded-lg transition ${
-                        activeMotivationTab === 'education'
-                          ? 'bg-[#500b50] text-white'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      Student &amp; Research Access
-                    </button>
-                  </div>
-                </div>
-
-                {activeMotivationTab === 'problem' && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
-                    <div className="space-y-3 text-xs text-slate-600 leading-relaxed">
-                      <h3 className="text-sm font-bold text-slate-900">
-                        Understanding Voltage Collapse and Line Overloads in Nigeria
-                      </h3>
-                      <p>
-                        Nigeria’s bulk transmission network spans long radial 330 kV and 132 kV corridors connecting hydro stations in Niger State (Kainji, Jebba, Shiroro, Zungeru) and thermal plants in the South to distant load centers in the North-West, North-East, and Lagos.
-                      </p>
-                      <p>
-                        When a heavily loaded corridor trips on an N-1 fault, power redistributes onto parallel circuits. Without adequate reactive power (MVAR) compensation and fast governor response, bus voltages sag below 0.95 pu and trigger cascading overcurrent trips.
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 space-y-2 text-xs">
-                      <div className="font-bold text-slate-900">Key Questions Engineers Test Here:</div>
-                      <ul className="space-y-2 text-slate-600 list-disc pl-4">
-                        <li>
-                          Which substations violate the 0.95–1.05 pu statutory envelope when national demand scales by 120%?
-                        </li>
-                        <li>
-                          How many MVAR of shunt capacitor compensation are required to stabilize weak buses?
-                        </li>
-                        <li>
-                          If a critical 330 kV line trips open, which adjacent corridors overload first?
-                        </li>
-                      </ul>
-                    </div>
-                  </div>
+        <main className="flex-1 flex items-center justify-center p-4 sm:p-6">
+          <div className="max-w-4xl w-full grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
+            {/* Left Column: Direct Sign In / Request Access Card */}
+            <div className="md:col-span-6 rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center gap-2">
+                {mode === 'login' ? (
+                  <Lock className="h-4 w-4 text-[#500b50]" />
+                ) : (
+                  <UserPlus className="h-4 w-4 text-[#500b50]" />
                 )}
-
-                {activeMotivationTab === 'solution' && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
-                    <div className="space-y-3 text-xs text-slate-600 leading-relaxed">
-                      <h3 className="text-sm font-bold text-slate-900">
-                        Browser-Based Simulation Without Expensive Licenses
-                      </h3>
-                      <p>
-                        Traditional power system analysis packages require costly commercial licenses or complex local installations, limiting hands-on practice for undergraduate classes and independent researchers.
-                      </p>
-                      <p>
-                        Our platform runs a multi-stage AC power flow engine (Newton-Raphson, Iwamoto optimal damping, and Fast-Decoupled solvers) in the cloud. Approved users can open pre-verified Nigerian 330 kV and 132 kV models and run experiments in an isolated personal sandbox without altering the master files.
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 space-y-2 text-xs">
-                      <div className="font-bold text-slate-900">Platform Capabilities:</div>
-                      <ul className="space-y-2 text-slate-600 list-disc pl-4">
-                        <li>
-                          Interactive single-line diagram (SLD) with movable busbars and inline breaker controls.
-                        </li>
-                        <li>
-                          Non-destructive regional expansion sandbox to test adding new substations, lines, and power plants.
-                        </li>
-                        <li>
-                          Dynamic frequency response, multi-machine rotor angle swing curves, and economic dispatch.
-                        </li>
-                      </ul>
-                    </div>
-                  </div>
-                )}
-
-                {activeMotivationTab === 'education' && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
-                    <div className="space-y-3 text-xs text-slate-600 leading-relaxed">
-                      <h3 className="text-sm font-bold text-slate-900">
-                        Built for Nigerian Engineering Students and Researchers
-                      </h3>
-                      <p>
-                        Instead of studying only textbook 3-bus or 9-bus foreign test cases, students at FUT Minna and partner institutions can analyze the 63-bus 330 kV backbone and 369-bus 132 kV sub-transmission networks alongside smaller 5-bus and 10-bus teaching models.
-                      </p>
-                      <p>
-                        Every parameter in the workspace includes built-in engineering explanations (`?` tooltips) so students understand the physical meaning of slack voltage, power factor, governor droop, and relay trip thresholds as they adjust them.
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 space-y-2 text-xs">
-                      <div className="font-bold text-slate-900">How Account Approval Works:</div>
-                      <ul className="space-y-2 text-slate-600 list-disc pl-4">
-                        <li>
-                          Students and researchers submit an Access Request form with their institution and research focus.
-                        </li>
-                        <li>
-                          Platform administrators review and approve requests to grant full simulation access.
-                        </li>
-                        <li>
-                          Only administrators can upload new base `.m` models or promote other administrators.
-                        </li>
-                      </ul>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {publicSection === 'products' && (
-            <div className="space-y-6">
-              <div>
-                <h2 className="text-xl font-black text-slate-900">Projects &amp; Simulation Modules</h2>
-                <p className="text-xs text-slate-500 mt-1">
-                  Core simulation engines and analytical workspaces developed by the ML4PS team.
-                </p>
+                <h1 className="font-bold text-sm text-slate-900">
+                  {mode === 'login' ? 'Sign In' : 'Request Account Access'}
+                </h1>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                <div className="p-6 rounded-xl border border-slate-200 bg-white space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="px-2.5 py-0.5 rounded bg-purple-50 text-[#500b50] text-[11px] font-bold">
-                      Steady-State &amp; Expansion
-                    </span>
-                    <span className="text-xs font-mono text-slate-400">330 kV &amp; 132 kV</span>
-                  </div>
-                  <h3 className="font-bold text-base text-slate-900">
-                    1. AC Power Flow &amp; Regional Expansion Studio
-                  </h3>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Solves steady-state bus voltages, phase angles, active/reactive branch flows, and transmission losses. Includes a non-destructive sandbox where users can propose new substations, connect overhead lines, add generators, or isolate existing nodes without altering the base model.
-                  </p>
-                </div>
-
-                <div className="p-6 rounded-xl border border-slate-200 bg-white space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="px-2.5 py-0.5 rounded bg-blue-50 text-blue-800 text-[11px] font-bold">
-                      Vector CAD
-                    </span>
-                    <span className="text-xs font-mono text-slate-400">Interactive SLD</span>
-                  </div>
-                  <h3 className="font-bold text-base text-slate-900">
-                    2. Interactive Single-Line Diagram (SLD) Canvas
-                  </h3>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Generates untangled single-line diagrams directly from uploaded network topologies. Supports smooth node dragging, parallel circuit separation, inline breaker switching, bus property inspection, and high-resolution PNG, SVG, and CSV export.
-                  </p>
-                </div>
-
-                <div className="p-6 rounded-xl border border-slate-200 bg-white space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="px-2.5 py-0.5 rounded bg-amber-50 text-amber-800 text-[11px] font-bold">
-                      Transient &amp; Protection
-                    </span>
-                    <span className="text-xs font-mono text-slate-400">Time-Domain ODE</span>
-                  </div>
-                  <h3 className="font-bold text-base text-slate-900">
-                    3. Frequency Dynamics, UFLS &amp; Multi-Machine Stability
-                  </h3>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Simulates system frequency nadir, Rate of Change of Frequency (RoCoF), 4-stage Under-Frequency Load Shedding (UFLS) relays, and multi-machine rotor angle swing trajectories following 3-phase bus faults.
-                  </p>
-                </div>
-
-                <div className="p-6 rounded-xl border border-slate-200 bg-white space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="px-2.5 py-0.5 rounded bg-emerald-50 text-emerald-800 text-[11px] font-bold">
-                      Power Economics
-                    </span>
-                    <span className="text-xs font-mono text-slate-400">Model-Driven Dispatch</span>
-                  </div>
-                  <h3 className="font-bold text-base text-slate-900">
-                    4. Active-Model Economic Dispatch &amp; Tariff Analyzer
-                  </h3>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Extracts the active generating stations and load buses directly from the loaded grid model to simulate merit-order generator dispatch, fuel cost sensitivity, market clearing prices, and nodal/regional load obligations.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {publicSection === 'learning' && (
-            <div className="space-y-6">
-              <div>
-                <h2 className="text-xl font-black text-slate-900">Student Learning Hub</h2>
-                <p className="text-xs text-slate-500 mt-1">
-                  Core power systems engineering concepts explained for students before running simulations.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                <div className="lg:col-span-5 space-y-2">
-                  {LESSONS.map((lesson, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => setActiveLesson(idx)}
-                      className={`w-full text-left p-4 rounded-xl border transition ${
-                        activeLesson === idx
-                          ? 'border-[#500b50] bg-purple-50/60 shadow-2xs'
-                          : 'border-slate-200 bg-white hover:border-slate-300'
-                      }`}
-                    >
-                      <span className="text-[10px] font-bold uppercase text-[#500b50] block">
-                        {lesson.level}
-                      </span>
-                      <h4 className="font-bold text-xs text-slate-900 mt-0.5">{lesson.title}</h4>
-                      <p className="text-[11px] text-slate-500 mt-1">{lesson.summary}</p>
-                    </button>
-                  ))}
-                </div>
-
-                <div className="lg:col-span-7 p-6 rounded-2xl border border-slate-200 bg-white space-y-4 h-fit">
-                  <div className="border-b border-slate-100 pb-3">
-                    <span className="text-[10px] font-bold uppercase text-[#500b50]">
-                      {LESSONS[activeLesson].level}
-                    </span>
-                    <h3 className="font-black text-base text-slate-900 mt-0.5">
-                      {LESSONS[activeLesson].title}
-                    </h3>
-                  </div>
-
-                  <p className="text-xs text-slate-700 leading-relaxed">
-                    {LESSONS[activeLesson].content}
-                  </p>
-
-                  <div className="p-3.5 rounded-xl bg-slate-900 text-white font-mono text-xs">
-                    <span className="text-[10px] text-slate-400 block mb-1 font-sans uppercase font-bold">
-                      Governing Equation
-                    </span>
-                    {LESSONS[activeLesson].formula}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {publicSection === 'reading' && (
-            <div className="space-y-6">
-              <div>
-                <h2 className="text-xl font-black text-slate-900">Publications &amp; Technical Reading</h2>
-                <p className="text-xs text-slate-500 mt-1">
-                  Research documentation and grid code reference material from the ML4PS group.
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                {[
-                  {
-                    title:
-                      'Steady-State Voltage Stability and Continuation Power Flow Analysis of the Nigerian 330 kV Transmission Network',
-                    authors: 'ML4PS Research Group • FUT Minna',
-                    year: '2026',
-                    tag: 'Grid Stability',
-                    abstract:
-                      'Evaluates bus voltage profiles across 63 bulk 330 kV substations under peak loading and identifies reactive power compensation requirements in the North-East and North-Central zones.',
-                  },
-                  {
-                    title:
-                      'Sub-Transmission Expansion: 369-Bus 132 kV Network Modelling and N-1 Contingency Screening',
-                    authors: 'Department of Electrical & Electronics Engineering, FUT Minna',
-                    year: '2026',
-                    tag: 'Sub-Transmission',
-                    abstract:
-                      'Comprehensive topological parameterization of the 132 kV sub-transmission feeders, analyzing parallel line impedance sharing and automated overcurrent relay trip thresholds.',
-                  },
-                  {
-                    title:
-                      'Nigerian Grid Code Statutory Operating Limits: Reference Guide for Simulation Engineers',
-                    authors: 'Technical Standards Brief',
-                    year: '2025',
-                    tag: 'Grid Standards',
-                    abstract:
-                      'Summary of NERC statutory operating envelopes: 50.0 Hz nominal frequency, 0.95–1.05 pu steady-state voltage compliance, and 4-stage Under-Frequency Load Shedding (UFLS) settings.',
-                  },
-                ].map((pub, idx) => (
-                  <div
-                    key={idx}
-                    className="p-5 rounded-xl border border-slate-200 bg-white space-y-2"
+              <div className="p-6">
+                <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1 text-xs font-bold mb-5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode('login');
+                      setAuthError(null);
+                      setRequestSubmitted(false);
+                    }}
+                    className={`py-2 rounded-lg transition ${
+                      mode === 'login' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600'
+                    }`}
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="px-2.5 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-bold">
-                        {pub.tag}
-                      </span>
-                      <span className="text-xs font-mono text-slate-400">{pub.year}</span>
-                    </div>
-                    <h3 className="font-bold text-sm text-slate-900">{pub.title}</h3>
-                    <p className="text-[11px] font-semibold text-[#500b50]">{pub.authors}</p>
-                    <p className="text-xs text-slate-600 leading-relaxed">{pub.abstract}</p>
+                    Sign In
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode('request');
+                      setAuthError(null);
+                    }}
+                    className={`py-2 rounded-lg transition ${
+                      mode === 'request' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600'
+                    }`}
+                  >
+                    Request Access
+                  </button>
+                </div>
+
+                {authError && (
+                  <div className="mb-4 p-3 rounded-xl border border-rose-200 bg-rose-50 text-xs text-rose-700 flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" />
+                    <span>{authError}</span>
                   </div>
-                ))}
+                )}
+
+                {mode === 'login' ? (
+                  <form onSubmit={handleLoginSubmit} className="space-y-4 text-xs">
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">Email Address</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="name@institution.edu.ng"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-[#500b50]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">Password</label>
+                      <input
+                        type="password"
+                        required
+                        placeholder="••••••••"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-[#500b50]"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={authLoading}
+                      className="w-full py-2.5 rounded-xl bg-[#500b50] text-white font-bold text-xs hover:bg-[#680f68] transition disabled:opacity-50"
+                    >
+                      {authLoading ? 'Signing In...' : 'Sign In'}
+                    </button>
+                  </form>
+                ) : requestSubmitted ? (
+                  <div className="py-6 text-center space-y-3">
+                    <CheckCircle2 className="h-10 w-10 text-emerald-600 mx-auto" />
+                    <h4 className="font-bold text-sm text-slate-900">Request Sent</h4>
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      Your request for <strong>{email}</strong> has been sent to the administrators. Once accepted, you can sign in with your chosen password.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRequestSubmitted(false);
+                        setMode('login');
+                      }}
+                      className="mt-2 px-4 py-2 rounded-lg bg-[#500b50] text-white text-xs font-bold"
+                    >
+                      Back to Sign In
+                    </button>
+                  </div>
+                ) : (
+                  <form onSubmit={handleRequestSubmit} className="space-y-3 text-xs">
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">Full Name</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Enter your full name"
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-slate-900"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">Email Address</label>
+                        <input
+                          type="email"
+                          required
+                          placeholder="you@university.edu.ng"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          className="w-full border border-slate-300 rounded-lg px-3 py-2 text-slate-900"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">Institution</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g. FUT Minna"
+                          value={institution}
+                          onChange={(e) => setInstitution(e.target.value)}
+                          className="w-full border border-slate-300 rounded-lg px-3 py-2 text-slate-900"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">Purpose of Use</label>
+                      <textarea
+                        rows={2}
+                        required
+                        placeholder="Coursework, thesis, or grid analysis..."
+                        value={reason}
+                        onChange={(e) => setReason(e.target.value)}
+                        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-slate-900"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">Password</label>
+                      <input
+                        type="password"
+                        required
+                        minLength={6}
+                        placeholder="Choose a password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-slate-900"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={authLoading}
+                      className="w-full py-2.5 rounded-xl bg-[#500b50] text-white font-bold text-xs hover:bg-[#680f68] transition disabled:opacity-50"
+                    >
+                      {authLoading ? 'Submitting...' : 'Submit Request'}
+                    </button>
+                  </form>
+                )}
               </div>
             </div>
-          )}
+
+            {/* Right Column: Short Platform Instructions */}
+            <div className="md:col-span-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+              <div className="border-b border-slate-200 pb-3">
+                <h2 className="font-bold text-sm text-slate-900">Quick Instructions</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  How to use the power system simulation workspace after signing in.
+                </p>
+              </div>
+
+              <ol className="space-y-3.5 text-xs text-slate-700">
+                <li className="flex gap-3">
+                  <span className="h-5 w-5 rounded-full bg-[#500b50] text-white font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
+                    1
+                  </span>
+                  <div>
+                    <strong className="text-slate-900 block">Select or Upload a Model</strong>
+                    Open <em>Grid Stability Models</em> to load an existing 330 kV or 132 kV network, or use <em>Upload &amp; Ingestion</em> to upload a MATPOWER (<code>.m</code>) file.
+                  </div>
+                </li>
+
+                <li className="flex gap-3">
+                  <span className="h-5 w-5 rounded-full bg-[#500b50] text-white font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
+                    2
+                  </span>
+                  <div>
+                    <strong className="text-slate-900 block">Edit Parameters &amp; Run Power Flow</strong>
+                    In the <em>Operational Deck</em>, adjust load scaling or slack voltage, switch buses or lines on and off, or click <strong>⋯</strong> on any row to edit its static and dynamic ratings.
+                  </div>
+                </li>
+
+                <li className="flex gap-3">
+                  <span className="h-5 w-5 rounded-full bg-[#500b50] text-white font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
+                    3
+                  </span>
+                  <div>
+                    <strong className="text-slate-900 block">Single-Line Diagram (SLD)</strong>
+                    View bus voltages and line flows on the diagram. Drag buses to rearrange them, click any line to open or close its breaker, or click a bus to inspect its readings.
+                  </div>
+                </li>
+
+                <li className="flex gap-3">
+                  <span className="h-5 w-5 rounded-full bg-[#500b50] text-white font-bold text-[11px] flex items-center justify-center shrink-0 mt-0.5">
+                    4
+                  </span>
+                  <div>
+                    <strong className="text-slate-900 block">Time-Domain &amp; Market Simulations</strong>
+                    Use <em>Time-Domain</em> to run frequency response and fault clearing time studies, or <em>Market Simulations</em> to calculate generator dispatch and tariffs.
+                  </div>
+                </li>
+              </ol>
+            </div>
+          </div>
         </main>
 
-        <footer className="bg-white border-t border-slate-200 py-5 mt-auto shrink-0">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-2">
-            <span>
-              © 2026 Machine Learning 4 Power Systems (ML4PS) • Federal University of Technology, Minna
-            </span>
-            <span>Nigerian Electricity Supply Industry (NESI) Simulation Platform</span>
+        <footer className="bg-white border-t border-slate-200 py-4">
+          <div className="max-w-5xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-2">
+            <span>© 2026 Machine Learning 4 Power Systems (ML4PS) • FUT Minna</span>
+            <span>National Power System Simulation Platform</span>
           </div>
         </footer>
-
-        <AuthModal
-          isOpen={showAuthModal}
-          initialMode={authModalMode}
-          onClose={() => setShowAuthModal(false)}
-          onLoginSuccess={handleLoginSuccess}
-        />
       </div>
     );
   }
@@ -828,7 +598,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
           converged={summary.converged}
           frequency={summary.frequency}
           onLogout={handleLogout}
-          onOpenCompanyPortal={() => setShowPublicPortal(true)}
         />
 
         <main className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6">

@@ -3,6 +3,7 @@
 import React, { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase, useGrid } from '@/context/GridContext';
+import { GridModelMeta } from '@/types/grid';
 import {
   UploadCloud,
   FileCheck2,
@@ -16,11 +17,6 @@ import {
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL || 'https://national-power-backend.onrender.com';
 
-/**
- * Sanitizes a MATPOWER .m file so inline string names inside `mpc.bus = [...]`
- * are extracted into `mpc.bus_name = {...};` and `mpc.bus` stays strictly numeric.
- * This prevents the Python backend parser from failing on inline bus names.
- */
 function sanitizeMatpowerContent(rawText: string): {
   cleanedText: string;
   extractedNames: string[];
@@ -37,7 +33,6 @@ function sanitizeMatpowerContent(rawText: string): {
   let demandMw = 0;
   let baseKv = 330;
 
-  // 1. Clean mpc.bus block
   const busMatch = rawText.match(/mpc\.bus\s*=\s*\[([\s\S]*?)\];/);
   let cleanedText = rawText;
 
@@ -52,7 +47,6 @@ function sanitizeMatpowerContent(rawText: string): {
         return;
       }
 
-      // Extract any quoted bus name in the row, e.g. 'Kainji Hydro GS'
       const quoteMatch = trimmed.match(/['"]([^'"]+)['"]/);
       let rowWithoutComment = trimmed.split('%')[0];
 
@@ -64,7 +58,6 @@ function sanitizeMatpowerContent(rawText: string): {
         if (commentPart) extractedNames.push(commentPart);
       }
 
-      // Keep only valid numeric tokens
       const nums = rowWithoutComment
         .replace(/;/g, '')
         .trim()
@@ -77,7 +70,6 @@ function sanitizeMatpowerContent(rawText: string): {
         const kv = Number(nums[9]) || 330;
         demandMw += Math.max(0, pd);
         if (kv === 132 || kv === 130 || kv === 330) baseKv = kv;
-        // Pad up to 13 standard MATPOWER bus columns if needed
         while (nums.length < 13) {
           if (nums.length === 10) nums.push('1');
           else if (nums.length === 11) nums.push('1.05');
@@ -92,14 +84,12 @@ function sanitizeMatpowerContent(rawText: string): {
       `mpc.bus = [\n${cleanedRows.join('\n')}\n];`
     );
 
-    // Append mpc.bus_name cell array if names were extracted and mpc.bus_name is not already present
     if (extractedNames.length > 0 && !/mpc\.bus_name\s*=/.test(cleanedText)) {
       const cellRows = extractedNames.map((n) => `\t'${n.replace(/'/g, '')}';`).join('\n');
       cleanedText += `\n\nmpc.bus_name = {\n${cellRows}\n};\n`;
     }
   }
 
-  // 2. Count generators & installed capacity
   const genMatch = cleanedText.match(/mpc\.gen\s*=\s*\[([\s\S]*?)\];/);
   if (genMatch) {
     genMatch[1].split('\n').forEach((line) => {
@@ -113,7 +103,6 @@ function sanitizeMatpowerContent(rawText: string): {
     });
   }
 
-  // 3. Count branches
   const branchMatch = cleanedText.match(/mpc\.branch\s*=\s*\[([\s\S]*?)\];/);
   if (branchMatch) {
     branchMatch[1].split('\n').forEach((line) => {
@@ -137,9 +126,79 @@ function sanitizeMatpowerContent(rawText: string): {
   };
 }
 
+/**
+ * Inserts or updates the uploaded model in Supabase `grid_models` by matching
+ * the exact column names present in the table (avoids UUID or unknown-column errors).
+ */
+async function syncModelToSupabase(meta: GridModelMeta, networkPayload?: string) {
+  if (!supabase) return;
+  try {
+    const { data: sampleRows } = await supabase.from('grid_models').select('*').limit(1);
+    const sample = sampleRows && sampleRows[0] ? sampleRows[0] : null;
+    const cols = sample ? new Set(Object.keys(sample)) : null;
+
+    const candidate: Record<string, any> = {
+      name: meta.name,
+      voltage_level: meta.voltage_level,
+      platform: meta.platform,
+      format: meta.platform,
+      domain: meta.domain,
+      buses: meta.buses,
+      bus_count: meta.buses,
+      branches: meta.branches,
+      branch_count: meta.branches,
+      total_installed_mw: meta.total_installed_mw,
+      total_capacity_mw: meta.total_installed_mw,
+      total_demand_mw: meta.total_demand_mw,
+      demand_mw: meta.total_demand_mw,
+      is_active: true,
+      converged: true,
+      network_payload: networkPayload,
+    };
+
+    const payloadToWrite: Record<string, any> = {};
+    if (cols) {
+      Object.entries(candidate).forEach(([k, v]) => {
+        if (cols.has(k) && v !== undefined) {
+          payloadToWrite[k] = v;
+        }
+      });
+      // Only include string `id` if the existing table uses non-UUID string IDs
+      const sampleId = String(sample?.id || '');
+      const isUuid =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sampleId);
+      if (!isUuid && typeof sample?.id === 'string') {
+        payloadToWrite.id = meta.id;
+      }
+    } else {
+      Object.assign(payloadToWrite, {
+        name: meta.name,
+        voltage_level: meta.voltage_level,
+        buses: meta.buses,
+        branches: meta.branches,
+        total_installed_mw: meta.total_installed_mw,
+        total_demand_mw: meta.total_demand_mw,
+        is_active: true,
+      });
+    }
+
+    const { data: existing } = await supabase
+      .from('grid_models')
+      .select('id')
+      .eq('name', meta.name)
+      .maybeSingle();
+
+    if (existing?.id) {
+      await supabase.from('grid_models').update(payloadToWrite).eq('id', existing.id);
+    } else {
+      await supabase.from('grid_models').insert([payloadToWrite]);
+    }
+  } catch {}
+}
+
 export const UploadTab: React.FC = () => {
   const router = useRouter();
-  const { models, fetchModels, activateModel } = useGrid();
+  const { models, activateModel, registerUploadedModel, removeRegisteredModel } = useGrid();
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -166,6 +225,7 @@ export const UploadTab: React.FC = () => {
 
       let fileToUpload: File = selectedFile;
       let parsedMeta = {
+        cleanedText: rawText,
         busesCount: 0,
         branchesCount: 0,
         installedMw: 0,
@@ -174,9 +234,8 @@ export const UploadTab: React.FC = () => {
       };
 
       if (isMatpower) {
-        const sanitized = sanitizeMatpowerContent(rawText);
-        parsedMeta = sanitized;
-        const blob = new Blob([sanitized.cleanedText], { type: 'text/plain;charset=utf-8' });
+        parsedMeta = sanitizeMatpowerContent(rawText);
+        const blob = new Blob([parsedMeta.cleanedText], { type: 'text/plain;charset=utf-8' });
         fileToUpload = new File([blob], selectedFile.name, { type: 'text/plain' });
       }
 
@@ -211,41 +270,35 @@ export const UploadTab: React.FC = () => {
         rawText.toLowerCase().includes('hydro') ||
         rawText.toLowerCase().includes('dynamic');
 
-      // Save model metadata + network_payload to Supabase `grid_models` so it persists permanently
-      if (supabase) {
-        try {
-          const rowToSave: Record<string, any> = {
-            id: modelId,
-            name: selectedFile.name,
-            voltage_level: vLevel,
-            platform: 'MATPOWER',
-            domain: isDynamic ? 'Dynamic & Transient' : 'Static Power Flow',
-            buses: Number(backendData?.buses || parsedMeta.busesCount || 0),
-            branches: Number(backendData?.branches || parsedMeta.branchesCount || 0),
-            total_installed_mw: Number(
-              backendData?.total_installed_mw || parsedMeta.installedMw || 0
-            ),
-            total_demand_mw: Number(
-              backendData?.total_demand_mw || parsedMeta.demandMw || 0
-            ),
-            is_active: true,
-          };
+      const newModelMeta: GridModelMeta = {
+        id: modelId,
+        name: selectedFile.name,
+        voltage_level: vLevel,
+        platform: 'MATPOWER',
+        domain: isDynamic ? 'Dynamic & Transient' : 'Static Power Flow',
+        buses: Number(backendData?.buses || parsedMeta.busesCount || 0),
+        branches: Number(backendData?.branches || parsedMeta.branchesCount || 0),
+        total_installed_mw: Number(
+          backendData?.total_installed_mw || parsedMeta.installedMw || 0
+        ),
+        total_demand_mw: Number(
+          backendData?.total_demand_mw || parsedMeta.demandMw || 0
+        ),
+        is_active: true,
+        converged: true,
+      };
 
-          if (backendData?.network_payload) {
-            rowToSave.network_payload = backendData.network_payload;
-          }
+      // 1. Sync to Supabase schema-safely
+      await syncModelToSupabase(newModelMeta, backendData?.network_payload);
 
-          await supabase.from('grid_models').upsert([rowToSave], { onConflict: 'id' });
-        } catch {}
-      }
-
-      await fetchModels();
-      await activateModel(modelId);
+      // 2. Register immediately in GridContext & localStorage so it shows up in all model lists
+      await registerUploadedModel(newModelMeta, {
+        network_payload: backendData?.network_payload,
+        raw_file_text: parsedMeta.cleanedText,
+      });
 
       setSuccessMsg(
-        `Successfully parsed and activated "${selectedFile.name}" (${
-          backendData?.buses || parsedMeta.busesCount
-        } Substations, ${backendData?.branches || parsedMeta.branchesCount} Corridors).`
+        `Uploaded and activated "${selectedFile.name}" (${newModelMeta.buses} Substations, ${newModelMeta.branches} Corridors).`
       );
       setSelectedFile(null);
     } catch (err: any) {
@@ -255,25 +308,12 @@ export const UploadTab: React.FC = () => {
     }
   };
 
-  const handleDeleteModel = async (id: string, name: string) => {
-    if (supabase) {
-      try {
-        await supabase.from('grid_models').delete().eq('id', id);
-        await supabase.from('grid_models').delete().eq('name', name);
-      } catch {}
-    }
-    try {
-      await fetch(`${API_BASE}/api/models/${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-      });
-    } catch {}
-    await fetchModels();
-  };
-
   return (
     <div className="max-w-4xl mx-auto space-y-6 py-2 text-slate-800">
       <div>
-        
+        <h2 className="text-xl font-black text-slate-900 tracking-tight">
+          Model Ingestion &amp; Network Parsing
+        </h2>
         <p className="text-xs text-slate-500 mt-0.5">
           Upload 330kV, 132kV, or 130kV cases (.m, .raw, .130, .xlsx, .json) for AC power flow and dynamic validation.
         </p>
@@ -302,7 +342,6 @@ export const UploadTab: React.FC = () => {
         </div>
       )}
 
-      {/* Drag and Drop Upload Box */}
       <div
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
@@ -370,19 +409,24 @@ export const UploadTab: React.FC = () => {
           <div className="divide-y divide-slate-100 text-xs">
             {models.map((m) => (
               <div
-                key={m.id}
+                key={m.id + m.name}
                 className="p-3.5 flex items-center justify-between hover:bg-slate-50"
               >
-                <div>
+                <div className="flex items-center gap-2">
                   <span className="font-bold text-slate-900">{m.name}</span>
-                  <span className="ml-2 font-mono text-[11px] text-slate-500">
+                  <span className="font-mono text-[11px] text-slate-500">
                     {m.voltage_level} • {m.buses} Substations • {m.branches} Corridors
                   </span>
+                  {m.is_active && (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                      Active
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={async () => {
-                      await activateModel(m.id);
+                      await activateModel(m.name);
                       router.push('/stability');
                     }}
                     className="px-3 py-1 rounded bg-[#500b50] text-white font-bold text-[11px]"
@@ -390,7 +434,7 @@ export const UploadTab: React.FC = () => {
                     Open
                   </button>
                   <button
-                    onClick={() => handleDeleteModel(m.id, m.name)}
+                    onClick={() => removeRegisteredModel(m.name)}
                     className="p-1.5 rounded border border-slate-200 text-rose-600 hover:bg-rose-50"
                     title="Delete Model"
                   >

@@ -52,6 +52,8 @@ const GATEWAY_STATUSES = new Set([502, 503, 504]);
 const NO_MODEL_RE =
   /no\s+(active\s+)?model|model\s+(is\s+)?not\s+(loaded|active)|no\s+network\s+(loaded|active)|select\s+(a|the)\s+model/i;
 
+const LOCAL_MODELS_CACHE_KEY = 'ml4ps_registered_models_v1';
+
 interface PowerFlowSummary {
   converged: boolean;
   frequency: number;
@@ -90,6 +92,8 @@ interface GridContextType {
   runSimulation: (customVars?: ExtendedPowerFlowVariables, customTrips?: number[]) => Promise<void>;
   activateModel: (id: string) => Promise<void>;
   fetchModels: () => Promise<void>;
+  registerUploadedModel: (meta: GridModelMeta, rawPayload?: any) => Promise<void>;
+  removeRegisteredModel: (idOrName: string) => Promise<void>;
   triggerCascade: (initialTripped: number[], threshold: number) => Promise<CascadeResult>;
   applyCascadeTrips: (trippedList: number[]) => void;
   resetPfVariables: () => void;
@@ -155,15 +159,16 @@ function getCurrentUserKey(): string {
   return 'guest';
 }
 
-function normalizeRawModel(m: any): GridModelMeta {
+export function normalizeRawModel(m: any): GridModelMeta {
+  const nameStr = String(m?.name || m?.filename || m?.id || 'Unnamed Model');
   const vLevel =
     m?.voltage_level ||
     m?.voltage_class ||
-    (m?.name?.includes('132') ? '132kV' : m?.name?.includes('130') ? '130kV' : '330kV');
+    (nameStr.includes('132') ? '132kV' : nameStr.includes('130') ? '130kV' : '330kV');
 
   const domain =
     m?.domain ||
-    (m?.name?.toLowerCase().includes('dynamic') ? 'Dynamic & Transient' : 'Static Power Flow');
+    (nameStr.toLowerCase().includes('dynamic') ? 'Dynamic & Transient' : 'Static Power Flow');
 
   const totalCap =
     m?.total_installed_mw ??
@@ -173,8 +178,8 @@ function normalizeRawModel(m: any): GridModelMeta {
     0;
 
   return {
-    id: String(m?.id || m?.name || 'model-' + Math.random().toString(36).substring(7)),
-    name: String(m?.name || m?.filename || 'Unnamed Model'),
+    id: String(m?.id || nameStr),
+    name: nameStr,
     voltage_level: String(vLevel),
     platform: String(m?.format || m?.platform || 'MATPOWER'),
     buses: Number(m?.buses ?? m?.bus_count ?? 0),
@@ -186,6 +191,25 @@ function normalizeRawModel(m: any): GridModelMeta {
     converged: Boolean(m?.converged ?? true),
     is_default: Boolean(m?.is_default ?? false),
   };
+}
+
+function readLocalCustomModels(): any[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(LOCAL_MODELS_CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  return [];
+}
+
+function writeLocalCustomModels(rows: any[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(LOCAL_MODELS_CACHE_KEY, JSON.stringify(rows));
+  } catch {}
 }
 
 function mergeVars(
@@ -261,7 +285,7 @@ async function apiFetch(path: string, options?: RequestInit): Promise<Response> 
       } catch (err) {
         lastError = err;
       }
-      if (attempt === 0) await sleep(2500);
+      if (attempt === 0) await sleep(2000);
     }
   }
 
@@ -306,11 +330,6 @@ function describeNetworkError(err: any): string {
   return 'Cannot reach the solver backend. Check your connection and click Solve to retry.';
 }
 
-/**
- * Applies per-element Static & Dynamic Overrides (Hydro water intake, Gas pressure,
- * Solar irradiance, Bus voltage/shunt overrides, Load priority, and Wide-Area Disruptive Events)
- * to the solved telemetry so every property edit is reflected immediately across all views.
- */
 function applyElementOverridesToTelemetry(
   rawBuses: BusData[],
   rawLines: LineData[],
@@ -352,7 +371,6 @@ function applyElementOverridesToTelemetry(
       }
     }
 
-    // Generator overrides (Hydro Water Intake / Gas Pressure / Solar Irradiance)
     const gOvr = genOverrides[b.id];
     if (disabledGens.has(b.id) || (gOvr && gOvr.inService === false)) {
       if (p_mw < 0) {
@@ -370,7 +388,6 @@ function applyElementOverridesToTelemetry(
         gOvr.netHeadM !== undefined
       ) {
         const eff = (gOvr.turbineEfficiency ?? 90) / 100;
-        // P_MW = (eta * 1000 * 9.81 * H * Q) / 1e6
         computedGenMw = Number(
           ((eff * 9.81 * gOvr.netHeadM * gOvr.waterIntakeM3s) / 1000).toFixed(1)
         );
@@ -400,7 +417,6 @@ function applyElementOverridesToTelemetry(
       p_mw = -computedGenMw;
     }
 
-    // Load overrides
     const lOvr = loadOverrides[b.id];
     if (disabledLoads.has(b.id) || (lOvr && lOvr.inService === false)) {
       if (p_mw > 0) {
@@ -419,7 +435,6 @@ function applyElementOverridesToTelemetry(
       }
     }
 
-    // Wide-Area Disruptive Event effects
     if (scenario.activeEvent !== 'NONE') {
       const sev = (scenario.severityPercent || 30) / 100;
       const isHydroBus = /kainji|jebba|shiroro|zungeru|hydro/i.test(name);
@@ -427,11 +442,10 @@ function applyElementOverridesToTelemetry(
 
       if (scenario.activeEvent === 'GAS_PIPELINE_RUPTURE' && isGasBus) {
         const loss = Math.abs(p_mw) * sev * 0.65;
-        p_mw += loss; // reduces negative generation injection
+        p_mw += loss;
         netGenDeltaMw -= loss;
         v_pu = Math.max(0.86, v_pu - sev * 0.04);
       } else if (scenario.activeEvent === 'HYDRO_FLOOD_SURGE' && isHydroBus) {
-        // Excess spillway turbulence / tailwater rise derates net head
         const loss = Math.abs(p_mw) * sev * 0.4;
         p_mw += loss;
         netGenDeltaMw -= loss;
@@ -441,7 +455,6 @@ function applyElementOverridesToTelemetry(
         v_pu = Math.max(0.88, v_pu - sev * 0.03);
       }
 
-      // If Auto-Recovery is enabled, protect critical infrastructure & boost voltage via emergency Var support
       if (scenario.autoRecoveryEnabled) {
         v_pu = Math.min(1.05, v_pu + 0.025);
       }
@@ -499,9 +512,7 @@ function applyElementOverridesToTelemetry(
     };
   });
 
-  // System stiffness ~ 2500 MW/Hz
   const frequencyDeltaHz = Number((netGenDeltaMw / 2500).toFixed(3));
-
   return { buses: updatedBuses, lines: updatedLines, frequencyDeltaHz };
 }
 
@@ -637,7 +648,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setPfVariablesState(next);
         persistModifications();
 
-        // Immediately reflect element overrides on existing raw buses & lines for instant UI feedback
         if (rawBusesRef.current.length > 0) {
           const applied = applyElementOverridesToTelemetry(
             rawBusesRef.current,
@@ -676,22 +686,19 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     let rawRow = rawRowsRef.current.get(model.id) || rawRowsRef.current.get(model.name);
+    if (!rawRow) {
+      const localList = readLocalCustomModels();
+      rawRow = localList.find((x) => x.id === model.id || x.name === model.name);
+    }
+
     if (!rawRow && supabase) {
       try {
-        const { data: byId } = await supabase
+        const { data: byName } = await supabase
           .from('grid_models')
           .select('*')
-          .eq('id', model.id)
+          .eq('name', model.name)
           .maybeSingle();
-        if (byId) rawRow = byId;
-        else {
-          const { data: byName } = await supabase
-            .from('grid_models')
-            .select('*')
-            .eq('name', model.name)
-            .maybeSingle();
-          if (byName) rawRow = byName;
-        }
+        if (byName) rawRow = byName;
       } catch {}
     }
 
@@ -721,6 +728,17 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       } catch {}
     }
 
+    if (rawRow?.raw_file_text) {
+      try {
+        const fileName = /\.[a-z0-9]+$/i.test(model.name) ? model.name : `${model.name}.m`;
+        const blob = new Blob([rawRow.raw_file_text], { type: 'text/plain;charset=utf-8' });
+        const fd = new FormData();
+        fd.append('file', blob, fileName);
+        const up = await callApi('/api/models/upload', { method: 'POST', body: fd });
+        if (up.ok) return { ok: true };
+      } catch {}
+    }
+
     const { blob } = await downloadModelFile(model, rawRow);
     if (blob) {
       const fileName = /\.[a-z0-9]+$/i.test(model.name) ? model.name : `${model.name}.m`;
@@ -728,32 +746,11 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const fd = new FormData();
         fd.append('file', blob, fileName);
         const up = await callApi('/api/models/upload', { method: 'POST', body: fd });
-        if (up.ok) {
-          if (up.body?.network_payload && supabase) {
-            try {
-              await supabase
-                .from('grid_models')
-                .update({ network_payload: up.body.network_payload })
-                .eq('id', model.id);
-            } catch {}
-          }
-          return { ok: true };
-        }
+        if (up.ok) return { ok: true };
       } catch (e: any) {
         return { ok: false, reason: describeNetworkError(e) };
       }
     }
-
-    try {
-      const listRes = await callApi('/api/models', { method: 'GET' });
-      if (listRes.ok && Array.isArray(listRes.body) && listRes.body.length > 0) {
-        const firstId = listRes.body[0].id || listRes.body[0].name;
-        const act = await callApi(`/api/models/activate/${encodeURIComponent(firstId)}`, {
-          method: 'POST',
-        });
-        if (act.ok) return { ok: true };
-      }
-    } catch {}
 
     if (!reachedBackend) {
       return {
@@ -764,7 +761,7 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     return {
       ok: false,
-      reason: `Model "${model.name}" needs to be hydrated in solver memory. Re-upload "${model.name}" once in the Upload tab to store its topology payload permanently.`,
+      reason: `Model "${model.name}" is not in solver memory yet. Upload "${model.name}" once in Upload & Ingestion to cache its topology.`,
     };
   }, []);
 
@@ -782,66 +779,75 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     [hydrateBackend]
   );
 
+  // Merges models from Supabase + Backend + Local Storage so uploaded models always appear
   const fetchModels = useCallback(async () => {
     setModelsLoading(true);
-    let retrieved: GridModelMeta[] = [];
+    const mergedByName = new Map<string, GridModelMeta>();
     const rawMap = new Map<string, any>();
 
+    const addRow = (row: any) => {
+      if (!row) return;
+      const rName = String(row?.name || row?.filename || row?.id || '');
+      if (!rName || rName === '__ml4ps_access_requests__') return;
+      const m = normalizeRawModel(row);
+      const key = m.name.toLowerCase();
+      const existing = mergedByName.get(key);
+      mergedByName.set(key, existing ? { ...existing, ...m } : m);
+      rawMap.set(m.id, { ...(rawMap.get(m.id) || {}), ...row });
+      rawMap.set(m.name, { ...(rawMap.get(m.name) || {}), ...row });
+    };
+
+    // 1. Fetch from Supabase grid_models
     if (supabase) {
       try {
         const { data, error } = await supabase.from('grid_models').select('*');
-        if (!error && Array.isArray(data) && data.length > 0) {
-          // Exclude internal system rows like __ml4ps_access_requests__
-          const validRows = data.filter(
-            (row: any) =>
-              row?.name !== '__ml4ps_access_requests__' &&
-              row?.id !== '__ml4ps_access_requests__'
-          );
-          retrieved = validRows.map((row) => {
-            const m = normalizeRawModel(row);
-            rawMap.set(m.id, row);
-            rawMap.set(m.name, row);
-            return m;
-          });
+        if (!error && Array.isArray(data)) {
+          data.forEach(addRow);
         }
-      } catch (err) {
-        console.warn('Supabase fetch notice:', err);
-      }
+      } catch {}
     }
 
-    if (retrieved.length === 0) {
-      for (const base of BACKEND_URLS) {
-        try {
-          const res = await fetchWithTimeout(`${base}/api/models`);
-          if (res.ok) {
-            const json = await res.json();
-            const list = Array.isArray(json) ? json : json.models || json.data || [];
-            if (list.length > 0) {
-              retrieved = list.map((row: any) => {
-                const m = normalizeRawModel(row);
-                rawMap.set(m.id, row);
-                rawMap.set(m.name, row);
-                return m;
-              });
-              break;
-            }
+    // 2. Always fetch from Backend /api/models as well and merge!
+    for (const base of BACKEND_URLS) {
+      try {
+        const res = await fetchWithTimeout(`${base}/api/models`, {}, 12_000);
+        if (res.ok) {
+          const json = await res.json();
+          const list = Array.isArray(json) ? json : json.models || json.data || [];
+          if (Array.isArray(list)) {
+            list.forEach(addRow);
           }
-        } catch {}
-      }
+          break;
+        }
+      } catch {}
     }
+
+    // 3. Merge any locally uploaded models cached in localStorage
+    const localModels = readLocalCustomModels();
+    localModels.forEach(addRow);
 
     rawRowsRef.current = rawMap;
+    let retrieved = Array.from(mergedByName.values());
 
     if (retrieved.length > 0) {
       const savedId =
         typeof window !== 'undefined' ? localStorage.getItem('ml4ps_active_model_id') : null;
       const matched =
-        retrieved.find((m) => m.id === savedId || m.name === savedId) ||
+        retrieved.find(
+          (m) =>
+            m.id === savedId ||
+            m.name === savedId ||
+            m.name.toLowerCase() === String(savedId || '').toLowerCase()
+        ) ||
         retrieved.find((m) => m.is_active) ||
         retrieved[0];
 
-      retrieved = retrieved.map((m) => ({ ...m, is_active: m.id === matched.id }));
-      const activeEntry = retrieved.find((m) => m.id === matched.id) || matched;
+      retrieved = retrieved.map((m) => ({
+        ...m,
+        is_active: m.name.toLowerCase() === matched.name.toLowerCase(),
+      }));
+      const activeEntry =
+        retrieved.find((m) => m.name.toLowerCase() === matched.name.toLowerCase()) || matched;
 
       modelsRef.current = retrieved;
       activeModelRef.current = activeEntry;
@@ -883,7 +889,6 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           tripsToRun = Array.from(new Set([...tripsToRun, ...incidentLines]));
         }
 
-        // Include lines disabled via lineOverrides
         if (varsToRun?.lineOverrides) {
           const ovrTrips = Object.entries(varsToRun.lineOverrides)
             .filter(([, ovr]) => ovr?.in_service === false)
@@ -982,9 +987,86 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     [hydrateOnce]
   );
 
+  // Registers a newly uploaded model immediately into React state, localStorage, and Supabase
+  const registerUploadedModel = useCallback(
+    async (meta: GridModelMeta, rawPayload?: any) => {
+      const entry: GridModelMeta = { ...meta, is_active: true };
+      const rawRecord = { ...entry, ...(rawPayload || {}) };
+
+      rawRowsRef.current.set(entry.id, rawRecord);
+      rawRowsRef.current.set(entry.name, rawRecord);
+
+      // 1. Update localStorage cache so it persists across page reloads
+      const currentLocal = readLocalCustomModels().filter(
+        (x) =>
+          String(x.name || '').toLowerCase() !== entry.name.toLowerCase() &&
+          String(x.id || '').toLowerCase() !== entry.id.toLowerCase()
+      );
+      writeLocalCustomModels([rawRecord, ...currentLocal]);
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('ml4ps_active_model_id', entry.name);
+      }
+
+      // 2. Immediately update in-memory models state
+      const existingFiltered = modelsRef.current
+        .filter((m) => m.name.toLowerCase() !== entry.name.toLowerCase())
+        .map((m) => ({ ...m, is_active: false }));
+      const nextModels = [entry, ...existingFiltered];
+
+      modelsRef.current = nextModels;
+      activeModelRef.current = entry;
+      setModels(nextModels);
+      setActiveModel(entry);
+
+      pfVariablesRef.current = DEFAULT_VARIABLES;
+      trippedRef.current = [];
+      setPfVariablesState(DEFAULT_VARIABLES);
+      setTrippedLines([]);
+
+      await runSimulation(DEFAULT_VARIABLES, []);
+    },
+    [runSimulation]
+  );
+
+  const removeRegisteredModel = useCallback(
+    async (idOrName: string) => {
+      const targetLower = idOrName.toLowerCase();
+      const updatedLocal = readLocalCustomModels().filter(
+        (x) =>
+          String(x.id || '').toLowerCase() !== targetLower &&
+          String(x.name || '').toLowerCase() !== targetLower
+      );
+      writeLocalCustomModels(updatedLocal);
+
+      if (supabase) {
+        try {
+          await supabase.from('grid_models').delete().eq('id', idOrName);
+        } catch {}
+        try {
+          await supabase.from('grid_models').delete().eq('name', idOrName);
+        } catch {}
+      }
+
+      try {
+        await callApi(`/api/models/${encodeURIComponent(idOrName)}`, { method: 'DELETE' });
+      } catch {}
+
+      await fetchModels();
+    },
+    [fetchModels]
+  );
+
   const activateModel = useCallback(
     async (id: string) => {
-      const target = modelsRef.current.find((m) => m.id === id || m.name === id);
+      const idLower = id.toLowerCase();
+      const target = modelsRef.current.find(
+        (m) =>
+          m.id === id ||
+          m.name === id ||
+          m.id.toLowerCase() === idLower ||
+          m.name.toLowerCase() === idLower
+      );
       if (!target) {
         setDivergedNotice(`Model "${id}" was not found. Click Refresh and try again.`);
         return;
@@ -993,18 +1075,21 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setLoading(true);
       setDivergedNotice(null);
 
-      const switchingModel = activeModelRef.current?.id !== target.id;
+      const switchingModel = activeModelRef.current?.name !== target.name;
       const activeEntry = { ...target, is_active: true };
 
       activeModelRef.current = activeEntry;
       setActiveModel(activeEntry);
 
-      const nextModels = modelsRef.current.map((m) => ({ ...m, is_active: m.id === target.id }));
+      const nextModels = modelsRef.current.map((m) => ({
+        ...m,
+        is_active: m.name === target.name,
+      }));
       modelsRef.current = nextModels;
       setModels(nextModels);
 
       if (typeof window !== 'undefined') {
-        localStorage.setItem('ml4ps_active_model_id', target.id);
+        localStorage.setItem('ml4ps_active_model_id', target.name);
       }
 
       if (switchingModel) {
@@ -1161,6 +1246,8 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         runSimulation,
         activateModel,
         fetchModels,
+        registerUploadedModel,
+        removeRegisteredModel,
         triggerCascade,
         applyCascadeTrips,
         resetPfVariables,
