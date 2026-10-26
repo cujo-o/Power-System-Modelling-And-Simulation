@@ -35,7 +35,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ user, isAdmin }) => {
     { label: 'Time-Domain', href: '/dynamics', icon: Activity, adminOnly: false },
     { label: 'Market Simulations', href: '/market', icon: DollarSign, adminOnly: false },
     { label: 'Upload & Ingestion', href: '/upload', icon: UploadCloud, adminOnly: true },
-    { label: 'Access & Admin', href: '/organization', icon: ShieldCheck, adminOnly: true },
     { label: 'Reports & Publications', href: '/reports', icon: FileText, adminOnly: false },
     { label: 'Workforce', href: '/workforce', icon: Users, adminOnly: false },
     { label: 'About Us', href: '/about', icon: Info, adminOnly: false },
