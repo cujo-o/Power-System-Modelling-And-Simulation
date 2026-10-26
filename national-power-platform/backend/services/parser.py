@@ -6,14 +6,14 @@ import pandapower as pp
 def parse_matpower_m_file(content: str, filename: str):
     net = pp.create_empty_network(f_hz=50.0, sn_mva=100.0)
 
-    # Extract bus_name cell array if present
+    # 1. Check for mpc.bus_name cell array if present
     bus_names = []
     name_match = re.search(r"mpc\.bus_name\s*=\s*\{([\s\S]*?)\};", content)
     if name_match:
         raw_names = re.findall(r"['\"]([^'\"]+)['\"]", name_match.group(1))
         bus_names = [n.strip() for n in raw_names]
 
-    # Parse mpc.bus
+    # 2. Parse mpc.bus
     bus_match = re.search(r"mpc\.bus\s*=\s*\[([\s\S]*?)\];", content)
     if not bus_match:
         raise ValueError("No mpc.bus matrix found in MATPOWER file.")
@@ -27,7 +27,6 @@ def parse_matpower_m_file(content: str, filename: str):
         if not raw_line or raw_line.startswith("%"):
             continue
 
-        # Extract inline quoted name or trailing comment name if present
         inline_name = None
         q_match = re.search(r"['\"]([^'\"]+)['\"]", raw_line)
         if q_match:
@@ -73,7 +72,7 @@ def parse_matpower_m_file(content: str, filename: str):
 
         row_idx += 1
 
-    # Parse mpc.gen
+    # 3. Parse mpc.gen
     gen_match = re.search(r"mpc\.gen\s*=\s*\[([\s\S]*?)\];", content)
     has_slack = False
     if gen_match:
@@ -115,7 +114,7 @@ def parse_matpower_m_file(content: str, filename: str):
         first_bus = next(iter(bus_map.values()))[0]
         pp.create_ext_grid(net, bus=first_bus, vm_pu=1.04, name="Reference Grid")
 
-    # Parse mpc.branch
+    # 4. Parse mpc.branch
     branch_match = re.search(r"mpc\.branch\s*=\s*\[([\s\S]*?)\];", content)
     if branch_match:
         line_idx = 1
