@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   fetchAllPlatformAccessRequests,
   persistPlatformAccessRequest,
+  isConfiguredAdminRole,
 } from '../modals/AuthModal';
 import {
   Check,
@@ -71,17 +72,20 @@ const TRIANGLE_ROW_3: TeamMember[] = [
   },
 ];
 
+// Large Rectangular Portrait Card (Not Circular)
 const MemberCard: React.FC<{ member: TeamMember }> = ({ member }) => (
-  <div className="w-48 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs flex flex-col items-center text-center">
-    <div className="h-24 w-24 rounded-full overflow-hidden border-2 border-[#500b50]/20 bg-slate-100 mb-3 shrink-0">
+  <div className="w-64 sm:w-72 rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm flex flex-col">
+    <div className="h-64 w-full bg-slate-100 overflow-hidden">
       <img
         src={member.photo}
         alt={member.name}
         className="h-full w-full object-cover object-top"
       />
     </div>
-    <h4 className="font-bold text-xs text-slate-900 leading-snug">{member.name}</h4>
-    <p className="text-[11px] text-slate-500 mt-0.5">{member.title}</p>
+    <div className="p-4 text-center">
+      <h4 className="font-bold text-sm text-slate-900 leading-snug">{member.name}</h4>
+      <p className="text-xs text-slate-500 mt-1">{member.title}</p>
+    </div>
   </div>
 );
 
@@ -97,7 +101,13 @@ export const AdminTab: React.FC = () => {
         const raw = localStorage.getItem('ml4ps_user') || localStorage.getItem('nesi_user');
         if (raw) {
           const parsed = JSON.parse(raw);
-          setIsAdminUser(parsed.role === 'admin' || Boolean(parsed.isAdmin));
+          setIsAdminUser(
+            isConfiguredAdminRole(
+              parsed.role,
+              parsed.isAdmin || parsed.is_admin,
+              parsed.email
+            )
+          );
         }
       } catch {}
     }
@@ -114,7 +124,7 @@ export const AdminTab: React.FC = () => {
         institution: r.institution || 'Independent',
         reason: r.reason || '',
         password: r.password || '',
-        role: r.role === 'admin' ? 'admin' : 'user',
+        role: isConfiguredAdminRole(r.role, r.is_admin, r.email) ? 'admin' : 'user',
         status: r.status || 'pending',
         created_at: r.created_at || new Date().toISOString(),
       }));
@@ -149,7 +159,7 @@ export const AdminTab: React.FC = () => {
   return (
     <div className="max-w-6xl mx-auto space-y-10 py-2 text-slate-800">
       {/* ===================================================================== */}
-      {/* 1. WORKFORCE TRIANGLE (1 - 2 - 3 Pyramid Layout)                      */}
+      {/* 1. WORKFORCE TRIANGLE (Large Rectangular Photos in 1 - 2 - 3 Pyramid) */}
       {/* ===================================================================== */}
       <section className="space-y-6">
         <div className="pb-3 border-b border-slate-200 text-center">
@@ -159,7 +169,7 @@ export const AdminTab: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex flex-col items-center space-y-6 py-2">
+        <div className="flex flex-col items-center space-y-8 py-2">
           {/* Top Apex (1) */}
           <div className="flex justify-center">
             {TRIANGLE_ROW_1.map((m) => (
@@ -168,14 +178,14 @@ export const AdminTab: React.FC = () => {
           </div>
 
           {/* Middle Row (2) */}
-          <div className="flex flex-wrap justify-center gap-6 sm:gap-10">
+          <div className="flex flex-wrap justify-center gap-8">
             {TRIANGLE_ROW_2.map((m) => (
               <MemberCard key={m.name} member={m} />
             ))}
           </div>
 
           {/* Base Row (3) */}
-          <div className="flex flex-wrap justify-center gap-6 sm:gap-10">
+          <div className="flex flex-wrap justify-center gap-8">
             {TRIANGLE_ROW_3.map((m) => (
               <MemberCard key={m.name} member={m} />
             ))}
@@ -187,7 +197,7 @@ export const AdminTab: React.FC = () => {
       {/* 2. ACCOUNT ACCEPTANCE & REJECTION (Admin Management)                  */}
       {/* ===================================================================== */}
       {isAdminUser && (
-        <section className="space-y-4 pt-4 border-t border-slate-200">
+        <section className="space-y-4 pt-6 border-t border-slate-200">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-base font-black text-slate-900 tracking-tight">

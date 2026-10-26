@@ -15,22 +15,30 @@ interface AuthModalProps {
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL || 'https://national-power-backend.onrender.com';
 
-const ROOT_ADMIN_EMAILS = [
-  'admin@ml4ps.org',
-  'ibrahim@futminna.edu.ng',
-  'admin@futminna.edu.ng',
-];
-
 const SYSTEM_REQ_ROW_NAME = '__ml4ps_access_requests__';
+
+// Configured privately in Vercel Environment Variables (never hardcoded in source)
+const ENV_ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || '')
+  .split(',')
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+
+const ENV_ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD || '';
+
+export function isConfiguredAdminRole(role?: string, isAdminFlag?: boolean, email?: string): boolean {
+  if (isAdminFlag) return true;
+  if (email && ENV_ADMIN_EMAILS.includes(email.trim().toLowerCase())) return true;
+  const normalized = String(role || '').trim().toLowerCase();
+  return ['admin', 'administrator', 'superuser', 'operator'].includes(normalized);
+}
 
 /**
  * Reads all access requests from Supabase (`access_requests` table OR `grid_models` fallback row)
- * and backend so requests work across all devices even without manual SQL setup.
+ * and backend so requests work across all devices.
  */
 export async function fetchAllPlatformAccessRequests(): Promise<any[]> {
   const mapByEmail = new Map<string, any>();
 
-  // 1. Try Supabase access_requests table
   if (supabase) {
     try {
       const { data, error } = await supabase
@@ -44,7 +52,6 @@ export async function fetchAllPlatformAccessRequests(): Promise<any[]> {
       }
     } catch {}
 
-    // 2. Fallback: Read from existing `grid_models` table system row `__ml4ps_access_requests__`
     try {
       const { data: sysRow } = await supabase
         .from('grid_models')
@@ -66,7 +73,6 @@ export async function fetchAllPlatformAccessRequests(): Promise<any[]> {
     } catch {}
   }
 
-  // 3. Try FastAPI Backend
   try {
     const res = await fetch(`${API_BASE}/api/admin/requests`);
     if (res.ok) {
@@ -81,7 +87,6 @@ export async function fetchAllPlatformAccessRequests(): Promise<any[]> {
     }
   } catch {}
 
-  // 4. Merge browser localStorage cache
   if (typeof window !== 'undefined') {
     try {
       const local = JSON.parse(localStorage.getItem('ml4ps_access_requests') || '[]');
@@ -118,12 +123,10 @@ export async function persistPlatformAccessRequest(
   }
 
   if (supabase) {
-    // A. Try dedicated access_requests table
     try {
       await supabase.from('access_requests').upsert([record], { onConflict: 'email' });
     } catch {}
 
-    // B. Also persist in existing `grid_models` system row so it works even if `access_requests` table wasn't created
     try {
       const { data: existingSys } = await supabase
         .from('grid_models')
@@ -154,7 +157,6 @@ export async function persistPlatformAccessRequest(
     } catch {}
   }
 
-  // C. Send to FastAPI Backend
   try {
     await fetch(`${API_BASE}/api/auth/request-access`, {
       method: 'POST',
@@ -196,23 +198,47 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     const cleanEmail = email.trim().toLowerCase();
 
     try {
-      // 1. Check Root Admin credentials
+      // 1. Check Environment-Configured Admin (if set in Vercel Environment Variables)
       if (
-        ROOT_ADMIN_EMAILS.includes(cleanEmail) ||
-        (cleanEmail === 'admin' && password.length >= 4)
+        ENV_ADMIN_EMAILS.includes(cleanEmail) &&
+        (!ENV_ADMIN_PASSWORD || password === ENV_ADMIN_PASSWORD)
       ) {
         onLoginSuccess({
-          id: 'admin-root',
-          name: 'Opeyemi Ibrahim Abubakar',
+          id: 'env-admin',
+          name: cleanEmail.split('@')[0],
           email: cleanEmail,
           role: 'admin',
-          institution: 'FUT Minna',
         });
         return;
       }
 
-      // 2. Check unified cross-device access requests registry
+      // 2. Check Supabase Auth (if project uses Supabase Auth users)
+      if (supabase) {
+        try {
+          const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
+            email: cleanEmail,
+            password,
+          });
+          if (!authErr && authData?.user) {
+            const meta = authData.user.user_metadata || {};
+            const isAdm = isConfiguredAdminRole(meta.role, meta.is_admin, cleanEmail);
+            onLoginSuccess({
+              id: authData.user.id,
+              name: meta.full_name || meta.name || cleanEmail.split('@')[0],
+              email: cleanEmail,
+              role: isAdm ? 'admin' : 'user',
+              institution: meta.institution || '',
+            });
+            return;
+          }
+        } catch {}
+      }
+
+      // 3. Check unified cross-device access_requests registry
       const allReqs = await fetchAllPlatformAccessRequests();
+      const hasAnyAdmin = allReqs.some(
+        (r: any) => r.status === 'approved' && isConfiguredAdminRole(r.role, r.is_admin, r.email)
+      );
       const found = allReqs.find((r: any) => r.email?.toLowerCase() === cleanEmail);
 
       if (found) {
@@ -234,18 +260,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             setLoading(false);
             return;
           }
+          const roleResolved =
+            !hasAnyAdmin || isConfiguredAdminRole(found.role, found.is_admin, cleanEmail)
+              ? 'admin'
+              : 'user';
+
           onLoginSuccess({
             id: String(found.id || 'usr-' + Date.now()),
-            name: found.full_name || found.name || cleanEmail,
+            name: found.full_name || found.name || cleanEmail.split('@')[0],
             email: cleanEmail,
-            role: found.role === 'admin' ? 'admin' : 'user',
-            institution: found.institution || 'NESI Researcher',
+            role: roleResolved,
+            institution: found.institution || '',
           });
           return;
         }
       }
 
-      // 3. Fallback to backend /api/auth/login
+      // 4. Check Backend /api/auth/login
       const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -255,12 +286,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (res.ok) {
         const data = await res.json();
         const userObj = data.user || data;
+        const isAdm =
+          !hasAnyAdmin ||
+          isConfiguredAdminRole(userObj.role, userObj.is_admin || userObj.isAdmin, cleanEmail);
+
         onLoginSuccess({
           id: String(userObj.id || 'usr-' + Date.now()),
-          name: userObj.name || userObj.full_name || userObj.username || cleanEmail,
+          name: userObj.name || userObj.full_name || userObj.username || cleanEmail.split('@')[0],
           email: cleanEmail,
-          role: userObj.role === 'admin' || userObj.is_admin ? 'admin' : 'user',
-          institution: userObj.institution || 'FUT Minna',
+          role: isAdm ? 'admin' : 'user',
+          institution: userObj.institution || '',
         });
         return;
       }
@@ -285,20 +320,41 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
     setError(null);
 
-    const newRequest = {
-      id: 'req-' + Date.now(),
-      full_name: fullName.trim(),
-      email: email.trim().toLowerCase(),
-      institution: institution.trim() || 'Independent Researcher',
-      reason: reason.trim() || 'Power System Simulation & Research',
-      password: password,
-      role: 'user',
-      status: 'pending',
-      created_at: new Date().toISOString(),
-    };
-
     try {
-      await persistPlatformAccessRequest(newRequest);
+      const existingReqs = await fetchAllPlatformAccessRequests();
+      const hasApprovedAdmin = existingReqs.some(
+        (r: any) => r.status === 'approved' && isConfiguredAdminRole(r.role, r.is_admin, r.email)
+      );
+
+      // Standard open-source bootstrap: if no admin exists in the database yet,
+      // the very first account registered becomes the initial administrator.
+      const isFirstBootstrapAdmin = !hasApprovedAdmin && existingReqs.length === 0;
+
+      const newRequest = {
+        id: 'req-' + Date.now(),
+        full_name: fullName.trim(),
+        email: email.trim().toLowerCase(),
+        institution: institution.trim() || 'Researcher',
+        reason: reason.trim() || 'Power System Simulation & Research',
+        password: password,
+        role: isFirstBootstrapAdmin ? 'admin' : 'user',
+        status: isFirstBootstrapAdmin ? 'approved' : 'pending',
+        created_at: new Date().toISOString(),
+      };
+
+      await persistPlatformAccessRequest(newRequest, existingReqs);
+
+      if (isFirstBootstrapAdmin) {
+        onLoginSuccess({
+          id: newRequest.id,
+          name: newRequest.full_name,
+          email: newRequest.email,
+          role: 'admin',
+          institution: newRequest.institution,
+        });
+        return;
+      }
+
       setRequestSubmitted(true);
     } catch (err: any) {
       setError(err?.message || 'Could not submit access request.');
@@ -421,7 +477,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Musa Abdullahi"
+                  placeholder="Enter your full name"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   className="w-full border border-slate-300 rounded-lg px-3 py-2 text-slate-900"
@@ -445,7 +501,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   <input
                     type="text"
                     required
-                    placeholder="e.g. FUT Minna / TCN"
+                    placeholder="Institution"
                     value={institution}
                     onChange={(e) => setInstitution(e.target.value)}
                     className="w-full border border-slate-300 rounded-lg px-3 py-2 text-slate-900"

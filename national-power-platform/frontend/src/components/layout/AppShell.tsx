@@ -4,7 +4,12 @@ import React, { useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
-import { AuthModal } from '../modals/AuthModal';
+import {
+  AuthModal,
+  fetchAllPlatformAccessRequests,
+  persistPlatformAccessRequest,
+  isConfiguredAdminRole,
+} from '../modals/AuthModal';
 import { useGrid } from '@/context/GridContext';
 import { ArrowRight, Lock } from 'lucide-react';
 
@@ -37,22 +42,83 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const [previewLoading, setPreviewLoading] = useState<number>(100);
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    let mounted = true;
+
+    const initSession = async () => {
+      if (typeof window === 'undefined') return;
       const saved = localStorage.getItem('ml4ps_user') || localStorage.getItem('nesi_user');
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          setUser({
+          const email = (parsed.email || '').toLowerCase();
+          let resolvedRole: 'admin' | 'user' = isConfiguredAdminRole(
+            parsed.role,
+            parsed.isAdmin || parsed.is_admin,
+            email
+          )
+            ? 'admin'
+            : 'user';
+
+          const initialUser: PlatformUser = {
             id: parsed.id || 'usr-1',
             name: parsed.name || parsed.username || 'Engineer',
-            email: parsed.email || '',
-            role: parsed.role === 'admin' || parsed.isAdmin ? 'admin' : 'user',
+            email,
+            role: resolvedRole,
             institution: parsed.institution || 'FUT Minna',
-          });
+          };
+
+          if (mounted) {
+            setUser(initialUser);
+            setAuthInitialized(true);
+          }
+
+          // Sync live with Supabase access_requests registry & bootstrap first admin if none exists
+          const allReqs = await fetchAllPlatformAccessRequests();
+          const hasAnyAdmin = allReqs.some(
+            (r: any) =>
+              r.status === 'approved' && isConfiguredAdminRole(r.role, r.is_admin, r.email)
+          );
+          const dbRecord = allReqs.find((r: any) => r.email?.toLowerCase() === email);
+
+          if (!hasAnyAdmin && email) {
+            resolvedRole = 'admin';
+            await persistPlatformAccessRequest(
+              {
+                id: initialUser.id,
+                full_name: initialUser.name,
+                email,
+                institution: initialUser.institution || 'FUT Minna',
+                reason: 'Primary Platform Administrator',
+                password: '',
+                role: 'admin',
+                status: 'approved',
+                created_at: new Date().toISOString(),
+              },
+              allReqs
+            );
+          } else if (
+            dbRecord &&
+            isConfiguredAdminRole(dbRecord.role, dbRecord.is_admin, dbRecord.email)
+          ) {
+            resolvedRole = 'admin';
+          }
+
+          if (mounted && resolvedRole !== initialUser.role) {
+            const upgraded: PlatformUser = { ...initialUser, role: resolvedRole };
+            setUser(upgraded);
+            localStorage.setItem('ml4ps_user', JSON.stringify(upgraded));
+            localStorage.setItem('nesi_user', JSON.stringify(upgraded));
+          }
+          return;
         } catch {}
       }
-      setAuthInitialized(true);
-    }
+      if (mounted) setAuthInitialized(true);
+    };
+
+    initSession();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const handleLoginSuccess = (loggedInUser: PlatformUser) => {
@@ -76,9 +142,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
 
   if (!authInitialized) return null;
 
-  // ============================================================================
-  // PUBLIC TECHNICAL COMPANY & STUDENT LEARNING WEBSITE
-  // ============================================================================
   if (!user || showPublicPortal) {
     const LESSONS = [
       {
@@ -135,7 +198,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
 
     return (
       <div className="h-screen w-full overflow-y-auto bg-slate-50 text-slate-900 flex flex-col font-sans">
-        {/* Top Navigation Bar */}
         <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shrink-0">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -235,12 +297,9 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
           </div>
         </header>
 
-        {/* Main Content */}
         <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8 space-y-10">
-          {/* SECTION 1: PURPOSE, MOTIVATION & INTERACTIVE OVERVIEW */}
           {publicSection === 'overview' && (
             <div className="space-y-10">
-              {/* Hero Section with Interactive Live Corridor Preview */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center bg-white border border-slate-200 rounded-2xl p-6 sm:p-10 shadow-xs">
                 <div className="lg:col-span-7 space-y-4">
                   <span className="inline-block px-3 py-1 rounded-md bg-purple-50 border border-purple-200 text-[#500b50] text-xs font-bold">
@@ -277,7 +336,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                   </div>
                 </div>
 
-                {/* Live Interactive 330kV Transmission Corridor Sandbox */}
                 <div className="lg:col-span-5 rounded-xl border border-slate-200 bg-slate-900 text-white p-5 space-y-4">
                   <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                     <div>
@@ -299,10 +357,8 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                     </span>
                   </div>
 
-                  {/* Live SVG Transmission Schematic */}
                   <div className="bg-slate-950 rounded-lg p-3 border border-slate-800">
                     <svg viewBox="0 0 380 105" className="w-full h-24">
-                      {/* Sending Bus */}
                       <rect x="24" y="22" width="8" height="55" fill="#10b981" rx="2" />
                       <text x="28" y="15" textAnchor="middle" fill="#cbd5e1" fontSize="9" fontWeight="bold">
                         SHIRORO 330
@@ -311,7 +367,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                         {previewVoltage.toFixed(2)} pu
                       </text>
 
-                      {/* Transmission Line */}
                       <line
                         x1="32"
                         y1="50"
@@ -343,7 +398,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                         {Math.round(previewLoading * 2.4)} MW Flow
                       </text>
 
-                      {/* Receiving Bus */}
                       <rect
                         x="348"
                         y="22"
@@ -368,7 +422,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                     </svg>
                   </div>
 
-                  {/* Interactive Controls */}
                   <div className="grid grid-cols-2 gap-3 text-xs">
                     <div className="bg-slate-800/70 p-2.5 rounded-lg border border-slate-700">
                       <label className="text-[10px] text-slate-400 block mb-1">
@@ -415,7 +468,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                 </div>
               </div>
 
-              {/* Interactive Motivation & Purpose Tabs */}
               <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 space-y-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
                   <div>
@@ -551,53 +603,9 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                   </div>
                 )}
               </div>
-
-              {/* Research Group & Leadership */}
-              <div className="space-y-4">
-                <div>
-                  <h2 className="text-lg font-black text-slate-900">
-                    Research Leadership &amp; Engineering Team
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Machine Learning 4 Power Systems (ML4PS) Research Group, Federal University of Technology, Minna.
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-                  {[
-                    { name: 'Prof.Buhari', role: 'Principal Investigator', img: '/team/buhari.png' },
-                    { name: 'Prof.Sadiq', role: 'Co-Principal Investigator', img: '/team/sadiq.jpg' },
-                    { name: 'Prof.Ambafi', role: 'Senior Researcher', img: '/team/ambafi.jpg' },
-                    { name: 'Prof.Okoro', role: 'Advisory Researcher', img: '/team/okoro.jpg' },
-                    { name: 'Dr.Adamu', role: 'Power Systems Lead', img: '/team/adamu.jpg' },
-                    { name: 'Engr.Hameedat', role: 'Research Engineer', img: '/team/hameedat.jpeg' },
-                  ].map((member) => (
-                    <div
-                      key={member.name}
-                      className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-2xs flex flex-col"
-                    >
-                      <div className="h-36 w-full bg-slate-100 overflow-hidden">
-                        <img
-                          src={member.img}
-                          alt={member.name}
-                          className="h-full w-full object-cover object-top"
-                          onError={(e) => {
-                            e.currentTarget.style.display = 'none';
-                          }}
-                        />
-                      </div>
-                      <div className="p-3">
-                        <p className="font-bold text-xs text-slate-900 truncate">{member.name}</p>
-                        <p className="text-[11px] text-slate-500 truncate">{member.role}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </div>
           )}
 
-          {/* SECTION 2: PROJECTS & SIMULATION MODULES */}
           {publicSection === 'products' && (
             <div className="space-y-6">
               <div>
@@ -671,7 +679,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
             </div>
           )}
 
-          {/* SECTION 3: STUDENT LEARNING HUB */}
           {publicSection === 'learning' && (
             <div className="space-y-6">
               <div>
@@ -727,7 +734,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
             </div>
           )}
 
-          {/* SECTION 4: TECHNICAL READING */}
           {publicSection === 'reading' && (
             <div className="space-y-6">
               <div>
@@ -806,9 +812,6 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
     );
   }
 
-  // ============================================================================
-  // AUTHENTICATED TECHNICAL SIMULATION WORKSPACE
-  // ============================================================================
   const isAdmin = user.role === 'admin';
   const isRestrictedAdminRoute =
     !isAdmin && (pathname?.startsWith('/upload') || pathname?.startsWith('/organization'));
