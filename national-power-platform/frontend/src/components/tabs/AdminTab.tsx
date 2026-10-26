@@ -163,12 +163,7 @@ export const AdminTab: React.FC = () => {
       {/* 1. WORKFORCE TRIANGLE (Large Rectangular Photos in 1 - 2 - 3 Pyramid) */}
       {/* ===================================================================== */}
       <section className="space-y-6">
-        <div className="pb-3 border-b border-slate-200 text-center">
-          <h2 className="text-xl font-black text-slate-900 tracking-tight">Workforce</h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Machine Learning 4 Power Systems (ML4PS) • FUT Minna
-          </p>
-        </div>
+        
 
         <div className="flex flex-col items-center space-y-8 py-2">
           {/* Top Apex (1) */}
