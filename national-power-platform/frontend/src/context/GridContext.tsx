@@ -205,6 +205,8 @@ function readLocalCustomModels(): any[] {
   return [];
 }
 
+
+
 function writeLocalCustomModels(rows: any[]) {
   if (typeof window === 'undefined') return;
   try {
@@ -795,7 +797,31 @@ export const GridProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       mergedByName.set(key, existing ? { ...existing, ...m } : m);
       rawMap.set(m.id, { ...(rawMap.get(m.id) || {}), ...row });
       rawMap.set(m.name, { ...(rawMap.get(m.name) || {}), ...row });
+
+      const IGNORED_MODEL_NAMES = new Set([
+      '__ml4ps_access_requests__',
+      'net',
+      'network',
+      'active_net',
+      'base_net',
+      'current_net',
+    ]);
+
+    const addRow = (row: any) => {
+      if (!row) return;
+      const rName = String(row?.name || row?.filename || row?.id || '').trim();
+      if (!rName || IGNORED_MODEL_NAMES.has(rName.toLowerCase())) return;
+      const m = normalizeRawModel(row);
+      const key = m.name.toLowerCase();
+      if (IGNORED_MODEL_NAMES.has(key)) return;
+      const existing = mergedByName.get(key);
+      mergedByName.set(key, existing ? { ...existing, ...m } : m);
+      rawMap.set(m.id, { ...(rawMap.get(m.id) || {}), ...row });
+      rawMap.set(m.name, { ...(rawMap.get(m.name) || {}), ...row });
     };
+    };
+
+    
 
     // 1. Fetch from Supabase grid_models
     if (supabase) {
@@ -1263,3 +1289,4 @@ export const useGrid = () => {
   if (!context) throw new Error('useGrid must be used within a GridProvider');
   return context;
 };
+

@@ -329,7 +329,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
               />
               <div>
                 <span className="font-black text-base text-slate-900 tracking-tight block leading-none">
-                  National Power System Simulation
+                  National Power System Modelling and Simulation Platform (Nigeria)
                 </span>
                 <span className="text-[11px] text-slate-500 font-medium">
                   Machine Learning 4 Power Systems (ML4PS) • FUT Minna

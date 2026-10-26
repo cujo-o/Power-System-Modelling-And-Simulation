@@ -427,6 +427,61 @@ async def activate_model(model_id: str):
 async def list_models():
     results = {}
 
+    # Internal state variable names to never expose as models
+INTERNAL_STATE_KEYS = {
+    "net",
+    "network",
+    "active_net",
+    "base_net",
+    "current_net",
+    "active_model_id",
+    "active_model_name",
+    "model_id",
+    "model_name",
+}
+
+@router.get("")
+@router.get("/")
+@router.get("/api/models")
+async def list_models():
+    results = {}
+
+    # 1. Models stored explicitly in memory
+    for k, meta in _MEMORY_META.items():
+        if k not in INTERNAL_STATE_KEYS:
+            results[k] = _serialize_meta(k, meta, _ACTIVE_ID)
+
+    # 2. Models from the registry only (skip state dictionary variables)
+    if _REGISTRY_REF is not None:
+        items_dict = {}
+        if isinstance(_REGISTRY_REF, dict):
+            if "models" in _REGISTRY_REF and isinstance(_REGISTRY_REF["models"], dict):
+                items_dict.update(_REGISTRY_REF["models"])
+            else:
+                for k, v in _REGISTRY_REF.items():
+                    if k not in INTERNAL_STATE_KEYS and isinstance(v, dict):
+                        items_dict[k] = v
+        else:
+            for attr in ("models", "registry", "cases", "_models"):
+                if hasattr(_REGISTRY_REF, attr):
+                    val = getattr(_REGISTRY_REF, attr)
+                    if isinstance(val, dict):
+                        items_dict.update(val)
+                    elif isinstance(val, list):
+                        for item in val:
+                            if isinstance(item, dict) and (item.get("id") or item.get("name")):
+                                k_id = str(item.get("id") or item.get("name"))
+                                if k_id not in INTERNAL_STATE_KEYS:
+                                    items_dict[k_id] = item
+
+        for k, v in items_dict.items():
+            if str(k) not in INTERNAL_STATE_KEYS:
+                s_meta = _serialize_meta(str(k), v, _ACTIVE_ID)
+                if s_meta["id"] not in results and s_meta["name"] not in INTERNAL_STATE_KEYS:
+                    results[s_meta["id"]] = s_meta
+
+    return list(results.values())
+
     for k, meta in _MEMORY_META.items():
         results[k] = _serialize_meta(k, meta, _ACTIVE_ID)
 

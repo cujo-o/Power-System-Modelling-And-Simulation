@@ -787,7 +787,7 @@ export const GridStabilityTab: React.FC<Props> = ({
                     {activatingId === m.id ? (
                       <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                     ) : null}
-                    <span>{isCurrent ? 'Open Operational Deck' : 'Run Model'}</span>
+                    <span>{isCurrent ? 'Open' : 'Run'}</span>
                     <ArrowRight className="h-3.5 w-3.5 ml-1" />
                   </button>
                 </div>
@@ -2385,12 +2385,7 @@ export const GridStabilityTab: React.FC<Props> = ({
       {workspaceTab === 'planning' && (
         <div className="space-y-4">
           <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Info className="h-4 w-4 text-blue-600 shrink-0" />
-              <span>
-                <strong>In-Memory Sandbox Guarantee:</strong> All additions and isolations here test network expansion in memory. The original `.m` base file in Supabase is never altered.
-              </span>
-            </div>
+            
             {totalSandboxModifications > 0 && (
               <button
                 onClick={onReset}
