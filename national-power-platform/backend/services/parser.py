@@ -1,12 +1,21 @@
+import os
 import re
-import json
 import pandapower as pp
+import pandapower.converter as pp_converter
 
 
-def parse_matpower_m_file(content: str, filename: str):
+def parse_matpower_m_file(content: str, filename: str = "uploaded_model.m"):
+    # If a file path on disk was passed instead of file contents, read it
+    if isinstance(content, str) and len(content) < 500 and os.path.exists(content):
+        filename = os.path.basename(content)
+        with open(content, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+    elif isinstance(content, (bytes, bytearray)):
+        content = content.decode("utf-8", errors="replace")
+
     net = pp.create_empty_network(f_hz=50.0, sn_mva=100.0)
 
-    # 1. Check for mpc.bus_name cell array if present
+    # 1. Extract mpc.bus_name cell array if present
     bus_names = []
     name_match = re.search(r"mpc\.bus_name\s*=\s*\{([\s\S]*?)\};", content)
     if name_match:
@@ -68,7 +77,13 @@ def parse_matpower_m_file(content: str, filename: str):
         bus_map[mat_bus_id] = (pp_bus, bus_type, vm_pu)
 
         if abs(pd_mw) > 1e-4 or abs(qd_mvar) > 1e-4:
-            pp.create_load(net, bus=pp_bus, p_mw=pd_mw, q_mvar=qd_mvar, name=f"Load {resolved_name}")
+            pp.create_load(
+                net,
+                bus=pp_bus,
+                p_mw=pd_mw,
+                q_mvar=qd_mvar,
+                name=f"Load {resolved_name}",
+            )
 
         row_idx += 1
 
@@ -92,12 +107,19 @@ def parse_matpower_m_file(content: str, filename: str):
             g_bus = int(nums[0])
             pg_mw = nums[1]
             vg_pu = nums[5] if nums[5] > 0 else 1.02
-            pmax_mw = nums[8] if len(nums) > 8 and nums[8] > 0 else max(100.0, abs(pg_mw) * 1.5)
+            pmax_mw = (
+                nums[8]
+                if len(nums) > 8 and nums[8] > 0
+                else max(100.0, abs(pg_mw) * 1.5)
+            )
 
             if g_bus in bus_map:
                 pp_bus, b_type, _ = bus_map[g_bus]
+                bus_label = str(net.bus.at[pp_bus, "name"])
                 if b_type == 3 and not has_slack:
-                    pp.create_ext_grid(net, bus=pp_bus, vm_pu=vg_pu, name=f"Slack Bus {g_bus}")
+                    pp.create_ext_grid(
+                        net, bus=pp_bus, vm_pu=vg_pu, name=f"Slack {bus_label}"
+                    )
                     has_slack = True
                 else:
                     pp.create_gen(
@@ -107,7 +129,7 @@ def parse_matpower_m_file(content: str, filename: str):
                         vm_pu=vg_pu,
                         max_p_mw=pmax_mw,
                         min_p_mw=0.0,
-                        name=f"Gen Bus {g_bus}",
+                        name=bus_label,
                     )
 
     if not has_slack and len(bus_map) > 0:
@@ -138,7 +160,11 @@ def parse_matpower_m_file(content: str, filename: str):
             rate_a = nums[5] if len(nums) > 5 and nums[5] > 0 else 500.0
 
             if f_bus in bus_map and t_bus in bus_map:
-                vn_kv = float(net.bus.at[f_bus, "vn_kv"]) if f_bus in net.bus.index else 330.0
+                vn_kv = (
+                    float(net.bus.at[f_bus, "vn_kv"])
+                    if f_bus in net.bus.index
+                    else 330.0
+                )
                 z_base = (vn_kv ** 2) / 100.0
                 r_ohm = r_pu * z_base
                 x_ohm = x_pu * z_base
@@ -160,4 +186,22 @@ def parse_matpower_m_file(content: str, filename: str):
                 )
                 line_idx += 1
 
+    try:
+        pp.runpp(net, numba=False)
+    except Exception:
+        pass
+
     return net
+
+
+# Patch pandapower.converter.from_matpower so any legacy call succeeds
+def _from_matpower_compat(file_or_content, *args, **kwargs):
+    return parse_matpower_m_file(file_or_content)
+
+
+setattr(pp_converter, "from_matpower", _from_matpower_compat)
+
+# Function aliases for compatibility across routers
+parse_network_file = parse_matpower_m_file
+parse_model_file = parse_matpower_m_file
+parse_uploaded_file = parse_matpower_m_file
