@@ -2,12 +2,17 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { RefreshCw } from 'lucide-react';
-import { BusData, LineData } from '@/types/grid';
+import { TooltipBadge } from '@/components/ui/TooltipBadge';
+import { ApiResult } from '@/lib/apiClient';
+import { BusData, LoadSharingResult } from '@/types/grid';
 
 interface MarketTabProps {
   buses?: BusData[];
-  lines?: LineData[];
   modelName?: string;
+  callWithHydration?: <T = Record<string, unknown>>(
+    path: string,
+    options?: RequestInit
+  ) => Promise<ApiResult<T>>;
 }
 
 interface DynamicGenUnit {
@@ -21,68 +26,61 @@ interface DynamicGenUnit {
   markupPercent: number;
 }
 
-const TooltipBadge: React.FC<{ content: string }> = ({ content }) => (
-  <span className="relative group inline-flex items-center ml-1 align-baseline cursor-help">
-    <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-600 hover:bg-[#500b50] hover:text-white transition">
-      ?
-    </span>
-    <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block w-56 rounded-lg bg-slate-900 p-2 text-[11px] font-normal normal-case leading-snug text-white shadow-xl z-50 text-center">
-      {content}
-      <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-900" />
-    </span>
-  </span>
-);
-
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL || 'https://national-power-backend.onrender.com';
-
 export const MarketTab: React.FC<MarketTabProps> = ({
   buses = [],
-  lines = [],
   modelName = '',
+  callWithHydration,
 }) => {
   const [discoveredUnits, setDiscoveredUnits] = useState<DynamicGenUnit[]>([]);
   const [loadingUnits, setLoadingUnits] = useState(false);
 
-  // Calculate actual demand and generation from active model's buses
   const modelBaseDemandMw = useMemo(() => {
+    if (buses.length === 0) return 0;
     const loadSum = buses.reduce((acc, b) => acc + (b.p_mw > 0 ? b.p_mw : 0), 0);
     const genSum = buses.reduce((acc, b) => acc + (b.p_mw < 0 ? Math.abs(b.p_mw) : 0), 0);
-    return Math.round(loadSum > 10 ? loadSum : genSum > 10 ? genSum : 350);
+    return Math.round(loadSum > 10 ? loadSum : genSum > 10 ? genSum : 0);
   }, [buses]);
 
-  const [targetDemandMw, setTargetDemandMw] = useState<number>(modelBaseDemandMw);
+  const [demandOverride, setDemandOverride] = useState<{ model: string; value: number } | null>(
+    null
+  );
+  const targetDemandMw =
+    demandOverride && demandOverride.model === modelName
+      ? demandOverride.value
+      : modelBaseDemandMw;
   const [gasPriceUsd, setGasPriceUsd] = useState<number>(2.42);
   const [clearingRule, setClearingRule] = useState<'SMP' | 'PAY_AS_BID'>('SMP');
   const [biddingMode, setBiddingMode] = useState<'COMPETITIVE' | 'STRATEGIC'>('STRATEGIC');
   const [priceCapNaira, setPriceCapNaira] = useState<number>(85000);
 
-  // Sync default demand whenever the active model changes
-  useEffect(() => {
-    setTargetDemandMw(modelBaseDemandMw);
-  }, [modelBaseDemandMw, modelName]);
-
-  // Discover real generators from the active model via solver endpoint + bus telemetry
+  // Discover generating units from backend solver (hydrated) with bus-telemetry fallback
   useEffect(() => {
     let cancelled = false;
 
     const loadModelGenerators = async () => {
-      setLoadingUnits(true);
-      try {
-        const res = await fetch(`${API_BASE}/api/simulations/load-sharing/solve`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            load_step_mw: 100,
-            system_damping_d: 1.2,
-            droop_overrides: {},
-          }),
-        });
+      if (buses.length === 0) {
+        if (!cancelled) setDiscoveredUnits([]);
+        return;
+      }
 
-        if (res.ok) {
-          const data = await res.json();
-          if (!cancelled && Array.isArray(data?.allocations) && data.allocations.length > 0) {
-            const mapped: DynamicGenUnit[] = data.allocations.map((g: any, idx: number) => {
+      if (!cancelled) setLoadingUnits(true);
+      if (callWithHydration) {
+        try {
+          const res = await callWithHydration<LoadSharingResult>(
+            '/api/simulations/load-sharing/solve',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                load_step_mw: 100,
+                system_damping_d: 1.2,
+                droop_overrides: {},
+              }),
+            }
+          );
+
+          if (res.ok && !cancelled && Array.isArray(res.body?.allocations) && res.body.allocations.length > 0) {
+            const mapped: DynamicGenUnit[] = res.body.allocations.map((g, idx) => {
               const nameStr = String(g.name || `Gen Bus #${g.bus_id}`);
               const isHydro = /kainji|jebba|shiroro|zungeru|dadinkowa|hydro/i.test(nameStr);
               const isSlack = /slack/i.test(nameStr);
@@ -106,26 +104,23 @@ export const MarketTab: React.FC<MarketTabProps> = ({
             setLoadingUnits(false);
             return;
           }
-        }
-      } catch {}
+        } catch {}
+      }
 
-      // Fallback: derive directly from the active model's `buses` array
       if (!cancelled) {
-        const genBuses = buses.filter((b) => (b.p_mw ?? 0) < 0);
+        const genBuses = buses.filter((b) => Boolean(b.is_gen) || (b.p_mw ?? 0) < 0);
         const sourceList = genBuses.length > 0 ? genBuses : buses.slice(0, Math.min(8, buses.length));
-
         const fallbackUnits: DynamicGenUnit[] = sourceList.map((b, idx) => {
           const bName = b.name || `Bus #${b.id}`;
           const isHydro = /kainji|jebba|shiroro|zungeru|hydro/i.test(bName);
           const baseP = Math.max(20, Math.abs(Math.round(b.p_mw || 80)));
-          const capMw = Math.round(baseP * 1.35);
 
           return {
             id: `bus-gen-${b.id}`,
             name: bName.includes('Bus') ? `Gen @ ${bName}` : bName,
             busId: b.id,
             type: isHydro ? 'Hydro' : idx === 0 ? 'Slack / Reference' : 'Thermal (Gas)',
-            availableMw: capMw,
+            availableMw: Math.round(baseP * 1.35),
             baseDispatchMw: baseP,
             baseMarginalCostNaira: isHydro ? 19000 + idx * 800 : 49000 + idx * 2500,
             markupPercent: isHydro ? 2 : 8,
@@ -141,56 +136,41 @@ export const MarketTab: React.FC<MarketTabProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [modelName, buses]);
+  }, [modelName, buses, callWithHydration]);
 
-  // Dynamic Merit-Order Market Clearing
+  // Merit-order clearing and settlement
   const marketSolution = useMemo(() => {
     const gasMultiplier = gasPriceUsd / 2.42;
 
     const bids = discoveredUnits
       .map((u) => {
         const fuelAdjustedCost =
-          u.type === 'Hydro'
-            ? u.baseMarginalCostNaira
-            : u.baseMarginalCostNaira * gasMultiplier;
-
+          u.type === 'Hydro' ? u.baseMarginalCostNaira : u.baseMarginalCostNaira * gasMultiplier;
         const markup = biddingMode === 'STRATEGIC' ? u.markupPercent / 100 : 0;
-        const submittedBid = Math.min(
-          priceCapNaira,
-          Math.round(fuelAdjustedCost * (1 + markup))
-        );
-
-        return {
-          ...u,
-          fuelAdjustedCost: Math.round(fuelAdjustedCost),
-          submittedBid,
-        };
+        const submittedBid = Math.min(priceCapNaira, Math.round(fuelAdjustedCost * (1 + markup)));
+        return { ...u, fuelAdjustedCost: Math.round(fuelAdjustedCost), submittedBid };
       })
       .sort((a, b) => a.submittedBid - b.submittedBid);
 
     let remainingDemand = targetDemandMw;
     let systemMarginalPrice = 0;
 
-    const dispatched = bids.map((b) => {
+    const dispatched: Array<(typeof bids)[number] & { clearedMw: number }> = [];
+    for (const b of bids) {
       const clearedMw = Math.max(0, Math.min(b.availableMw, remainingDemand));
       remainingDemand -= clearedMw;
       if (clearedMw > 0) {
         systemMarginalPrice = Math.max(systemMarginalPrice, b.submittedBid);
       }
-      return {
-        ...b,
-        clearedMw,
-      };
-    });
+      dispatched.push({ ...b, clearedMw });
+    }
 
     const schedule = dispatched.map((d) => {
-      const settlementPrice =
-        clearingRule === 'SMP' ? systemMarginalPrice : d.submittedBid;
-      const hourlyRevenueNaira = d.clearedMw * settlementPrice;
+      const settlementPrice = clearingRule === 'SMP' ? systemMarginalPrice : d.submittedBid;
       return {
         ...d,
         settlementPrice: d.clearedMw > 0 ? settlementPrice : 0,
-        hourlyRevenueNaira,
+        hourlyRevenueNaira: d.clearedMw * settlementPrice,
       };
     });
 
@@ -212,37 +192,44 @@ export const MarketTab: React.FC<MarketTabProps> = ({
     };
   }, [discoveredUnits, targetDemandMw, gasPriceUsd, clearingRule, biddingMode, priceCapNaira]);
 
-  // Dynamic Load Center / Bus Offtake Obligations from the Active Model
+  // Nodal load allocation sorted descending by demand (shows all active load substations)
   const loadBusesAllocation = useMemo(() => {
     const positiveBuses = buses.filter((b) => (b.p_mw ?? 0) > 0);
-    const list = positiveBuses.length > 0 ? positiveBuses : buses;
+    const list = (positiveBuses.length > 0 ? positiveBuses : buses)
+      .slice()
+      .sort((a, b) => (b.p_mw ?? 0) - (a.p_mw ?? 0));
     const totalRawLoad = list.reduce((acc, b) => acc + Math.max(1, Math.abs(b.p_mw || 10)), 0) || 1;
 
-    return list.slice(0, 15).map((b) => {
+    return list.map((b) => {
       const weight = Math.max(1, Math.abs(b.p_mw || 10)) / totalRawLoad;
-      const sharePct = weight * 100;
       const allocatedMw = Number((marketSolution.totalClearedMw * weight).toFixed(1));
-      const hourlyObligationM =
-        (allocatedMw * marketSolution.weightedAvgPrice) / 1_000_000;
+      const hourlyObligationM = (allocatedMw * marketSolution.weightedAvgPrice) / 1_000_000;
 
       return {
         id: b.id,
         name: b.name || `Substation #${b.id}`,
-        zone: b.zone || 'Grid Load Center',
+        zone: b.zone || 'Transmission',
         v_pu: b.v_pu ?? 1.0,
-        sharePct,
+        sharePct: weight * 100,
         allocatedMw,
         hourlyObligationM,
       };
     });
   }, [buses, marketSolution.totalClearedMw, marketSolution.weightedAvgPrice]);
 
+  if (buses.length === 0) {
+    return (
+      <div className="max-w-4xl mx-auto py-16 text-center text-xs text-slate-500 rounded-2xl border border-dashed border-slate-300 bg-white">
+        Select or upload a grid model in <strong>Grid Stability Models</strong> to run wholesale market clearing.
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-7xl mx-auto space-y-5 py-1 text-slate-800">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 gap-3">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-xl font-black text-slate-900 tracking-tight">
               Wholesale Electricity Market &amp; Economic Dispatch
             </h2>
@@ -253,25 +240,25 @@ export const MarketTab: React.FC<MarketTabProps> = ({
             )}
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            Merit-order generator clearing and nodal load settlement dynamically coupled to the active simulation model.
+            Merit-order generator clearing and nodal load settlement coupled to the active grid model.
           </p>
         </div>
 
         <button
-          onClick={() => setTargetDemandMw(modelBaseDemandMw)}
+          onClick={() => setDemandOverride(null)}
           className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 flex items-center gap-1.5 self-start sm:self-auto"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loadingUnits ? 'animate-spin' : ''}`} />
-          <span>Sync Demand to Model ({modelBaseDemandMw} MW)</span>
+          <span>Sync Demand ({modelBaseDemandMw} MW)</span>
         </button>
       </div>
 
-      {/* Market Parameter Controls with ? Tooltips */}
+      {/* Market Controls */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
         <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
           <label className="text-[11px] font-bold text-slate-600 flex items-center">
             <span>System Demand (MW)</span>
-            <TooltipBadge content="Total active power demand to be cleared across the active model's generating units. Defaults to the active model's total load." />
+            <TooltipBadge content="Total active demand to clear across the active model's generating units." />
           </label>
           <input
             type="number"
@@ -279,7 +266,9 @@ export const MarketTab: React.FC<MarketTabProps> = ({
             min="10"
             max="15000"
             value={targetDemandMw}
-            onChange={(e) => setTargetDemandMw(Math.max(0, Number(e.target.value)))}
+            onChange={(e) =>
+              setDemandOverride({ model: modelName, value: Math.max(0, Number(e.target.value)) })
+            }
             className="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono font-bold text-xs bg-slate-50"
           />
           <span className="text-[10px] text-slate-400 block">
@@ -290,7 +279,7 @@ export const MarketTab: React.FC<MarketTabProps> = ({
         <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
           <label className="text-[11px] font-bold text-slate-600 flex items-center">
             <span>Gas Price ($/MMBtu)</span>
-            <TooltipBadge content="Natural gas fuel price benchmark. Directly scales the short-run marginal cost of thermal gas-fired generators." />
+            <TooltipBadge content="Natural gas benchmark price scaling thermal generator short-run marginal cost." />
           </label>
           <input
             type="number"
@@ -301,33 +290,33 @@ export const MarketTab: React.FC<MarketTabProps> = ({
             onChange={(e) => setGasPriceUsd(Number(e.target.value) || 2.42)}
             className="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-mono font-bold text-xs bg-slate-50"
           />
-          <span className="text-[10px] text-slate-400 block">Thermal Fuel Cost Index</span>
+          <span className="text-[10px] text-slate-400 block">Thermal Fuel Index</span>
         </div>
 
         <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
           <label className="text-[11px] font-bold text-slate-600 flex items-center">
             <span>Settlement Rule</span>
-            <TooltipBadge content="Uniform SMP pays all cleared generators the offer price of the last marginal unit dispatched. Pay-as-Bid pays each generator its own submitted offer." />
+            <TooltipBadge content="Uniform SMP pays all cleared generators the marginal clearing price. Pay-as-Bid settles each unit at its submitted bid." />
           </label>
           <select
             value={clearingRule}
-            onChange={(e: any) => setClearingRule(e.target.value)}
+            onChange={(e) => setClearingRule(e.target.value as 'SMP' | 'PAY_AS_BID')}
             className="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-bold text-xs bg-slate-50"
           >
             <option value="SMP">Uniform SMP (Marginal Pricing)</option>
             <option value="PAY_AS_BID">Pay-as-Bid (Bilateral / Vesting)</option>
           </select>
-          <span className="text-[10px] text-slate-400 block">Market Clearing Mechanism</span>
+          <span className="text-[10px] text-slate-400 block">Clearing Mechanism</span>
         </div>
 
         <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
           <label className="text-[11px] font-bold text-slate-600 flex items-center">
-            <span>Generator Bidding Mode</span>
-            <TooltipBadge content="Competitive mode bids exact marginal fuel cost. Strategic Markup adds scarcity and operational margin above base fuel cost." />
+            <span>Bidding Mode</span>
+            <TooltipBadge content="Competitive bids equal fuel marginal cost. Strategic mode adds scarcity markup." />
           </label>
           <select
             value={biddingMode}
-            onChange={(e: any) => setBiddingMode(e.target.value)}
+            onChange={(e) => setBiddingMode(e.target.value as 'COMPETITIVE' | 'STRATEGIC')}
             className="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 font-bold text-xs bg-slate-50"
           >
             <option value="STRATEGIC">Strategic Offer Markup</option>
@@ -338,8 +327,8 @@ export const MarketTab: React.FC<MarketTabProps> = ({
 
         <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-1">
           <label className="text-[11px] font-bold text-slate-600 flex items-center">
-            <span>Market Price Cap (₦/MWh)</span>
-            <TooltipBadge content="Maximum wholesale offer price permitted by the regulator during peak scarcity." />
+            <span>Price Cap (₦/MWh)</span>
+            <TooltipBadge content="Regulatory maximum wholesale offer price permitted during peak demand." />
           </label>
           <input
             type="number"
@@ -352,12 +341,12 @@ export const MarketTab: React.FC<MarketTabProps> = ({
         </div>
       </div>
 
-      {/* Summary KPI Cards with ? Tooltips */}
+      {/* Summary KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 font-mono">
         <div className="p-4 rounded-xl border border-slate-200 bg-white">
           <span className="text-[10px] font-sans font-bold uppercase text-slate-400 flex items-center">
             <span>System Marginal Price (SMP)</span>
-            <TooltipBadge content="The offer price of the most expensive generating unit required to meet the current system demand." />
+            <TooltipBadge content="Offer price of the last generating unit required to meet demand." />
           </span>
           <span className="text-lg font-black text-[#500b50] mt-0.5 block">
             ₦{marketSolution.systemMarginalPrice.toLocaleString()}/MWh
@@ -366,18 +355,19 @@ export const MarketTab: React.FC<MarketTabProps> = ({
 
         <div className="p-4 rounded-xl border border-slate-200 bg-white">
           <span className="text-[10px] font-sans font-bold uppercase text-slate-400 flex items-center">
-            <span>Cleared / Available Capacity</span>
-            <TooltipBadge content="Total active power dispatched vs. total installed capacity discovered in the active grid model." />
+            <span>Cleared / Available</span>
+            <TooltipBadge content="Total power cleared versus total generating capacity discovered in the active model." />
           </span>
           <span className="text-lg font-black text-emerald-700 mt-0.5 block">
-            {marketSolution.totalClearedMw.toLocaleString()} / {marketSolution.totalAvailableMw.toLocaleString()} MW
+            {marketSolution.totalClearedMw.toLocaleString()} /{' '}
+            {marketSolution.totalAvailableMw.toLocaleString()} MW
           </span>
         </div>
 
         <div className="p-4 rounded-xl border border-slate-200 bg-white">
           <span className="text-[10px] font-sans font-bold uppercase text-slate-400 flex items-center">
             <span>Unserved Energy Deficit</span>
-            <TooltipBadge content="Amount of system demand that cannot be met when target demand exceeds the active model's total available generation." />
+            <TooltipBadge content="Demand exceeding the model's total available generation capacity." />
           </span>
           <span
             className={`text-lg font-black mt-0.5 block ${
@@ -390,8 +380,8 @@ export const MarketTab: React.FC<MarketTabProps> = ({
 
         <div className="p-4 rounded-xl border border-slate-200 bg-white">
           <span className="text-[10px] font-sans font-bold uppercase text-slate-400 flex items-center">
-            <span>Hourly Wholesale Settlement</span>
-            <TooltipBadge content="Total wholesale market invoice across all dispatched generating units per hour." />
+            <span>Hourly Settlement</span>
+            <TooltipBadge content="Total hourly wholesale payment across all cleared generating units." />
           </span>
           <span className="text-lg font-black text-slate-900 mt-0.5 block">
             ₦{(marketSolution.totalHourlyCostNaira / 1_000_000).toFixed(2)}M / hr
@@ -399,14 +389,14 @@ export const MarketTab: React.FC<MarketTabProps> = ({
         </div>
       </div>
 
-      {/* Active Model Merit-Order Generator Dispatch Table */}
+      {/* Merit-Order Generator Schedule */}
       <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-xs">
         <div className="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs">
           <span className="font-bold text-slate-800">
-            Merit-Order Generator Dispatch Schedule ({modelName || 'Active Model'})
+            Merit-Order Generator Dispatch ({modelName || 'Active Model'})
           </span>
           <span className="text-slate-500 font-mono text-[11px]">
-            {marketSolution.schedule.length} Generating Units Discovered in Model
+            {marketSolution.schedule.length} Units
           </span>
         </div>
         <div className="overflow-x-auto max-h-[380px]">
@@ -436,9 +426,7 @@ export const MarketTab: React.FC<MarketTabProps> = ({
                   <td className="py-2 px-3 font-bold text-[#500b50]">
                     ₦{item.submittedBid.toLocaleString()}
                   </td>
-                  <td className="py-2 px-3 font-bold text-emerald-700">
-                    {item.clearedMw} MW
-                  </td>
+                  <td className="py-2 px-3 font-bold text-emerald-700">{item.clearedMw} MW</td>
                   <td className="py-2 px-3 text-right font-semibold">
                     ₦{(item.hourlyRevenueNaira / 1_000_000).toFixed(2)}M
                   </td>
@@ -449,14 +437,14 @@ export const MarketTab: React.FC<MarketTabProps> = ({
         </div>
       </div>
 
-      {/* Active Model Substation / Load Center Offtake Table */}
+      {/* Substation Offtake Table */}
       <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-xs">
         <div className="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs">
           <span className="font-bold text-slate-800">
-            Active Model Substation Load Offtake &amp; Wholesale Obligation
+            Substation Load Offtake &amp; Wholesale Obligation ({loadBusesAllocation.length} Nodes)
           </span>
           <span className="text-slate-500 font-mono text-[11px]">
-            Weighted Wholesale Rate: ₦{marketSolution.weightedAvgPrice.toLocaleString()}/MWh
+            Weighted Rate: ₦{marketSolution.weightedAvgPrice.toLocaleString()}/MWh
           </span>
         </div>
         <div className="overflow-x-auto max-h-[340px]">

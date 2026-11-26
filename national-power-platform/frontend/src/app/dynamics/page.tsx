@@ -3,14 +3,21 @@
 import React, { useState } from 'react';
 import { useGrid } from '@/context/GridContext';
 import { DynamicsTab } from '@/components/tabs/DynamicsTab';
-import { DynamicSimResult } from '@/types/grid';
+import { DynamicSimResult, MultiMachineResult } from '@/types/grid';
+import { describeNetworkError } from '@/lib/apiClient';
 
 export default function DynamicsPage() {
-  const { buses, activeModel } = useGrid();
-  const [dynResult, setDynResult] = useState<DynamicSimResult | null>(null);
+  const { buses, activeModel, callWithHydration } = useGrid();
+  const modelKey = activeModel?.id || '';
+  const [dynState, setDynState] = useState<{
+    modelId: string;
+    result: DynamicSimResult | null;
+    error: string | null;
+  }>({ modelId: '', result: null, error: null });
   const [dynLoading, setDynLoading] = useState(false);
 
-  const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://national-power-platform.onrender.com';
+  const dynResult = dynState.modelId === modelKey ? dynState.result : null;
+  const dynError = dynState.modelId === modelKey ? dynState.error : null;
 
   const handleRunSimulation = async (params: {
     disturbance_mw: number;
@@ -22,34 +29,50 @@ export default function DynamicsPage() {
     enable_ufls: boolean;
   }) => {
     setDynLoading(true);
+    setDynState({ modelId: modelKey, result: dynResult, error: null });
     try {
-      const res = await fetch(`${apiBaseUrl}/api/simulations/dynamics`, {
+      const res = await callWithHydration<DynamicSimResult>('/api/simulations/dynamics', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setDynResult(data);
+      if (!res.ok) {
+        setDynState({
+          modelId: modelKey,
+          result: null,
+          error: res.message || `Dynamics solver failed (HTTP ${res.status}).`,
+        });
+        return;
       }
+      setDynState({ modelId: modelKey, result: res.body, error: null });
+    } catch (err) {
+      setDynState({ modelId: modelKey, result: null, error: describeNetworkError(err) });
     } finally {
       setDynLoading(false);
     }
   };
 
-  const handleRunMultiMachine = async (params: { fault_bus_id: number; fault_duration_ms: number }) => {
-    const res = await fetch(`${apiBaseUrl}/api/simulations/multi-machine`, {
+  const handleRunMultiMachine = async (params: {
+    fault_bus_id: number;
+    fault_duration_ms: number;
+  }): Promise<MultiMachineResult> => {
+    const res = await callWithHydration<MultiMachineResult>('/api/simulations/multi-machine', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
     });
-    return res.json();
+    if (!res.ok) {
+      throw new Error(res.message || `Multi-machine solver failed (HTTP ${res.status}).`);
+    }
+    return res.body;
   };
 
   return (
     <DynamicsTab
+      key={modelKey}
       dynResult={dynResult}
       dynLoading={dynLoading}
+      dynError={dynError}
       onRunSimulation={handleRunSimulation}
       buses={buses}
       onRunMultiMachine={handleRunMultiMachine}

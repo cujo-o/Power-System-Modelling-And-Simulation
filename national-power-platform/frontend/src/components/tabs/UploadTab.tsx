@@ -2,8 +2,6 @@
 
 import React, { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase, useGrid } from '@/context/GridContext';
-import { GridModelMeta } from '@/types/grid';
 import {
   UploadCloud,
   FileCheck2,
@@ -13,13 +11,17 @@ import {
   ArrowRight,
   Trash2,
 } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+import { apiFetch, describeNetworkError } from '@/lib/apiClient';
+import { useGrid } from '@/context/GridContext';
+import { GridModelMeta } from '@/types/grid';
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL || 'https://national-power-backend.onrender.com';
-
+/**
+ * Normalizes MATPOWER `.m` matrices before upload: moves inline string labels into
+ * `mpc.bus_name`, pads short bus rows to 13 columns, and extracts fallback metadata.
+ */
 function sanitizeMatpowerContent(rawText: string): {
   cleanedText: string;
-  extractedNames: string[];
   busesCount: number;
   branchesCount: number;
   installedMw: number;
@@ -37,10 +39,9 @@ function sanitizeMatpowerContent(rawText: string): {
   let cleanedText = rawText;
 
   if (busMatch) {
-    const rawBusBlock = busMatch[1];
     const cleanedRows: string[] = [];
 
-    rawBusBlock.split('\n').forEach((line) => {
+    busMatch[1].split('\n').forEach((line) => {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith('%')) {
         cleanedRows.push(line);
@@ -53,8 +54,8 @@ function sanitizeMatpowerContent(rawText: string): {
       if (quoteMatch) {
         extractedNames.push(quoteMatch[1].trim());
         rowWithoutComment = rowWithoutComment.replace(/['"][^'"]+['"]/g, '');
-      } else {
-        const commentPart = trimmed.includes('%') ? trimmed.split('%')[1].trim() : '';
+      } else if (trimmed.includes('%')) {
+        const commentPart = trimmed.split('%')[1].trim();
         if (commentPart) extractedNames.push(commentPart);
       }
 
@@ -117,7 +118,6 @@ function sanitizeMatpowerContent(rawText: string): {
 
   return {
     cleanedText,
-    extractedNames,
     busesCount,
     branchesCount,
     installedMw: Math.round(installedMw),
@@ -127,17 +127,17 @@ function sanitizeMatpowerContent(rawText: string): {
 }
 
 /**
- * Inserts or updates the uploaded model in Supabase `grid_models` by matching
- * the exact column names present in the table (avoids UUID or unknown-column errors).
+ * Upserts model metadata and serialized topology into Supabase `grid_models`
+ * while respecting existing column names in the table schema.
  */
 async function syncModelToSupabase(meta: GridModelMeta, networkPayload?: string) {
   if (!supabase) return;
   try {
     const { data: sampleRows } = await supabase.from('grid_models').select('*').limit(1);
-    const sample = sampleRows && sampleRows[0] ? sampleRows[0] : null;
+    const sample = sampleRows && sampleRows[0] ? (sampleRows[0] as Record<string, unknown>) : null;
     const cols = sample ? new Set(Object.keys(sample)) : null;
 
-    const candidate: Record<string, any> = {
+    const candidate: Record<string, unknown> = {
       name: meta.name,
       voltage_level: meta.voltage_level,
       platform: meta.platform,
@@ -156,14 +156,13 @@ async function syncModelToSupabase(meta: GridModelMeta, networkPayload?: string)
       network_payload: networkPayload,
     };
 
-    const payloadToWrite: Record<string, any> = {};
+    const payloadToWrite: Record<string, unknown> = {};
     if (cols) {
       Object.entries(candidate).forEach(([k, v]) => {
         if (cols.has(k) && v !== undefined) {
           payloadToWrite[k] = v;
         }
       });
-      // Only include string `id` if the existing table uses non-UUID string IDs
       const sampleId = String(sample?.id || '');
       const isUuid =
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sampleId);
@@ -174,11 +173,14 @@ async function syncModelToSupabase(meta: GridModelMeta, networkPayload?: string)
       Object.assign(payloadToWrite, {
         name: meta.name,
         voltage_level: meta.voltage_level,
+        platform: meta.platform,
+        domain: meta.domain,
         buses: meta.buses,
         branches: meta.branches,
         total_installed_mw: meta.total_installed_mw,
         total_demand_mw: meta.total_demand_mw,
         is_active: true,
+        ...(networkPayload ? { network_payload: networkPayload } : {}),
       });
     }
 
@@ -191,7 +193,12 @@ async function syncModelToSupabase(meta: GridModelMeta, networkPayload?: string)
     if (existing?.id) {
       await supabase.from('grid_models').update(payloadToWrite).eq('id', existing.id);
     } else {
-      await supabase.from('grid_models').insert([payloadToWrite]);
+      const { error } = await supabase.from('grid_models').insert([payloadToWrite]);
+      if (error && payloadToWrite.network_payload) {
+        const fallback = { ...payloadToWrite };
+        delete fallback.network_payload;
+        await supabase.from('grid_models').insert([fallback]);
+      }
     }
   } catch {}
 }
@@ -210,6 +217,12 @@ export const UploadTab: React.FC = () => {
     setError(null);
     setSuccessMsg(null);
     if (!file) return;
+
+    const lower = file.name.toLowerCase();
+    if (!lower.endsWith('.m') && !lower.endsWith('.json')) {
+      setError('Unsupported file type. Select a MATPOWER (.m) or pandapower (.json) file.');
+      return;
+    }
     setSelectedFile(file);
   };
 
@@ -242,20 +255,18 @@ export const UploadTab: React.FC = () => {
       const formData = new FormData();
       formData.append('file', fileToUpload, selectedFile.name);
 
-      const res = await fetch(`${API_BASE}/api/models/upload`, {
+      const res = await apiFetch('/api/models/upload', {
         method: 'POST',
         body: formData,
       });
 
-      let backendData: any = null;
-      if (res.ok) {
-        backendData = await res.json();
-      } else {
+      if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
         const detail = errBody?.detail || errBody?.message || `HTTP ${res.status}`;
         throw new Error(detail);
       }
 
+      const backendData = await res.json();
       const modelId = String(backendData?.id || selectedFile.name);
       const vLevel =
         backendData?.voltage_level ||
@@ -267,31 +278,25 @@ export const UploadTab: React.FC = () => {
 
       const isDynamic =
         selectedFile.name.toLowerCase().includes('dynamic') ||
-        rawText.toLowerCase().includes('hydro') ||
-        rawText.toLowerCase().includes('dynamic');
+        rawText.toLowerCase().includes('hydro');
 
       const newModelMeta: GridModelMeta = {
         id: modelId,
         name: selectedFile.name,
         voltage_level: vLevel,
-        platform: 'MATPOWER',
-        domain: isDynamic ? 'Dynamic & Transient' : 'Static Power Flow',
+        platform: backendData?.platform || (isMatpower ? 'MATPOWER' : 'pandapower'),
+        domain: backendData?.domain || (isDynamic ? 'Dynamic & Transient' : 'Static Power Flow'),
         buses: Number(backendData?.buses || parsedMeta.busesCount || 0),
         branches: Number(backendData?.branches || parsedMeta.branchesCount || 0),
         total_installed_mw: Number(
           backendData?.total_installed_mw || parsedMeta.installedMw || 0
         ),
-        total_demand_mw: Number(
-          backendData?.total_demand_mw || parsedMeta.demandMw || 0
-        ),
+        total_demand_mw: Number(backendData?.total_demand_mw || parsedMeta.demandMw || 0),
         is_active: true,
-        converged: true,
+        converged: Boolean(backendData?.converged ?? true),
       };
 
-      // 1. Sync to Supabase schema-safely
       await syncModelToSupabase(newModelMeta, backendData?.network_payload);
-
-      // 2. Register immediately in GridContext & localStorage so it shows up in all model lists
       await registerUploadedModel(newModelMeta, {
         network_payload: backendData?.network_payload,
         raw_file_text: parsedMeta.cleanedText,
@@ -301,8 +306,9 @@ export const UploadTab: React.FC = () => {
         `Uploaded and activated "${selectedFile.name}" (${newModelMeta.buses} Substations, ${newModelMeta.branches} Corridors).`
       );
       setSelectedFile(null);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to parse simulation network.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    } catch (err) {
+      setError(err instanceof Error ? err.message : describeNetworkError(err));
     } finally {
       setUploading(false);
     }
@@ -315,7 +321,7 @@ export const UploadTab: React.FC = () => {
           Model Ingestion &amp; Network Parsing
         </h2>
         <p className="text-xs text-slate-500 mt-0.5">
-          Upload 330kV, 132kV, or 130kV cases (.m, .raw, .130, .xlsx, .json) for AC power flow and dynamic validation.
+          Upload MATPOWER (<code>.m</code>) or serialized pandapower (<code>.json</code>) grid cases for power flow and dynamic analysis.
         </p>
       </div>
 
@@ -359,14 +365,14 @@ export const UploadTab: React.FC = () => {
         <div>
           <h3 className="font-bold text-sm text-slate-900">Upload Simulation Network Models</h3>
           <p className="text-xs text-slate-500 mt-0.5">
-            Drag and drop model files here or select from disk.
+            Drag and drop a <code>.m</code> or <code>.json</code> case file here, or choose from disk.
           </p>
         </div>
 
         <input
           ref={fileInputRef}
           type="file"
-          accept=".m,.raw,.130,.json,.csv,.xlsx"
+          accept=".m,.json"
           onChange={(e) => handleFileSelection(e.target.files?.[0] || null)}
           className="hidden"
         />
@@ -409,11 +415,11 @@ export const UploadTab: React.FC = () => {
           <div className="divide-y divide-slate-100 text-xs">
             {models.map((m) => (
               <div
-                key={m.id + m.name}
-                className="p-3.5 flex items-center justify-between hover:bg-slate-50"
+                key={`${m.id}-${m.name}`}
+                className="p-3.5 flex items-center justify-between hover:bg-slate-50 gap-2"
               >
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-slate-900">{m.name}</span>
+                <div className="flex items-center gap-2 flex-wrap min-w-0">
+                  <span className="font-bold text-slate-900 truncate">{m.name}</span>
                   <span className="font-mono text-[11px] text-slate-500">
                     {m.voltage_level} • {m.buses} Substations • {m.branches} Corridors
                   </span>
@@ -423,18 +429,22 @@ export const UploadTab: React.FC = () => {
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                   <button
                     onClick={async () => {
                       await activateModel(m.name);
                       router.push('/stability');
                     }}
-                    className="px-3 py-1 rounded bg-[#500b50] text-white font-bold text-[11px]"
+                    className="px-3 py-1 rounded bg-[#500b50] hover:bg-[#680f68] text-white font-bold text-[11px]"
                   >
                     Open
                   </button>
                   <button
-                    onClick={() => removeRegisteredModel(m.name)}
+                    onClick={() => {
+                      if (window.confirm(`Remove "${m.name}" from registered models?`)) {
+                        removeRegisteredModel(m.name);
+                      }
+                    }}
                     className="p-1.5 rounded border border-slate-200 text-rose-600 hover:bg-rose-50"
                     title="Delete Model"
                   >

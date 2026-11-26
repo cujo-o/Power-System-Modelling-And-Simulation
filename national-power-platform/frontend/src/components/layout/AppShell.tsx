@@ -1,44 +1,45 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import { Lock, UserPlus, CheckCircle2, AlertCircle } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import {
+  PlatformUser,
+  authenticateUser,
   fetchAllPlatformAccessRequests,
-  persistPlatformAccessRequest,
   isConfiguredAdminRole,
-} from '../modals/AuthModal';
-import { supabase, useGrid } from '@/context/GridContext';
-import { Lock, UserPlus, CheckCircle2, AlertCircle } from 'lucide-react';
+  persistPlatformAccessRequest,
+  persistSession,
+  readStoredSession,
+  submitAccessRequest,
+} from '@/lib/auth';
 
-export interface PlatformUser {
-  id: string;
-  name: string;
-  email: string;
-  role: 'admin' | 'user';
-  institution?: string;
+export type { PlatformUser };
+
+interface AuthContextValue {
+  user: PlatformUser | null;
+  isAdmin: boolean;
+  logout: () => void;
 }
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL || 'https://national-power-backend.onrender.com';
+const AuthContext = createContext<AuthContextValue>({
+  user: null,
+  isAdmin: false,
+  logout: () => {},
+});
 
-const ENV_ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || '')
-  .split(',')
-  .map((e) => e.trim().toLowerCase())
-  .filter(Boolean);
-
-const ENV_ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD || '';
+export const useAuth = () => useContext(AuthContext);
 
 export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const pathname = usePathname();
   const router = useRouter();
-  const { activeModel, summary } = useGrid();
 
   const [user, setUser] = useState<PlatformUser | null>(null);
   const [authInitialized, setAuthInitialized] = useState(false);
 
-  // Direct Sign-In / Request Access State
+  // Sign-in / Access Request form state
   const [mode, setMode] = useState<'login' | 'request'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -53,73 +54,54 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
     let mounted = true;
 
     const initSession = async () => {
-      if (typeof window === 'undefined') return;
-      const saved = localStorage.getItem('ml4ps_user') || localStorage.getItem('nesi_user');
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          const userEmail = (parsed.email || '').toLowerCase();
-          let resolvedRole: 'admin' | 'user' = isConfiguredAdminRole(
-            parsed.role,
-            parsed.isAdmin || parsed.is_admin,
-            userEmail
-          )
+      const stored = readStoredSession();
+      if (!stored) {
+        if (mounted) setAuthInitialized(true);
+        return;
+      }
+
+      if (mounted) {
+        setUser(stored);
+        setAuthInitialized(true);
+      }
+
+      // Sync role changes (e.g., admin promotion/revocation) when remote store is reachable
+      try {
+        const { requests, remoteReachable } = await fetchAllPlatformAccessRequests();
+        if (!remoteReachable || !mounted) return;
+
+        const hasAnyAdmin = requests.some((r) => r.status === 'approved' && r.role === 'admin');
+        const dbRecord = requests.find((r) => r.email.toLowerCase() === stored.email.toLowerCase());
+        let resolvedRole: 'admin' | 'user' = stored.role;
+
+        if (!hasAnyAdmin && requests.length === 0) {
+          resolvedRole = 'admin';
+          await persistPlatformAccessRequest(
+            {
+              id: stored.id,
+              full_name: stored.name,
+              email: stored.email,
+              institution: stored.institution || 'FUT Minna',
+              reason: 'Primary Platform Administrator',
+              password: '',
+              role: 'admin',
+              status: 'approved',
+              created_at: new Date().toISOString(),
+            },
+            requests
+          );
+        } else if (dbRecord) {
+          resolvedRole = isConfiguredAdminRole(dbRecord.role, false, dbRecord.email)
             ? 'admin'
             : 'user';
+        }
 
-          const initialUser: PlatformUser = {
-            id: parsed.id || 'usr-1',
-            name: parsed.name || parsed.username || 'Engineer',
-            email: userEmail,
-            role: resolvedRole,
-            institution: parsed.institution || 'FUT Minna',
-          };
-
-          if (mounted) {
-            setUser(initialUser);
-            setAuthInitialized(true);
-          }
-
-          const allReqs = await fetchAllPlatformAccessRequests();
-          const hasAnyAdmin = allReqs.some(
-            (r: any) =>
-              r.status === 'approved' && isConfiguredAdminRole(r.role, r.is_admin, r.email)
-          );
-          const dbRecord = allReqs.find((r: any) => r.email?.toLowerCase() === userEmail);
-
-          if (!hasAnyAdmin && userEmail) {
-            resolvedRole = 'admin';
-            await persistPlatformAccessRequest(
-              {
-                id: initialUser.id,
-                full_name: initialUser.name,
-                email: userEmail,
-                institution: initialUser.institution || 'FUT Minna',
-                reason: 'Primary Platform Administrator',
-                password: '',
-                role: 'admin',
-                status: 'approved',
-                created_at: new Date().toISOString(),
-              },
-              allReqs
-            );
-          } else if (
-            dbRecord &&
-            isConfiguredAdminRole(dbRecord.role, dbRecord.is_admin, dbRecord.email)
-          ) {
-            resolvedRole = 'admin';
-          }
-
-          if (mounted && resolvedRole !== initialUser.role) {
-            const upgraded: PlatformUser = { ...initialUser, role: resolvedRole };
-            setUser(upgraded);
-            localStorage.setItem('ml4ps_user', JSON.stringify(upgraded));
-            localStorage.setItem('nesi_user', JSON.stringify(upgraded));
-          }
-          return;
-        } catch {}
-      }
-      if (mounted) setAuthInitialized(true);
+        if (mounted && resolvedRole !== stored.role) {
+          const updated: PlatformUser = { ...stored, role: resolvedRole };
+          setUser(updated);
+          persistSession(updated);
+        }
+      } catch {}
     };
 
     initSession();
@@ -130,20 +112,14 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
 
   const handleLoginSuccess = (loggedInUser: PlatformUser) => {
     setUser(loggedInUser);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('ml4ps_user', JSON.stringify(loggedInUser));
-      localStorage.setItem('nesi_user', JSON.stringify(loggedInUser));
-    }
+    persistSession(loggedInUser);
   };
 
   const handleLogout = () => {
     setUser(null);
     setAuthError(null);
     setRequestSubmitted(false);
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('ml4ps_user');
-      localStorage.removeItem('nesi_user');
-    }
+    persistSession(null);
   };
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -151,108 +127,13 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
     setAuthLoading(true);
     setAuthError(null);
 
-    const cleanEmail = email.trim().toLowerCase();
-
     try {
-      if (
-        ENV_ADMIN_EMAILS.includes(cleanEmail) &&
-        (!ENV_ADMIN_PASSWORD || password === ENV_ADMIN_PASSWORD)
-      ) {
-        handleLoginSuccess({
-          id: 'env-admin',
-          name: cleanEmail.split('@')[0],
-          email: cleanEmail,
-          role: 'admin',
-        });
-        return;
+      const result = await authenticateUser(email, password);
+      if (result.user) {
+        handleLoginSuccess(result.user);
+      } else {
+        setAuthError(result.error || 'Sign-in failed.');
       }
-
-      if (supabase) {
-        try {
-          const { data: authData, error: sErr } = await supabase.auth.signInWithPassword({
-            email: cleanEmail,
-            password,
-          });
-          if (!sErr && authData?.user) {
-            const meta = authData.user.user_metadata || {};
-            const isAdm = isConfiguredAdminRole(meta.role, meta.is_admin, cleanEmail);
-            handleLoginSuccess({
-              id: authData.user.id,
-              name: meta.full_name || meta.name || cleanEmail.split('@')[0],
-              email: cleanEmail,
-              role: isAdm ? 'admin' : 'user',
-              institution: meta.institution || '',
-            });
-            return;
-          }
-        } catch {}
-      }
-
-      const allReqs = await fetchAllPlatformAccessRequests();
-      const hasAnyAdmin = allReqs.some(
-        (r: any) => r.status === 'approved' && isConfiguredAdminRole(r.role, r.is_admin, r.email)
-      );
-      const found = allReqs.find((r: any) => r.email?.toLowerCase() === cleanEmail);
-
-      if (found) {
-        if (found.status === 'pending') {
-          setAuthError('Your account request is pending administrator approval.');
-          setAuthLoading(false);
-          return;
-        }
-        if (found.status === 'rejected') {
-          setAuthError('Your account request was declined by the administrator.');
-          setAuthLoading(false);
-          return;
-        }
-        if (found.status === 'approved') {
-          if (found.password && found.password !== password) {
-            setAuthError('Incorrect password.');
-            setAuthLoading(false);
-            return;
-          }
-          const roleResolved =
-            !hasAnyAdmin || isConfiguredAdminRole(found.role, found.is_admin, cleanEmail)
-              ? 'admin'
-              : 'user';
-
-          handleLoginSuccess({
-            id: String(found.id || 'usr-' + Date.now()),
-            name: found.full_name || found.name || cleanEmail.split('@')[0],
-            email: cleanEmail,
-            role: roleResolved,
-            institution: found.institution || '',
-          });
-          return;
-        }
-      }
-
-      const res = await fetch(`${API_BASE}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail, username: cleanEmail, password }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        const userObj = data.user || data;
-        const isAdm =
-          !hasAnyAdmin ||
-          isConfiguredAdminRole(userObj.role, userObj.is_admin || userObj.isAdmin, cleanEmail);
-
-        handleLoginSuccess({
-          id: String(userObj.id || 'usr-' + Date.now()),
-          name: userObj.name || userObj.full_name || userObj.username || cleanEmail.split('@')[0],
-          email: cleanEmail,
-          role: isAdm ? 'admin' : 'user',
-          institution: userObj.institution || '',
-        });
-        return;
-      }
-
-      setAuthError('Account not found or not yet approved. Use Request Access to apply.');
-    } catch {
-      setAuthError('Could not connect to server. Check your internet connection.');
     } finally {
       setAuthLoading(false);
     }
@@ -269,40 +150,21 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
     setAuthError(null);
 
     try {
-      const existingReqs = await fetchAllPlatformAccessRequests();
-      const hasApprovedAdmin = existingReqs.some(
-        (r: any) => r.status === 'approved' && isConfiguredAdminRole(r.role, r.is_admin, r.email)
-      );
-      const isFirstBootstrapAdmin = !hasApprovedAdmin && existingReqs.length === 0;
+      const result = await submitAccessRequest({
+        fullName,
+        email,
+        institution,
+        reason,
+        password,
+      });
 
-      const newRequest = {
-        id: 'req-' + Date.now(),
-        full_name: fullName.trim(),
-        email: email.trim().toLowerCase(),
-        institution: institution.trim() || 'FUT Minna',
-        reason: reason.trim() || 'Power System Simulation',
-        password: password,
-        role: isFirstBootstrapAdmin ? 'admin' : 'user',
-        status: isFirstBootstrapAdmin ? 'approved' : 'pending',
-        created_at: new Date().toISOString(),
-      };
-
-      await persistPlatformAccessRequest(newRequest, existingReqs);
-
-      if (isFirstBootstrapAdmin) {
-        handleLoginSuccess({
-          id: newRequest.id,
-          name: newRequest.full_name,
-          email: newRequest.email,
-          role: 'admin',
-          institution: newRequest.institution,
-        });
+      if (result.autoApprovedUser) {
+        handleLoginSuccess(result.autoApprovedUser);
         return;
       }
-
       setRequestSubmitted(true);
-    } catch (err: any) {
-      setAuthError(err?.message || 'Could not submit request.');
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : 'Could not submit request.');
     } finally {
       setAuthLoading(false);
     }
@@ -310,9 +172,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
 
   if (!authInitialized) return null;
 
-  // =========================================================================
-  // LOGGED-OUT VIEW: Direct Sign In / Request Access + Short Instructions
-  // =========================================================================
+  // Logged-out view: Direct Sign In / Request Access + Quick Instructions
   if (!user) {
     return (
       <div className="min-h-screen w-full bg-slate-50 text-slate-900 flex flex-col justify-between font-sans">
@@ -341,7 +201,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
 
         <main className="flex-1 flex items-center justify-center p-4 sm:p-6">
           <div className="max-w-4xl w-full grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
-            {/* Left Column: Direct Sign In / Request Access Card */}
+            {/* Sign In / Request Access Card */}
             <div className="md:col-span-6 rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
               <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center gap-2">
                 {mode === 'login' ? (
@@ -395,7 +255,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                     <div>
                       <label className="block font-bold text-slate-700 mb-1">Email Address</label>
                       <input
-                        type="text"
+                        type="email"
                         required
                         placeholder="name@institution.edu.ng"
                         value={email}
@@ -429,7 +289,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                     <CheckCircle2 className="h-10 w-10 text-emerald-600 mx-auto" />
                     <h4 className="font-bold text-sm text-slate-900">Request Sent</h4>
                     <p className="text-xs text-slate-600 leading-relaxed">
-                      Your request for <strong>{email}</strong> has been sent to the administrators. Once accepted, you can sign in with your chosen password.
+                      Your request for <strong>{email}</strong> has been sent to the administrators. Once approved, you can sign in with your chosen password.
                     </p>
                     <button
                       type="button"
@@ -518,7 +378,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
               </div>
             </div>
 
-            {/* Right Column: Short Platform Instructions */}
+            {/* Platform Instructions */}
             <div className="md:col-span-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
               <div className="border-b border-slate-200 pb-3">
                 <h2 className="font-bold text-sm text-slate-900">Quick Instructions</h2>
@@ -534,7 +394,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                   </span>
                   <div>
                     <strong className="text-slate-900 block">Select or Upload a Model</strong>
-                    Open <em>Grid Stability Models</em> to load an existing 330 kV or 132 kV network, or use <em>Upload &amp; Ingestion</em> to upload a MATPOWER (<code>.m</code>) file.
+                    Open <em>Grid Stability Models</em> to load an existing 330 kV or 132 kV network, or use <em>Upload &amp; Ingestion</em> to upload a MATPOWER (<code>.m</code>) or pandapower (<code>.json</code>) file.
                   </div>
                 </li>
 
@@ -544,7 +404,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                   </span>
                   <div>
                     <strong className="text-slate-900 block">Edit Parameters &amp; Run Power Flow</strong>
-                    In the <em>Operational Deck</em>, adjust load scaling or slack voltage, switch buses or lines on and off, or click <strong>⋯</strong> on any row to edit its static and dynamic ratings.
+                    In the <em>Operational Deck</em>, adjust load scaling, power factor, or slack voltage, switch buses or lines on and off, or click <strong>⋯</strong> on any row to edit its static and dynamic ratings.
                   </div>
                 </li>
 
@@ -554,7 +414,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                   </span>
                   <div>
                     <strong className="text-slate-900 block">Single-Line Diagram (SLD)</strong>
-                    View bus voltages and line flows on the diagram. Drag buses to rearrange them, click any line to open or close its breaker, or click a bus to inspect its readings.
+                    View bus voltages and line flows on the diagram. Drag buses to rearrange them, click any line to open or close its breaker, or click a bus to inspect live readings.
                   </div>
                 </li>
 
@@ -564,7 +424,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                   </span>
                   <div>
                     <strong className="text-slate-900 block">Time-Domain &amp; Market Simulations</strong>
-                    Use <em>Time-Domain</em> to run frequency response and fault clearing time studies, or <em>Market Simulations</em> to calculate generator dispatch and tariffs.
+                    Use <em>Time-Domain</em> to run frequency response and fault clearing time studies, or <em>Market Simulations</em> to calculate merit-order dispatch and nodal settlement.
                   </div>
                 </li>
               </ol>
@@ -583,45 +443,39 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   }
 
   const isAdmin = user.role === 'admin';
-  const isRestrictedAdminRoute =
-    !isAdmin && (pathname?.startsWith('/upload') || pathname?.startsWith('/organization'));
+  const isRestrictedAdminRoute = !isAdmin && pathname?.startsWith('/upload');
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-slate-50">
-      <Sidebar user={user} isAdmin={isAdmin} />
+    <AuthContext.Provider value={{ user, isAdmin, logout: handleLogout }}>
+      <div className="flex h-screen w-full overflow-hidden bg-slate-50">
+        <Sidebar user={user} isAdmin={isAdmin} />
 
-      <div className="flex flex-1 flex-col min-w-0 min-h-0 overflow-hidden">
-        <Header
-          user={user}
-          isAdmin={isAdmin}
-          modelName={activeModel?.name || 'No Model Selected'}
-          converged={summary.converged}
-          frequency={summary.frequency}
-          onLogout={handleLogout}
-        />
+        <div className="flex flex-1 flex-col min-w-0 min-h-0 overflow-hidden">
+          <Header onLogout={handleLogout} />
 
-        <main className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6">
-          {isRestrictedAdminRoute ? (
-            <div className="max-w-xl mx-auto mt-16 p-8 rounded-2xl border border-slate-200 bg-white text-center space-y-3 shadow-xs">
-              <div className="h-12 w-12 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto">
-                <Lock className="h-6 w-6" />
+          <main className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6">
+            {isRestrictedAdminRoute ? (
+              <div className="max-w-xl mx-auto mt-16 p-8 rounded-2xl border border-slate-200 bg-white text-center space-y-3 shadow-xs">
+                <div className="h-12 w-12 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto">
+                  <Lock className="h-6 w-6" />
+                </div>
+                <h3 className="text-base font-black text-slate-900">Administrator Access Only</h3>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Your account (<strong>{user.email}</strong>) has standard researcher permissions. You can run and modify all loaded grid models in your workspace, while Administrators manage model uploads and account approvals.
+                </p>
+                <button
+                  onClick={() => router.push('/stability')}
+                  className="mt-2 px-4 py-2 rounded-lg bg-[#500b50] text-white text-xs font-bold"
+                >
+                  Go to Grid Stability Studio
+                </button>
               </div>
-              <h3 className="text-base font-black text-slate-900">Administrator Access Only</h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Your account (<strong>{user.email}</strong>) has standard simulation permissions. You can run and modify all uploaded grid models in your personal sandbox, but only Administrators can upload new model files or approve user accounts.
-              </p>
-              <button
-                onClick={() => router.push('/stability')}
-                className="mt-2 px-4 py-2 rounded-lg bg-[#500b50] text-white text-xs font-bold"
-              >
-                Go to Grid Stability Studio
-              </button>
-            </div>
-          ) : (
-            children
-          )}
-        </main>
+            ) : (
+              children
+            )}
+          </main>
+        </div>
       </div>
-    </div>
+    </AuthContext.Provider>
   );
 };

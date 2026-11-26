@@ -1,221 +1,311 @@
+"""Multi-machine classical rotor-angle transient stability and CCT simulator."""
+
 import math
+from typing import Dict, List, Optional
+
+import networkx as nx
 import numpy as np
 import pandapower as pp
-from services.power_flow import solve_power_flow
 
-# Typical transient reactance and inertia parameters for Nigerian power plants
-NESI_GEN_LIBRARY = {
-    "kainji": {"H": 4.2, "Xd_prime": 0.24, "D": 2.0, "color": "#0284c7"},
-    "jebba": {"H": 4.5, "Xd_prime": 0.23, "D": 2.0, "color": "#0ea5e9"},
-    "shiroro": {"H": 3.8, "Xd_prime": 0.26, "D": 1.8, "color": "#06b6d4"},
-    "egbin": {"H": 5.2, "Xd_prime": 0.18, "D": 2.2, "color": "#10b981"}, # Slack reference
-    "delta": {"H": 3.4, "Xd_prime": 0.25, "D": 1.5, "color": "#f59e0b"},
-    "afam": {"H": 4.8, "Xd_prime": 0.20, "D": 2.0, "color": "#8b5cf6"},
-    "sapele": {"H": 3.5, "Xd_prime": 0.26, "D": 1.5, "color": "#d946ef"},
-    "azura": {"H": 4.4, "Xd_prime": 0.21, "D": 2.0, "color": "#ec4899"},
-    "geregu": {"H": 4.1, "Xd_prime": 0.22, "D": 1.9, "color": "#f97316"},
-    "default": {"H": 4.0, "Xd_prime": 0.24, "D": 1.8, "color": "#64748b"}
+from config import settings
+from services.power_flow import clean_float
+
+# Typical inertia H (s) and damping D parameters for Nigerian generating stations
+PLANT_INERTIA_DEFAULTS = {
+    "kainji": (4.5, 2.0),
+    "jebba": (4.6, 2.0),
+    "shiroro": (4.0, 1.8),
+    "zungeru": (4.4, 1.9),
+    "egbin": (5.2, 2.2),
+    "delta": (3.5, 1.5),
+    "afam": (4.8, 2.0),
+    "sapele": (3.6, 1.6),
+    "azura": (4.4, 2.0),
+    "geregu": (4.1, 1.9),
+    "okpai": (4.3, 1.9),
 }
 
-def get_gen_params(name: str):
-    name_lower = name.lower()
-    for key, val in NESI_GEN_LIBRARY.items():
-        if key in name_lower:
-            return val
-    return NESI_GEN_LIBRARY["default"]
+
+def _lookup_machine_params(name: str, is_slack: bool) -> tuple[float, float]:
+    lower = name.lower()
+    for key, params in PLANT_INERTIA_DEFAULTS.items():
+        if key in lower:
+            return params
+    return (5.0, 2.0) if is_slack else (4.0, 1.8)
+
+
+def _compute_electrical_distances(net: pp.pandapowerNet, fault_bus_id: int) -> Dict[int, float]:
+    """
+    Computes reactance-weighted shortest path distances from `fault_bus_id` to all
+    reachable buses using NetworkX Dijkstra traversal on in-service lines.
+    """
+    graph = nx.Graph()
+    for b_id in net.bus.index:
+        graph.add_node(int(b_id))
+
+    if hasattr(net, "line") and len(net.line) > 0:
+        for idx, row in net.line.iterrows():
+            if not bool(row.get("in_service", True)):
+                continue
+            u = int(row["from_bus"])
+            v = int(row["to_bus"])
+            length = max(0.1, clean_float(row.get("length_km"), 1.0))
+            x_per_km = max(1e-4, clean_float(row.get("x_ohm_per_km"), 0.32))
+            # Convert ohms to approximate per-unit reactance on 100 MVA base
+            vn_kv = clean_float(net.bus.at[u, "vn_kv"], 330.0) if u in net.bus.index else 330.0
+            z_base = max(1.0, (vn_kv ** 2) / 100.0)
+            x_pu = max(0.005, (x_per_km * length) / z_base)
+
+            if graph.has_edge(u, v):
+                # Parallel circuits reduce equivalent reactance
+                existing = graph[u][v]["weight"]
+                graph[u][v]["weight"] = (existing * x_pu) / (existing + x_pu)
+            else:
+                graph.add_edge(u, v, weight=x_pu)
+
+    if fault_bus_id not in graph:
+        return {}
+
+    try:
+        return {int(k): float(v) for k, v in nx.single_source_dijkstra_path_length(graph, fault_bus_id, weight="weight").items()}
+    except Exception:
+        return {}
+
 
 def simulate_multi_machine(
-    base_net: pp.pandapowerNet,
-    fault_bus_id: int = 12,
+    net: Optional[pp.pandapowerNet],
+    fault_bus_id: int,
+    fault_duration_ms: float = 80.0,
     fault_start_s: float = 1.0,
-    fault_duration_ms: float = 160.0,
     sim_duration_s: float = 4.0,
-    calc_cct: bool = True
+    calc_cct: bool = True,
 ) -> dict:
-    if base_net is None or (len(base_net.gen) == 0 and len(base_net.ext_grid) == 0):
+    """
+    Integrates the classical multi-machine swing equation for every generating unit
+    in `net` following a balanced 3-phase fault at `fault_bus_id`.
+
+    Each machine starts at an exact pre-fault equilibrium angle `delta_0` with
+    `P_e_max = P_m / sin(delta_0)`. During the fault `[t_start, t_clear)`, electrical
+    output drops according to its reactance-weighted electrical distance to the fault.
+    Critical Clearing Time (CCT) is solved via binary search over clearing duration.
+    """
+    if net is None or len(net.bus) == 0:
         return {
-            "status": "NO_MODEL",
-            "message": "No active grid model or generators found.",
-            "generators": [],
-            "cct_ms": 0.0,
-            "cct_cycles": 0.0,
-            "is_transiently_stable": False
+            "time": [],
+            "fault_bus_id": fault_bus_id,
+            "fault_duration_ms": fault_duration_ms,
+            "fault_start_s": fault_start_s,
+            "fault_clear_s": round(fault_start_s + fault_duration_ms / 1000.0, 3),
+            "system_status": "NO_MODEL",
+            "lowest_cct_ms": 0.0,
+            "trajectories": [],
+            "machines": [],
         }
 
-    # Run base power flow to get steady-state operating point
-    sol = solve_power_flow(base_net)
-    bus_voltages = {b["id"]: b["v_pu"] for b in sol["buses"]}
-    bus_angles_deg = {b["id"]: b["va_deg"] for b in sol["buses"]}
+    # Discover slack and synchronous machines from active network
+    discovered: List[dict] = []
+    has_ext_res = hasattr(net, "res_ext_grid") and len(net.res_ext_grid) > 0
 
-    # Extract generators
-    generators = []
-    slack_id = None
+    if hasattr(net, "ext_grid") and len(net.ext_grid) > 0:
+        for idx in net.ext_grid.index:
+            b_id = int(net.ext_grid.at[idx, "bus"])
+            b_name = str(net.bus.at[b_id, "name"]) if "name" in net.bus else f"Bus #{b_id}"
+            p_res = abs(clean_float(net.res_ext_grid.at[idx, "p_mw"], 500.0)) if (has_ext_res and idx in net.res_ext_grid.index) else 500.0
+            p_max = clean_float(net.ext_grid.at[idx, "max_p_mw"] if "max_p_mw" in net.ext_grid else None, max(p_res * 1.3, 700.0))
+            h_val, d_val = _lookup_machine_params(b_name, is_slack=True)
+            discovered.append({
+                "id": len(discovered),
+                "name": f"{b_name} (Slack)",
+                "bus": b_id,
+                "p_mw": max(100.0, p_res),
+                "max_p_mw": max(p_res * 1.15, p_max, 500.0),
+                "h": h_val,
+                "d": d_val,
+                "is_slack": True,
+            })
 
-    for idx, row in base_net.ext_grid.iterrows():
-        b_id = int(row["bus"])
-        name = str(row.get("name", f"Slack Gen Bus {b_id}"))
-        p_mw = 450.0
-        params = get_gen_params(name)
-        v_term = bus_voltages.get(b_id, 1.05)
-        theta_rad = math.radians(bus_angles_deg.get(b_id, 0.0))
+    if hasattr(net, "gen") and len(net.gen) > 0:
+        for idx in net.gen.index:
+            if "in_service" in net.gen and not bool(net.gen.at[idx, "in_service"]):
+                continue
+            b_id = int(net.gen.at[idx, "bus"])
+            b_name = str(net.bus.at[b_id, "name"]) if "name" in net.bus else f"Bus #{b_id}"
+            g_name = str(net.gen.at[idx, "name"]) if ("name" in net.gen and net.gen.at[idx, "name"]) else b_name
+            p_val = clean_float(net.gen.at[idx, "p_mw"] if "p_mw" in net.gen else 150.0, 150.0)
+            p_max = clean_float(net.gen.at[idx, "max_p_mw"] if "max_p_mw" in net.gen else None, max(p_val * 1.25, 200.0))
+            h_val, d_val = _lookup_machine_params(g_name, is_slack=False)
+            discovered.append({
+                "id": len(discovered),
+                "name": g_name,
+                "bus": b_id,
+                "p_mw": max(50.0, p_val),
+                "max_p_mw": max(p_val * 1.15, p_max, 100.0),
+                "h": h_val,
+                "d": d_val,
+                "is_slack": False,
+            })
 
-        # Initial rotor angle: delta0 = theta + internal angle
-        delta0_deg = math.degrees(theta_rad) + 12.0
-        generators.append({
-            "id": f"ext_{idx}",
-            "bus_id": b_id,
-            "name": name,
-            "p_mw": p_mw,
-            "H": params["H"],
-            "D": params["D"],
-            "color": params["color"],
-            "is_slack": True,
-            "delta0": delta0_deg
-        })
-        slack_id = f"ext_{idx}"
+    if not discovered:
+        return {
+            "time": [],
+            "fault_bus_id": fault_bus_id,
+            "fault_duration_ms": fault_duration_ms,
+            "fault_start_s": fault_start_s,
+            "fault_clear_s": round(fault_start_s + fault_duration_ms / 1000.0, 3),
+            "system_status": "STABLE",
+            "lowest_cct_ms": 0.0,
+            "trajectories": [],
+            "machines": [],
+        }
 
-    for idx, row in base_net.gen.iterrows():
-        b_id = int(row["bus"])
-        name = str(row.get("name", f"Generator {idx}"))
-        p_mw = float(row.get("p_mw", 100.0))
-        params = get_gen_params(name)
-        theta_rad = math.radians(bus_angles_deg.get(b_id, 0.0))
-        delta0_deg = math.degrees(theta_rad) + 15.0
+    # Compute reactance distance from fault bus to every generator bus
+    distances = _compute_electrical_distances(net, fault_bus_id)
+    omega_s = 2.0 * math.pi * settings.F_NOMINAL_HZ
+    dt = 0.005  # 5 ms step for crisp swing integration
+    n_steps = int(round(sim_duration_s / dt)) + 1
+    time_arr = np.linspace(0.0, sim_duration_s, n_steps)
 
-        generators.append({
-            "id": f"gen_{idx}",
-            "bus_id": b_id,
-            "name": name,
-            "p_mw": p_mw,
-            "H": params["H"],
-            "D": params["D"],
-            "color": params["color"],
-            "is_slack": False,
-            "delta0": delta0_deg
-        })
+    # Pre-compute per-machine classical swing parameters on each unit's own MVA rating base
+    machine_specs = []
+    for gen in discovered:
+        x_dist = distances.get(gen["bus"], None)
+        if x_dist is None:
+            fault_coupling = 0.90
+        elif x_dist <= 1e-6:
+            # Fault directly on generator bus -> severe terminal voltage collapse
+            fault_coupling = 0.05
+        else:
+            # Retained electrical transfer increases smoothly with electrical distance x_pu
+            fault_coupling = min(0.85, max(0.08, x_dist / (x_dist + 0.12)))
 
-    if not slack_id and generators:
-        generators[0]["is_slack"] = True
-        slack_id = generators[0]["id"]
+        # Per-unit mechanical input on the machine's own MVA base (typically 0.55 - 0.88 pu)
+        s_machine_mva = max(gen["max_p_mw"] / 0.85, gen["p_mw"] * 1.15, 100.0)
+        pm_pu = min(0.90, max(0.50, gen["p_mw"] / s_machine_mva))
+        delta0_rad = math.radians(24.0 + 18.0 * pm_pu)
+        # Post-fault peak power transfer P_max ensures exact pre-fault equilibrium: P_max * sin(delta0) = Pm
+        pe_max_pu = pm_pu / math.sin(delta0_rad)
 
-    f0 = 50.00
-    omega0 = 2.0 * math.pi * f0
-    dt = 0.005  # 5 ms integration step
-    time_arr = np.arange(0, sim_duration_s + dt, dt)
-
-    # Function to simulate rotor angles for a specific fault duration
-    def run_trajectory(t_clear_ms: float):
-        t_fault_start = fault_start_s
-        t_fault_clear = fault_start_s + (t_clear_ms / 1000.0)
-
-        # Initialize machine states
-        deltas = {g["id"]: g["delta0"] for g in generators}
-        omegas = {g["id"]: omega0 for g in generators}
-
-        trajectories = {g["id"]: [] for g in generators}
-        relative_trajectories = {g["id"]: [] for g in generators}
-
-        is_stable = True
-        pole_slip_machine = None
-
-        for t in time_arr:
-            is_during_fault = t_fault_start <= t < t_fault_clear
-            slack_delta = deltas[slack_id]
-
-            for g in generators:
-                gid = g["id"]
-                delta_deg = deltas[gid]
-                omega = omegas[gid]
-                H = g["H"]
-                D = g["D"]
-                p_mech = g["p_mw"]
-
-                # Distance factor from fault bus
-                bus_dist = abs(g["bus_id"] - fault_bus_id)
-                proximity_factor = max(0.05, 1.0 - (1.0 / (1.0 + bus_dist * 0.4)))
-
-                if is_during_fault:
-                    # During fault, electrical output drops severely based on electrical distance
-                    p_elec = p_mech * proximity_factor
-                elif t >= t_fault_clear:
-                    # Post-fault: restoring synchronizing power curve
-                    rel_angle = math.radians(delta_deg - slack_delta)
-                    p_elec = p_mech * 0.95 + (p_mech * 0.45 * math.sin(rel_angle))
-                else:
-                    # Pre-fault steady state
-                    p_elec = p_mech
-
-                # Swing equation integration
-                p_acc = p_mech - p_elec - (D * (omega - omega0) / omega0) * p_mech
-                d_omega = (omega0 / (2.0 * H * 100.0)) * p_acc * dt
-                omega += d_omega
-                d_delta = math.degrees(omega - omega0) * dt
-                delta_deg += d_delta
-
-                deltas[gid] = delta_deg
-                omegas[gid] = omega
-
-                rel_deg = delta_deg - slack_delta
-                trajectories[gid].append(round(delta_deg, 2))
-                relative_trajectories[gid].append(round(rel_deg, 2))
-
-                # Instability criterion: Relative rotor angle excursion > 180 degrees
-                if abs(rel_deg) > 180.0 and not g["is_slack"]:
-                    is_stable = False
-                    if not pole_slip_machine:
-                        pole_slip_machine = g["name"]
-
-        return is_stable, trajectories, relative_trajectories, pole_slip_machine
-
-    # Run base simulation for the user-selected fault clearing time
-    is_stable, raw_traj, raw_rel_traj, unstable_gen = run_trajectory(fault_duration_ms)
-
-    # Solve Critical Clearing Time (CCT) via bisection/stepping
-    cct_ms = 180.0
-    if calc_cct:
-        # Step from 50ms to 450ms in 15ms increments
-        cct_found = False
-        for test_clear_ms in range(50, 450, 15):
-            stable_step, _, _, _ = run_trajectory(float(test_clear_ms))
-            if not stable_step:
-                cct_ms = float(test_clear_ms - 15)
-                cct_found = True
-                break
-        if not cct_found:
-            cct_ms = 400.0
-
-    cct_cycles = round(cct_ms / (1000.0 / f0), 1)  # 20ms per cycle at 50 Hz
-
-    # Sample trajectories every 4 steps for network transmission
-    downsampled_time = [round(t, 2) for t in time_arr[::4]]
-    gen_results = []
-    for g in generators:
-        gid = g["id"]
-        gen_results.append({
-            "id": gid,
-            "name": g["name"],
-            "bus_id": g["bus_id"],
-            "color": g["color"],
-            "is_slack": g["is_slack"],
-            "H": g["H"],
-            "rotor_angle_deg": raw_traj[gid][::4],
-            "relative_angle_deg": raw_rel_traj[gid][::4],
-            "max_angle_deg": max(raw_rel_traj[gid]),
-            "min_angle_deg": min(raw_rel_traj[gid])
+        machine_specs.append({
+            **gen,
+            "pm_pu": pm_pu,
+            "delta0_rad": delta0_rad,
+            "pe_max_pu": pe_max_pu,
+            "fault_coupling": fault_coupling,
         })
 
-    fault_bus_name = str(base_net.bus.at[fault_bus_id, "name"]) if fault_bus_id in base_net.bus.index else f"Bus #{fault_bus_id}"
+    def integrate_machine(spec: dict, clear_ms: float, record_curve: bool = False) -> tuple[bool, float, Optional[List[float]]]:
+        """Integrates one machine's swing trajectory using RK2; returns (is_stable, max_deg, angles)."""
+        t_clear = fault_start_s + (clear_ms / 1000.0)
+        delta = spec["delta0_rad"]
+        omega = 0.0  # Rotor speed deviation (rad/s)
+        pm = spec["pm_pu"]
+        pe_max = spec["pe_max_pu"]
+        coupling = spec["fault_coupling"]
+        h_val = spec["h"]
+        d_pu = spec["d"] * 0.015  # Normalized damping factor
+        coeff = omega_s / (2.0 * h_val)
+
+        max_deg = math.degrees(delta)
+        angles = [] if record_curve else None
+        stable = True
+
+        for idx, t in enumerate(time_arr):
+            if record_curve and idx % 4 == 0:
+                angles.append(round(math.degrees(delta), 2))
+
+            if t < fault_start_s:
+                pe1 = pm
+            elif t < t_clear:
+                pe1 = pm * coupling * math.sin(delta) / math.sin(spec["delta0_rad"])
+            else:
+                # Post-fault transmission weakening factor (0.92) models cleared-line impedance increase
+                pe1 = 0.92 * pe_max * math.sin(delta)
+
+            d_omega1 = coeff * (pm - pe1) - d_pu * omega
+            d_delta1 = omega
+
+            delta_mid = delta + d_delta1 * dt
+            omega_mid = omega + d_omega1 * dt
+            t_next = t + dt
+
+            if t_next < fault_start_s:
+                pe2 = pm
+            elif t_next < t_clear:
+                pe2 = pm * coupling * math.sin(delta_mid) / math.sin(spec["delta0_rad"])
+            else:
+                pe2 = 0.92 * pe_max * math.sin(delta_mid)
+
+            d_omega2 = coeff * (pm - pe2) - d_pu * omega_mid
+            d_delta2 = omega_mid
+
+            delta += 0.5 * (d_delta1 + d_delta2) * dt
+            omega += 0.5 * (d_omega1 + d_omega2) * dt
+
+            deg = math.degrees(delta)
+            if deg > max_deg:
+                max_deg = deg
+            if abs(deg) >= 180.0:
+                stable = False
+                if not record_curve:
+                    return False, max_deg, None
+
+        return stable, max_deg, angles
+
+    def solve_cct_ms(spec: dict) -> float:
+        """Solves Critical Clearing Time (ms) via 8-step binary search in [20 ms, 400 ms]."""
+        low, high = 20.0, 400.0
+        # Quick check if still stable at 400 ms
+        if integrate_machine(spec, high, record_curve=False)[0]:
+            return high
+        if not integrate_machine(spec, low, record_curve=False)[0]:
+            return low
+
+        for _ in range(8):
+            mid = 0.5 * (low + high)
+            if integrate_machine(spec, mid, record_curve=False)[0]:
+                low = mid
+            else:
+                high = mid
+        return round(low, 1)
+
+    trajectories = []
+    machines = []
+    any_pole_slip = False
+    lowest_cct = 400.0
+
+    for spec in machine_specs:
+        is_stable, max_deg, angles = integrate_machine(spec, fault_duration_ms, record_curve=True)
+        cct_val = solve_cct_ms(spec) if calc_cct else 150.0
+        lowest_cct = min(lowest_cct, cct_val)
+
+        slipped = (not is_stable) or (fault_duration_ms > cct_val)
+        if slipped:
+            any_pole_slip = True
+
+        trajectories.append({
+            "id": spec["id"],
+            "name": spec["name"],
+            "angles": angles or [],
+        })
+        machines.append({
+            "id": spec["id"],
+            "name": spec["name"],
+            "bus_node": f"Bus #{spec['bus']}",
+            "inertia_h": f"{spec['h']:.1f} s",
+            "max_excursion": f"{round(min(max_deg, 360.0), 1)}°",
+            "cct_ms": cct_val,
+            "cct_margin_ms": round(cct_val - fault_duration_ms, 1),
+            "status": "POLE SLIP" if slipped else "SYNCHRONOUS",
+        })
 
     return {
-        "status": "STABLE" if is_stable else "UNSTABLE_POLE_SLIP",
+        "time": [round(float(t), 2) for t in time_arr[::4]],
         "fault_bus_id": fault_bus_id,
-        "fault_bus_name": fault_bus_name,
         "fault_duration_ms": fault_duration_ms,
-        "cct_ms": round(cct_ms, 1),
-        "cct_cycles": cct_cycles,
-        "is_transiently_stable": is_stable,
-        "unstable_generator": unstable_gen,
-        "time": downsampled_time,
-        "generators": gen_results,
-        "statutory_protection_limit_ms": 150.0  # NERC standard 330kV line primary clearance: <= 150 ms (7.5 cycles)
+        "fault_start_s": fault_start_s,
+        "fault_clear_s": round(fault_start_s + fault_duration_ms / 1000.0, 3),
+        "system_status": "POLE_SLIP" if any_pole_slip else "STABLE",
+        "lowest_cct_ms": round(lowest_cct, 1),
+        "trajectories": trajectories,
+        "machines": machines,
     }

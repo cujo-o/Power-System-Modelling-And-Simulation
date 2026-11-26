@@ -1,70 +1,71 @@
+"""FastAPI application entry point for the National Power System Simulation backend."""
+
 import os
 import sys
+from typing import Any, Dict
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+# Ensure sibling packages (config, models, routers, services) resolve regardless of CWD
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from config import settings
 from routers.auth import get_auth_router
-from routers.models import get_model_router
+from routers.models import get_model_router, resolve_active_network
 from routers.simulations import get_sim_router
 
 app = FastAPI(
-    title="National Power System Simulation API",
-    description="Backend engine for Nigerian Electricity Supply Industry (NESI) 330/132 kV Grid",
-    version="2.0.0",
+    title=settings.APP_TITLE,
+    description=settings.APP_DESCRIPTION,
+    version=settings.APP_VERSION,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-model_registry = {}
-state = {"active_model_id": None}
+# Shared in-memory model store for the active worker process
+model_registry: Dict[str, Dict[str, Any]] = {}
+state: Dict[str, Any] = {"active_model_id": None}
+
 
 def get_active_net_and_name():
-    active_id = state.get("active_model_id")
-    if active_id and active_id in model_registry:
-        return model_registry[active_id]["net"], model_registry[active_id]["name"]
-    # Case-insensitive / filename lookup fallback
-    for k, v in model_registry.items():
-        if active_id and (k.lower() == str(active_id).lower() or v.get("name", "").lower() == str(active_id).lower()):
-            state["active_model_id"] = k
-            return v["net"], v["name"]
-    if model_registry:
-        first_id = list(model_registry.keys())[0]
-        state["active_model_id"] = first_id
-        return model_registry[first_id]["net"], model_registry[first_id]["name"]
-    return None, "No Active Model"
+    """Resolves the active pandapower network and display name from shared state."""
+    return resolve_active_network(model_registry, state)
 
-# Auth Router
+
+# Mount domain routers (keeping singular/plural prefix aliases for client compatibility)
 app.include_router(get_auth_router())
 
-# Model Routers (handles /api/models/... and /api/model/...)
 model_router = get_model_router(model_registry, state)
 app.include_router(model_router, prefix="/api/models")
 app.include_router(model_router, prefix="/api/model")
 
-# Simulation Routers (handles /api/simulate/... and /api/simulations/...)
-sim_router = get_sim_router(model_registry, get_active_net_and_name)
-app.include_router(sim_router, prefix="/api/simulate")
+sim_router = get_sim_router(get_active_net_and_name)
 app.include_router(sim_router, prefix="/api/simulations")
+app.include_router(sim_router, prefix="/api/simulate")
+
 
 @app.get("/")
 def root():
+    """Service overview and loaded model count."""
     return {
-        "service": "National Power System Simulation API",
+        "service": settings.APP_TITLE,
+        "version": settings.APP_VERSION,
         "status": "ONLINE",
         "active_model": state.get("active_model_id"),
         "models_count": len(model_registry),
     }
 
+
 @app.get("/health")
 def health_check():
+    """Lightweight liveness check used by hosting providers."""
     return {
         "status": "ONLINE",
         "active_model": state.get("active_model_id"),

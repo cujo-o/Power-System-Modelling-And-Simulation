@@ -1,30 +1,13 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { Check, X, UserCheck, RefreshCw, Clock } from 'lucide-react';
+import { useAuth } from '@/components/layout/AppShell';
 import {
+  AccessRequestRecord,
   fetchAllPlatformAccessRequests,
   persistPlatformAccessRequest,
-  isConfiguredAdminRole,
-} from '../modals/AuthModal';
-import {
-  Check,
-  X,
-  UserCheck,
-  RefreshCw,
-  Clock,
-} from 'lucide-react';
-
-interface AccessRequestItem {
-  id: string;
-  full_name: string;
-  email: string;
-  institution: string;
-  reason: string;
-  password?: string;
-  role: 'admin' | 'user';
-  status: 'pending' | 'approved' | 'rejected';
-  created_at: string;
-}
+} from '@/lib/auth';
 
 interface TeamMember {
   name: string;
@@ -32,18 +15,17 @@ interface TeamMember {
   photo: string;
 }
 
-// 1 - 2 - 3 Triangle Hierarchy
+// 1 - 2 - 3 Workforce Hierarchy
 const TRIANGLE_ROW_1: TeamMember[] = [
- 
   {
     name: 'Engr. Dr. A. S. Ahmed',
     title: 'Principal Investigator',
     photo: '/team/sadiq.jpg',
-  }
+  },
 ];
 
 const TRIANGLE_ROW_2: TeamMember[] = [
-   {
+  {
     name: 'Engr. Dr. M. Buhari',
     title: 'Senior Researcher',
     photo: '/team/buhari.png',
@@ -73,7 +55,6 @@ const TRIANGLE_ROW_3: TeamMember[] = [
   },
 ];
 
-// Large Rectangular Portrait Card (Not Circular)
 const MemberCard: React.FC<{ member: TeamMember }> = ({ member }) => (
   <div className="w-64 sm:w-72 rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm flex flex-col">
     <div className="h-64 w-full bg-slate-100 overflow-hidden">
@@ -91,62 +72,40 @@ const MemberCard: React.FC<{ member: TeamMember }> = ({ member }) => (
 );
 
 export const AdminTab: React.FC = () => {
-  const [requests, setRequests] = useState<AccessRequestItem[]>([]);
+  const { isAdmin } = useAuth();
+  const [requests, setRequests] = useState<AccessRequestRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
-  const [isAdminUser, setIsAdminUser] = useState(false);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const raw = localStorage.getItem('ml4ps_user') || localStorage.getItem('nesi_user');
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          setIsAdminUser(
-            isConfiguredAdminRole(
-              parsed.role,
-              parsed.isAdmin || parsed.is_admin,
-              parsed.email
-            )
-          );
-        }
-      } catch {}
-    }
-  }, []);
 
   const fetchRequests = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await fetchAllPlatformAccessRequests();
-      const normalized: AccessRequestItem[] = list.map((r: any) => ({
-        id: String(r.id || 'req-' + Math.random().toString(36).slice(2, 7)),
-        full_name: r.full_name || r.name || 'User',
-        email: r.email || '',
-        institution: r.institution || 'Independent',
-        reason: r.reason || '',
-        password: r.password || '',
-        role: isConfiguredAdminRole(r.role, r.is_admin, r.email) ? 'admin' : 'user',
-        status: r.status || 'pending',
-        created_at: r.created_at || new Date().toISOString(),
-      }));
-      setRequests(normalized);
+      const { requests: list } = await fetchAllPlatformAccessRequests();
+      setRequests(list);
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchRequests();
-  }, [fetchRequests]);
+    if (!isAdmin) return;
+    let cancelled = false;
+    fetchAllPlatformAccessRequests().then(({ requests: list }) => {
+      if (!cancelled) setRequests(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin]);
 
   const updateRequestState = async (
     email: string,
-    updates: Partial<AccessRequestItem>
+    updates: Partial<AccessRequestRecord>
   ) => {
     const target = requests.find((r) => r.email.toLowerCase() === email.toLowerCase());
     if (!target) return;
 
-    const updatedRecord = { ...target, ...updates };
+    const updatedRecord: AccessRequestRecord = { ...target, ...updates };
     const updatedList = requests.map((r) =>
       r.email.toLowerCase() === email.toLowerCase() ? updatedRecord : r
     );
@@ -159,28 +118,21 @@ export const AdminTab: React.FC = () => {
 
   return (
     <div className="max-w-6xl mx-auto space-y-10 py-2 text-slate-800">
-      {/* ===================================================================== */}
-      {/* 1. WORKFORCE TRIANGLE (Large Rectangular Photos in 1 - 2 - 3 Pyramid) */}
-      {/* ===================================================================== */}
+      {/* Workforce Directory (1 - 2 - 3 Pyramid) */}
       <section className="space-y-6">
-        
-
         <div className="flex flex-col items-center space-y-8 py-2">
-          {/* Top Apex (1) */}
           <div className="flex justify-center">
             {TRIANGLE_ROW_1.map((m) => (
               <MemberCard key={m.name} member={m} />
             ))}
           </div>
 
-          {/* Middle Row (2) */}
           <div className="flex flex-wrap justify-center gap-8">
             {TRIANGLE_ROW_2.map((m) => (
               <MemberCard key={m.name} member={m} />
             ))}
           </div>
 
-          {/* Base Row (3) */}
           <div className="flex flex-wrap justify-center gap-8">
             {TRIANGLE_ROW_3.map((m) => (
               <MemberCard key={m.name} member={m} />
@@ -189,18 +141,16 @@ export const AdminTab: React.FC = () => {
         </div>
       </section>
 
-      {/* ===================================================================== */}
-      {/* 2. ACCOUNT ACCEPTANCE & REJECTION (Admin Management)                  */}
-      {/* ===================================================================== */}
-      {isAdminUser && (
+      {/* Account Requests Management (Administrators Only) */}
+      {isAdmin && (
         <section className="space-y-4 pt-6 border-t border-slate-200">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-base font-black text-slate-900 tracking-tight">
-                Account Requests (Acceptance &amp; Rejection)
+                Account Requests
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Accept or reject user signup requests and manage administrator roles.
+                Approve or reject operator access requests and manage administrator roles.
               </p>
             </div>
 

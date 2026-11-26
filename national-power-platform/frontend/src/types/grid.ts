@@ -1,3 +1,7 @@
+/**
+ * Core domain types shared between backend API responses, GridContext, and UI views.
+ */
+
 export interface BusData {
   id: number;
   name: string;
@@ -7,7 +11,8 @@ export interface BusData {
   p_mw: number;
   q_mvar?: number;
   zone?: string;
-  status?: string;
+  is_gen?: boolean;
+  is_load?: boolean;
 }
 
 export interface LineData {
@@ -20,12 +25,10 @@ export interface LineData {
   x_ohm_per_km?: number;
   max_i_ka?: number;
   p_mw?: number;
-  q_mvar?: number;
   flow_mw?: number;
   losses_mw?: number;
   loading_percent: number;
   in_service?: boolean;
-  status?: string;
 }
 
 export interface GridModelMeta {
@@ -45,6 +48,7 @@ export interface GridModelMeta {
 
 export interface SimResult {
   converged: boolean;
+  model_name?: string;
   frequency: number;
   total_gen_mw: number;
   total_load_mw: number;
@@ -54,37 +58,52 @@ export interface SimResult {
   message?: string | null;
 }
 
-export interface MarketResult {
-  smp_naira_per_mwh?: number;
-  system_marginal_price?: number;
-  total_cleared_mw?: number;
-  total_cost_naira?: number;
-  unserved_mw?: number;
-  schedule?: any[];
-  disco_allocations?: any[];
-  [key: string]: any;
+export interface LoadSharingAllocation {
+  id: string;
+  name: string;
+  bus_id: number;
+  rated_mw: number;
+  droop_percent: number;
+  participation_factor_percent: number;
+  base_p_mw: number;
+  allocated_delta_mw: number;
+  new_p_mw: number;
+  remaining_headroom_mw: number;
+  exceeded_rating: boolean;
 }
 
-export interface UserAccount {
-  id: string;
-  username?: string;
-  name?: string;
-  full_name?: string;
-  email: string;
-  role: 'admin' | 'user' | string;
-  institution?: string;
-  status?: 'pending' | 'approved' | 'rejected' | string;
-  is_admin?: boolean;
-  created_at?: string;
+export interface ParallelCorridor {
+  corridor: string;
+  from_bus: number;
+  to_bus: number;
+  circuits_count: number;
+  circuits: {
+    line_id: number;
+    name: string;
+    reactance_ohm: number;
+    theoretical_share_percent: number;
+  }[];
+}
+
+export interface LoadSharingResult {
+  model_name: string;
+  nominal_frequency_hz: number;
+  settling_frequency_hz: number;
+  frequency_deviation_hz: number;
+  load_step_mw: number;
+  system_stiffness_mw_per_hz: number;
+  allocations: LoadSharingAllocation[];
+  parallel_corridors: ParallelCorridor[];
 }
 
 export interface MultiMachineResult {
   time: number[];
   fault_bus_id?: number;
+  fault_duration_ms?: number;
   fault_start_s?: number;
   fault_clear_s?: number;
-  lowest_cct_ms?: number;
-  system_status?: 'STABLE' | 'POLE_SLIP' | string;
+  lowest_cct_ms: number;
+  system_status: 'STABLE' | 'POLE_SLIP' | 'NO_MODEL' | string;
   trajectories: {
     id: number | string;
     name: string;
@@ -202,12 +221,36 @@ export interface PowerFlowVariables {
   newGenerators: NewGenElement[];
 }
 
+export interface ExtendedPowerFlowVariables extends PowerFlowVariables {
+  disabledBuses?: number[];
+  disabledGenerators?: number[];
+  disabledLoads?: number[];
+  busOverrides?: Record<number, BusOverride>;
+  lineOverrides?: Record<number, LineOverride>;
+  generatorOverrides?: Record<number, GeneratorOverride>;
+  loadOverrides?: Record<number, LoadOverride>;
+  wideAreaScenario?: WideAreaScenario;
+}
+
 export interface CascadeStep {
   step: number;
+  event_type?: string;
   tripped_in_this_step: number[];
+  total_tripped_so_far?: number[];
   max_loading_percent: number;
+  total_losses_mw?: number;
+  frequency_hz?: number;
   converged: boolean;
   description: string;
+}
+
+export interface CascadeIsland {
+  island_id: number;
+  bus_count: number;
+  generation_mw: number;
+  demand_mw: number;
+  status: 'SYNCHRONOUS_ONLINE' | 'DEFICIT_COLLAPSE' | 'BLACKOUT_ISLAND' | string;
+  sample_buses: string[];
 }
 
 export interface CascadeResult {
@@ -215,8 +258,8 @@ export interface CascadeResult {
   total_steps: number;
   all_tripped_lines: number[];
   timeline: CascadeStep[];
-  final_buses?: BusData[];
-  final_lines?: LineData[];
+  islands?: CascadeIsland[];
+  converged?: boolean;
 }
 
 export interface UflsEvent {
@@ -228,25 +271,12 @@ export interface UflsEvent {
 
 export interface DynamicSimResult {
   time: number[];
-  f_unmitigated?: number[];
-  f_protected?: number[];
-  frequency_unmitigated?: number[];
-  frequency_ufls?: number[];
-  nadir_hz?: number;
-  nadir?: number;
-  initial_rocof?: number;
-  rocof?: number;
-  settling_hz?: number;
-  total_shed_mw?: number;
-  stages_tripped?: number;
-  ufls_events?: UflsEvent[];
-  metrics?: {
-    nadir?: number;
-    nadir_hz?: number;
-    rocof?: number;
-    initial_rocof?: number;
-    settling_hz?: number;
-    total_shed_mw?: number;
-    stages_tripped?: number;
-  };
+  f_unmitigated: number[];
+  f_protected: number[];
+  nadir_hz: number;
+  initial_rocof: number;
+  settling_hz: number;
+  total_shed_mw: number;
+  stages_tripped: number;
+  ufls_events: UflsEvent[];
 }

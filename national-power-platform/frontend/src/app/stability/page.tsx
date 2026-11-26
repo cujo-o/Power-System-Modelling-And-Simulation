@@ -3,10 +3,12 @@
 import React, { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useGrid } from '@/context/GridContext';
+import { useAuth } from '@/components/layout/AppShell';
 import { GridStabilityTab } from '@/components/tabs/GridStabilityTab';
 
 export default function StabilityPage() {
   const router = useRouter();
+  const { isAdmin } = useAuth();
   const {
     activeModel,
     divergedNotice,
@@ -20,31 +22,18 @@ export default function StabilityPage() {
     lines,
     trippedLines,
     toggleLine,
+    toggleBusService,
     models,
     activateModel,
     triggerCascade,
     applyCascadeTrips,
     fetchModels,
+    callWithHydration,
   } = useGrid();
 
   useEffect(() => {
     fetchModels();
   }, [fetchModels]);
-
-  const handleDeleteModel = async (id: string) => {
-    try {
-      const apiBase =
-        process.env.NEXT_PUBLIC_API_URL || 'https://national-power-backend.onrender.com';
-      const res = await fetch(`${apiBase}/api/models/${id}`, {
-        method: 'DELETE',
-      });
-      if (res.ok) {
-        await fetchModels();
-      }
-    } catch (err) {
-      console.error('Failed to delete model:', err);
-    }
-  };
 
   return (
     <GridStabilityTab
@@ -60,6 +49,7 @@ export default function StabilityPage() {
       lines={lines}
       trippedLines={trippedLines}
       toggleLine={toggleLine}
+      toggleBusService={toggleBusService}
       models={models}
       onActivateModel={activateModel}
       onNavigateTab={(tab) => {
@@ -72,8 +62,8 @@ export default function StabilityPage() {
       }}
       onCascadeTrigger={triggerCascade}
       onApplyCascadeTrips={applyCascadeTrips}
-      isAdmin={true}
-      onDeleteModel={handleDeleteModel}
+      callWithHydration={callWithHydration}
+      isAdmin={isAdmin}
       onRefreshModels={fetchModels}
     />
   );

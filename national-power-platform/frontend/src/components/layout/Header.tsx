@@ -2,21 +2,14 @@
 
 import React from 'react';
 import { LogOut } from 'lucide-react';
-import { PlatformUser } from './AppShell';
 
 interface HeaderProps {
-  user: PlatformUser;
-  isAdmin?: boolean;
-  modelName: string;
-  converged: boolean;
-  frequency: number;
   onLogout: () => void;
-  onOpenCompanyPortal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({ onLogout }) => {
   return (
-    <header className="h-16 border-b border-slate-200 bg-white px-4 sm:px-6 flex items-center justify-between shrink-0">
+    <header className="h-16 border-b border-slate-200 bg-white px-4 sm:px-6 flex items-center justify-between shrink-0 print:hidden">
       <div className="flex items-center gap-3 min-w-0">
         <img
           src="/ml4ps-logo.png"

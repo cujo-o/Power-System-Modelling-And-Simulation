@@ -1,183 +1,198 @@
+"""Sequential cascading thermal outage and islanding simulator."""
+
 import copy
+from typing import List, Optional
+
 import networkx as nx
 import pandapower as pp
-import pandapower.topology as top
-from services.power_flow import solve_power_flow
+
+from models.schemas import PowerFlowVariables
+from services.power_flow import clean_float, solve_power_flow
+
 
 def run_cascading_simulation(
-    base_net: pp.pandapowerNet,
-    initial_tripped_lines: list,
+    base_net: Optional[pp.pandapowerNet],
+    model_name: str = "Active Model",
+    initial_tripped_lines: Optional[List[int]] = None,
     overload_threshold_percent: float = 100.0,
     max_cascade_steps: int = 8,
     load_multiplier: float = 1.0,
     slack_voltage_pu: float = 1.05,
-    target_power_factor: float = 0.90
+    target_power_factor: float = 0.90,
 ) -> dict:
     """
-    Simulates sequential cascading line outages and network islanding following
-    an initial disturbance or contingency.
+    Simulates sequential overcurrent relay trips following an initial branch outage.
+
+    At each stage, up to two most severely overloaded lines (`loading >= threshold`)
+    are tripped and steady-state power flow is re-evaluated until the network
+    stabilizes, diverges, or hits `max_cascade_steps`. Post-cascade connected
+    components are then analyzed via NetworkX to identify electrical islands.
     """
     if base_net is None or len(base_net.bus) == 0:
         return {
             "status": "NO_MODEL",
-            "message": "No active grid model to simulate cascade.",
+            "message": "No active grid model in memory.",
             "total_steps": 0,
             "timeline": [],
             "islands": [],
             "all_tripped_lines": [],
-            "converged": False
+            "converged": False,
         }
 
-    net = copy.deepcopy(base_net)
-    all_tripped = list(initial_tripped_lines)
+    pf_vars = PowerFlowVariables(
+        loadMultiplier=load_multiplier,
+        slackVoltagePu=slack_voltage_pu,
+        targetPowerFactor=target_power_factor,
+    )
+
+    initial_list = list(dict.fromkeys(initial_tripped_lines or []))
+    all_tripped = list(initial_list)
     timeline = []
-    
-    # Step 0: Record initial disturbance
-    step = 0
+
+    # Step 0: Apply initiating contingency and evaluate post-contingency flow
     current_sol = solve_power_flow(
-        base_net=net,
-        load_multiplier=load_multiplier,
-        target_power_factor=target_power_factor,
-        slack_voltage_pu=slack_voltage_pu,
-        tripped_lines=all_tripped
+        base_net=base_net,
+        model_name=model_name,
+        pf_variables=pf_vars,
+        tripped_lines=all_tripped,
     )
 
     initial_names = [
-        str(net.line.at[lid, "name"]) if lid in net.line.index else f"Line {lid}"
-        for lid in initial_tripped_lines
+        str(base_net.line.at[lid, "name"]) if lid in base_net.line.index else f"Line #{lid}"
+        for lid in initial_list
     ]
-
     timeline.append({
-        "step": step,
+        "step": 0,
         "event_type": "INITIAL_TRIP",
-        "description": f"Initial outage applied: {', '.join(initial_names) if initial_names else 'None'}",
-        "tripped_in_this_step": initial_tripped_lines,
+        "description": f"Initial contingency: {', '.join(initial_names) if initial_names else 'None'}",
+        "tripped_in_this_step": list(initial_list),
         "total_tripped_so_far": list(all_tripped),
         "converged": current_sol["converged"],
-        "max_loading_percent": max([l["loading_percent"] for l in current_sol["lines"]], default=0.0),
+        "max_loading_percent": max((l["loading_percent"] for l in current_sol["lines"]), default=0.0),
         "total_losses_mw": current_sol["total_losses_mw"],
-        "frequency_hz": current_sol["frequency"]
+        "frequency_hz": current_sol["frequency"],
     })
 
-    # Cascading Loop
-    grid_stabilized = False
-
-    while step < max_cascade_steps and not grid_stabilized:
-        step += 1
-        
-        # Check in-service lines for thermal overloads
-        overloaded_lines = [
-            l for l in current_sol["lines"]
-            if l["in_service"] and l["loading_percent"] >= overload_threshold_percent
-        ]
-
-        if not overloaded_lines:
-            grid_stabilized = True
+    # Sequential overcurrent tripping stages
+    for step in range(1, max_cascade_steps + 1):
+        if not current_sol["converged"]:
             break
 
-        # Sort by most severe overload first
-        overloaded_lines.sort(key=lambda x: x["loading_percent"], reverse=True)
-        
-        # Trip the top overloaded lines (protection relay trip)
-        lines_to_trip = [l["id"] for l in overloaded_lines[:2]]  # Trip up to 2 worst simultaneously
-        all_tripped.extend(lines_to_trip)
-        all_tripped = list(set(all_tripped))
+        overloaded = [
+            line
+            for line in current_sol["lines"]
+            if line["in_service"] and line["loading_percent"] >= overload_threshold_percent
+        ]
+        if not overloaded:
+            break
 
-        # Re-solve power flow under the new degraded topology
+        overloaded.sort(key=lambda item: item["loading_percent"], reverse=True)
+        batch = overloaded[:2]
+        newly_tripped = [int(item["id"]) for item in batch]
+        for lid in newly_tripped:
+            if lid not in all_tripped:
+                all_tripped.append(lid)
+
         current_sol = solve_power_flow(
-            base_net=net,
-            load_multiplier=load_multiplier,
-            target_power_factor=target_power_factor,
-            slack_voltage_pu=slack_voltage_pu,
-            tripped_lines=all_tripped
+            base_net=base_net,
+            model_name=model_name,
+            pf_variables=pf_vars,
+            tripped_lines=all_tripped,
         )
 
-        tripped_names = [
-            f"{l['name']} ({l['loading_percent']}%)"
-            for l in overloaded_lines[:2]
-        ]
-
+        trip_labels = [f"{item['name']} ({item['loading_percent']}%)" for item in batch]
         timeline.append({
             "step": step,
             "event_type": "OVERLOAD_CASCADE",
-            "description": f"Overcurrent relay tripped: {', '.join(tripped_names)}",
-            "tripped_in_this_step": lines_to_trip,
+            "description": f"Overcurrent trip: {', '.join(trip_labels)}",
+            "tripped_in_this_step": newly_tripped,
             "total_tripped_so_far": list(all_tripped),
             "converged": current_sol["converged"],
-            "max_loading_percent": max([l["loading_percent"] for l in current_sol["lines"]], default=0.0),
+            "max_loading_percent": max((l["loading_percent"] for l in current_sol["lines"]), default=0.0),
             "total_losses_mw": current_sol["total_losses_mw"],
-            "frequency_hz": current_sol["frequency"]
+            "frequency_hz": current_sol["frequency"],
         })
 
-        if not current_sol["converged"]:
-            # Voltage collapse or island separation halted iteration
-            break
-
-    # Analyze Topological Islanding using NetworkX
-    active_net = copy.deepcopy(net)
+    # Topological island analysis on post-cascade network
+    post_net = copy.deepcopy(base_net)
     for lid in all_tripped:
-        if lid in active_net.line.index:
-            active_net.line.at[lid, "in_service"] = False
+        if lid in post_net.line.index:
+            post_net.line.at[lid, "in_service"] = False
 
     island_details = []
     try:
-        nx_graph = top.create_nxgraph(active_net, respect_switches=True, in_service_only=True)
-        connected_groups = list(nx.connected_components(nx_graph))
+        # Build connectivity graph directly from in-service buses, lines, and transformers
+        graph = nx.Graph()
+        for b_id, row in post_net.bus.iterrows():
+            if bool(row.get("in_service", True)):
+                graph.add_node(int(b_id))
 
-        for idx, bus_set in enumerate(connected_groups):
-            b_ids = [int(b) for b in bus_set if b in active_net.bus.index]
+        if hasattr(post_net, "line") and len(post_net.line) > 0:
+            for _, row in post_net.line.iterrows():
+                if bool(row.get("in_service", True)):
+                    u, v = int(row["from_bus"]), int(row["to_bus"])
+                    if u in graph and v in graph:
+                        graph.add_edge(u, v)
+
+        if hasattr(post_net, "trafo") and len(post_net.trafo) > 0:
+            for _, row in post_net.trafo.iterrows():
+                if bool(row.get("in_service", True)):
+                    u, v = int(row["hv_bus"]), int(row["lv_bus"])
+                    if u in graph and v in graph:
+                        graph.add_edge(u, v)
+
+        for idx, component in enumerate(nx.connected_components(graph), start=1):
+            b_ids = [int(b) for b in component if b in post_net.bus.index]
             if not b_ids:
                 continue
 
-            # Compute generation and load inside this specific island
-            p_gen_island = float(active_net.gen[active_net.gen.bus.isin(b_ids)]["p_mw"].sum()) if len(active_net.gen) > 0 else 0.0
-            if len(active_net.ext_grid) > 0:
-                p_gen_island += float(active_net.ext_grid[active_net.ext_grid.bus.isin(b_ids)]["p_mw"].sum())
+            p_gen = (
+                clean_float(post_net.gen[post_net.gen["bus"].isin(b_ids)]["p_mw"].sum())
+                if len(post_net.gen) > 0
+                else 0.0
+            )
+            has_slack = len(post_net.ext_grid) > 0 and bool(post_net.ext_grid["bus"].isin(b_ids).any())
+            if has_slack and hasattr(post_net, "res_ext_grid") and len(post_net.res_ext_grid) > 0:
+                slack_rows = post_net.ext_grid[post_net.ext_grid["bus"].isin(b_ids)].index
+                p_gen += clean_float(post_net.res_ext_grid.loc[post_net.res_ext_grid.index.intersection(slack_rows), "p_mw"].abs().sum())
 
-            p_load_island = float(active_net.load[active_net.load.bus.isin(b_ids)]["p_mw"].sum()) if len(active_net.load) > 0 else 0.0
-            
-            # Determine Island Status
-            if p_gen_island == 0.0 and p_load_island > 0.0:
-                status = "BLACKOUT_ISLAND"  # Zero generation = instant de-energization
-            elif p_load_island > p_gen_island * 1.5:
-                status = "DEFICIT_COLLAPSE"  # Severe under-frequency collapse
+            p_load = (
+                clean_float(post_net.load[post_net.load["bus"].isin(b_ids)]["p_mw"].sum()) * load_multiplier
+                if len(post_net.load) > 0
+                else 0.0
+            )
+
+            if not has_slack and p_gen <= 0.0 and p_load > 0.0:
+                island_status = "BLACKOUT_ISLAND"
+            elif not has_slack and p_load > p_gen * 1.5:
+                island_status = "DEFICIT_COLLAPSE"
             else:
-                status = "SYNCHRONOUS_ONLINE"  # Island can self-sustain
+                island_status = "SYNCHRONOUS_ONLINE"
 
-            bus_names = [str(active_net.bus.at[b, "name"]) for b in b_ids[:6]]
             island_details.append({
-                "island_id": idx + 1,
+                "island_id": idx,
                 "bus_count": len(b_ids),
-                "generation_mw": round(p_gen_island, 1),
-                "demand_mw": round(p_load_island, 1),
-                "status": status,
-                "sample_buses": bus_names
+                "generation_mw": round(p_gen, 1),
+                "demand_mw": round(p_load, 1),
+                "status": island_status,
+                "sample_buses": [str(post_net.bus.at[b, "name"]) for b in b_ids[:6]],
             })
-    except Exception as e:
-        island_details.append({
-            "island_id": 1,
-            "bus_count": len(base_net.bus),
-            "generation_mw": current_sol["total_gen_mw"],
-            "demand_mw": current_sol["total_load_mw"],
-            "status": "SYNCHRONOUS_ONLINE",
-            "sample_buses": ["Grid unified"]
-        })
+    except Exception:
+        island_details = []
 
-    # Overall Status Classification
-    blackout_islands = [i for i in island_details if i["status"] != "SYNCHRONOUS_ONLINE"]
-    if len(island_details) > 1 and len(blackout_islands) == len(island_details):
+    degraded_islands = [isl for isl in island_details if isl["status"] != "SYNCHRONOUS_ONLINE"]
+    if island_details and len(degraded_islands) == len(island_details):
         overall_status = "TOTAL_BLACKOUT"
-    elif len(island_details) > 1 or len(blackout_islands) > 0:
+    elif len(island_details) > 1 or degraded_islands or len(all_tripped) >= max(1, int(len(base_net.line) * 0.4)):
         overall_status = "PARTIAL_SYSTEM_COLLAPSE"
     else:
         overall_status = "STABILIZED_POST_CONTINGENCY"
 
     return {
         "status": overall_status,
-        "total_steps": len(timeline) - 1,
+        "total_steps": max(0, len(timeline) - 1),
         "timeline": timeline,
         "islands": island_details,
         "all_tripped_lines": all_tripped,
-        "final_sol": current_sol,
-        "converged": current_sol["converged"]
+        "converged": current_sol["converged"],
     }

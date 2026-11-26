@@ -5,13 +5,13 @@ import { MarketTab } from '@/components/tabs/MarketTab';
 import { useGrid } from '@/context/GridContext';
 
 export default function MarketPage() {
-  const { buses, lines, activeModel } = useGrid();
+  const { buses, activeModel, callWithHydration } = useGrid();
 
   return (
     <MarketTab
       buses={buses}
-      lines={lines}
       modelName={activeModel?.name || ''}
+      callWithHydration={callWithHydration}
     />
   );
 }

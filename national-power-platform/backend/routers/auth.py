@@ -1,183 +1,103 @@
+"""Authentication and operator access-request endpoints."""
+
+from datetime import datetime, timezone
+from typing import Any, Dict
+
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, EmailStr
-from typing import Dict, Any, Optional
-import uuid
-import secrets
-from datetime import datetime
 
-class UserLoginRequest(BaseModel):
-    email: str
-    password: str
+from config import settings
+from models.schemas import AccessRequestPayload, UserLoginRequest
 
-class UserRegisterRequest(BaseModel):
-    name: str
-    email: str
-    institution: str
-    department: Optional[str] = "Electrical & Electronics Engineering"
-    reason: Optional[str] = "Power System Stability & Grid Code Research"
 
-def get_auth_router():
-    router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+def get_auth_router() -> APIRouter:
+    """
+    Builds the authentication and access-request router.
 
-    # Root Administrator seeded so the system can be administered out of the box
-    users_db: Dict[str, Dict[str, Any]] = {
-        "admin-root": {
-            "id": "admin-root",
-            "name": "Opeyemi Ibrahim Abubakar",
-            "email": "operator@futminna.edu.ng",
-            "institution": "Federal University of Technology, Minna",
-            "department": "Electrical & Electronics Engineering",
-            "reason": "Root Taskforce Administrator",
-            "role": "Admin",
-            "is_approved": True,
-            "status": "APPROVED",
-            "password": "ML4PS-ADMIN",
-            "temp_password": None,
-            "created_at": datetime.now().isoformat()
+    Access requests are mirrored in memory as a fallback when Supabase is not
+    configured. An optional environment-configured admin (`ADMIN_EMAIL` and
+    `ADMIN_PASSWORD`) is seeded automatically when provided.
+    """
+    router = APIRouter(tags=["Authentication"])
+
+    # In-memory store keyed by lowercase email
+    access_requests: Dict[str, Dict[str, Any]] = {}
+
+    if settings.ADMIN_EMAIL and settings.ADMIN_PASSWORD:
+        access_requests[settings.ADMIN_EMAIL] = {
+            "id": "env-admin",
+            "full_name": settings.ADMIN_EMAIL.split("@")[0],
+            "email": settings.ADMIN_EMAIL,
+            "institution": "FUT Minna (ML4PS)",
+            "reason": "Platform Administrator",
+            "password": settings.ADMIN_PASSWORD,
+            "role": "admin",
+            "status": "approved",
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
-    }
 
-    @router.post("/register")
-    def register(req: UserRegisterRequest):
+    @router.post("/api/auth/request-access")
+    def upsert_access_request(req: AccessRequestPayload):
+        """Creates or updates an operator access request."""
         clean_email = req.email.strip().lower()
-
-        # Check if already exists
-        for u in users_db.values():
-            if u["email"].lower() == clean_email:
-                if not u["is_approved"]:
-                    return {
-                        "status": "PENDING",
-                        "message": "Your registration request is already submitted and awaiting administrator approval."
-                    }
-                else:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="An approved account with this email already exists. Please sign in."
-                    )
-
-        user_id = f"usr-{uuid.uuid4().hex[:8]}"
-        new_user = {
-            "id": user_id,
-            "name": req.name.strip(),
+        existing = access_requests.get(clean_email)
+        record = {
+            "id": req.id or (existing["id"] if existing else f"req-{int(datetime.now(timezone.utc).timestamp() * 1000)}"),
+            "full_name": req.full_name.strip(),
             "email": clean_email,
-            "institution": req.institution.strip(),
-            "department": req.department.strip() if req.department else "Electrical Engineering",
-            "reason": req.reason.strip() if req.reason else "Grid Research",
-            "role": "Research Fellow",
-            "is_approved": False,
-            "status": "PENDING",
-            "password": None,
-            "temp_password": None,
-            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M")
+            "institution": req.institution.strip() or "Independent",
+            "reason": req.reason.strip() or "Power System Simulation",
+            "password": req.password if req.password is not None else (existing.get("password") if existing else ""),
+            "role": req.role,
+            "status": req.status,
+            "created_at": req.created_at or (existing["created_at"] if existing else datetime.now(timezone.utc).isoformat()),
         }
+        access_requests[clean_email] = record
+        return {"status": "ok", "record": {k: v for k, v in record.items() if k != "password"}}
 
-        users_db[user_id] = new_user
+    @router.get("/api/admin/requests")
+    def list_access_requests():
+        """Returns all operator access requests for administrator review."""
+        return list(access_requests.values())
 
-        return {
-            "status": "SUCCESS",
-            "message": "Registration submitted successfully! An administrator will review your application and issue your temporary password.",
-            "user_id": user_id
-        }
-
-    @router.get("/users")
-    def get_all_users():
-        """Returns all registered operators and pending applications for admin review."""
-        result = []
-        for u in users_db.values():
-            result.append({
-                "id": u["id"],
-                "name": u["name"],
-                "email": u["email"],
-                "institution": u["institution"],
-                "department": u["department"],
-                "reason": u["reason"],
-                "role": u["role"],
-                "is_approved": u["is_approved"],
-                "status": u["status"],
-                "temp_password": u.get("temp_password"),
-                "created_at": u.get("created_at")
-            })
-        return result
-
-    @router.post("/approve/{user_id}")
-    def approve_user(user_id: str):
-        if user_id not in users_db:
-            raise HTTPException(status_code=404, detail="User request not found.")
-
-        user = users_db[user_id]
-        
-        # Generate random 6-character secure temporary password
-        temp_pass = f"ML4PS-{secrets.token_hex(3).upper()}"
-        
-        user["is_approved"] = True
-        user["status"] = "APPROVED"
-        user["password"] = temp_pass
-        user["temp_password"] = temp_pass
-
-        return {
-            "status": "APPROVED",
-            "user_id": user_id,
-            "user_name": user["name"],
-            "temp_password": temp_pass,
-            "message": f"Operator '{user['name']}' approved. Temporary password issued: {temp_pass}"
-        }
-
-    @router.post("/reject/{user_id}")
-    def reject_user(user_id: str):
-        if user_id not in users_db:
-            raise HTTPException(status_code=404, detail="User request not found.")
-        
-        if user_id == "admin-root":
-            raise HTTPException(status_code=400, detail="Cannot reject the root Taskforce Administrator.")
-
-        rejected_name = users_db[user_id]["name"]
-        del users_db[user_id]
-
-        return {
-            "status": "REJECTED",
-            "message": f"Registration request for '{rejected_name}' was rejected and removed."
-        }
-
-    @router.post("/login")
+    @router.post("/api/auth/login")
     def login(req: UserLoginRequest):
+        """Authenticates an approved operator against the backend store."""
         clean_email = req.email.strip().lower()
-        clean_pass = req.password.strip()
+        record = access_requests.get(clean_email)
 
-        matched_user = None
-        for u in users_db.values():
-            if u["email"].lower() == clean_email:
-                matched_user = u
-                break
-
-        if not matched_user:
+        if not record:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Account not found. Please click 'Register / Request Access' first."
+                detail="Account not found. Submit an access request first.",
             )
 
-        if not matched_user["is_approved"]:
+        if record["status"] == "pending":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Your account is pending review by the Admin. Once approved, you will receive your temporary password."
+                detail="Your account request is pending administrator approval.",
             )
 
-        if matched_user["password"] != clean_pass:
+        if record["status"] != "approved":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your account request was declined by an administrator.",
+            )
+
+        if record.get("password") and record["password"] != req.password.strip():
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid password or temporary token. Please re-check the credentials provided by the admin."
+                detail="Incorrect password.",
             )
 
         return {
-            "status": "SUCCESS",
+            "status": "success",
             "user": {
-                "id": matched_user["id"],
-                "name": matched_user["name"],
-                "email": matched_user["email"],
-                "institution": matched_user["institution"],
-                "department": matched_user["department"],
-                "role": matched_user["role"],
-                "is_approved": True
-            }
+                "id": record["id"],
+                "name": record["full_name"],
+                "email": record["email"],
+                "institution": record["institution"],
+                "role": record["role"],
+            },
         }
 
     return router
